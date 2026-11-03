@@ -1,0 +1,5 @@
+## Interface: 30300
+## Title: Waystone HD
+## Notes: Curseurs pour les reglages graphiques HD (/hd)
+## Author: Waystone HD
+WaystoneHD.lua

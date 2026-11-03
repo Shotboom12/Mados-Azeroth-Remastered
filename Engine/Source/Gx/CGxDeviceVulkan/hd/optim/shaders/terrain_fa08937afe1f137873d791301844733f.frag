@@ -1,0 +1,1209 @@
+#version 450
+
+uint optTile=0u;
+layout(set=1,binding=0,std430)readonly buffer OptRegisters{vec4 rows[];}optRegs;
+
+
+
+layout(set=0,binding=1)uniform sampler2D s1[4];
+layout(set=0,binding=2)uniform sampler2D s2[4];
+layout(set=0,binding=5)uniform sampler2D s5[4];
+layout(set=0,binding=6)uniform sampler2D s6[4];
+layout(set=0,binding=7)uniform sampler2D s7[4];
+layout(set=0,binding=8)uniform sampler2D s8[4];
+layout(set=0,binding=0)uniform samplerCube s0[4];
+
+layout(location = 0) out vec4 oC0;
+layout(location = 0) in vec4 color0;
+layout(location = 1) in vec4 color1;
+layout(location = 2) in vec4 texcoord0;
+layout(location = 3) in vec4 texcoord1;
+layout(location = 6) in vec4 texcoord4;
+layout(location = 7) in vec4 texcoord5;
+layout(location = 8) in vec4 texcoord6;
+layout(location = 10) in float fog0;
+layout(location = 13) in vec4 wxlGBuf;
+layout(location = 1) out vec4 wxlAlbedo;
+layout(location = 14) flat in float wxlGClass;
+layout(location = 15) in float wxlGPlain;
+layout(location = 2) out vec4 wxlNormal;
+layout(location = 3) out vec4 wxlLight;
+layout(location = 4) out vec4 hdLow;
+layout(location = 5) out vec4 hdHigh;
+int hdOverride;
+bool hdKilled;
+float _RESERVED_IDENTIFIER_FIXUP_3429;
+vec4 _RESERVED_IDENTIFIER_FIXUP_3430;
+
+
+layout(location=11)flat in uint optTileIn;layout(location=12)in float optClipIn;
+vec4 OptTex1Grad(vec2 uv,vec2 dx,vec2 dy){if(optTile==0u)return textureGrad(s1[0],uv,dx,dy);if(optTile==1u)return textureGrad(s1[1],uv,dx,dy);if(optTile==2u)return textureGrad(s1[2],uv,dx,dy);return textureGrad(s1[3],uv,dx,dy);}
+vec4 OptTex1(vec2 uv){vec2 dx=dFdx(uv),dy=dFdy(uv);return OptTex1Grad(uv,dx,dy);}
+vec4 OptTex1(vec2 uv,float bias){float k=exp2(bias);vec2 dx=dFdx(uv)*k,dy=dFdy(uv)*k;return OptTex1Grad(uv,dx,dy);}
+vec4 OptTex1Lod(vec2 uv,float lod){if(optTile==0u)return textureLod(s1[0],uv,lod);if(optTile==1u)return textureLod(s1[1],uv,lod);if(optTile==2u)return textureLod(s1[2],uv,lod);return textureLod(s1[3],uv,lod);}
+vec4 OptTex2Grad(vec2 uv,vec2 dx,vec2 dy){if(optTile==0u)return textureGrad(s2[0],uv,dx,dy);if(optTile==1u)return textureGrad(s2[1],uv,dx,dy);if(optTile==2u)return textureGrad(s2[2],uv,dx,dy);return textureGrad(s2[3],uv,dx,dy);}
+vec4 OptTex2(vec2 uv){vec2 dx=dFdx(uv),dy=dFdy(uv);return OptTex2Grad(uv,dx,dy);}
+vec4 OptTex2(vec2 uv,float bias){float k=exp2(bias);vec2 dx=dFdx(uv)*k,dy=dFdy(uv)*k;return OptTex2Grad(uv,dx,dy);}
+vec4 OptTex2Lod(vec2 uv,float lod){if(optTile==0u)return textureLod(s2[0],uv,lod);if(optTile==1u)return textureLod(s2[1],uv,lod);if(optTile==2u)return textureLod(s2[2],uv,lod);return textureLod(s2[3],uv,lod);}
+vec4 OptTex5Grad(vec2 uv,vec2 dx,vec2 dy){if(optTile==0u)return textureGrad(s5[0],uv,dx,dy);if(optTile==1u)return textureGrad(s5[1],uv,dx,dy);if(optTile==2u)return textureGrad(s5[2],uv,dx,dy);return textureGrad(s5[3],uv,dx,dy);}
+vec4 OptTex5(vec2 uv){vec2 dx=dFdx(uv),dy=dFdy(uv);return OptTex5Grad(uv,dx,dy);}
+vec4 OptTex5(vec2 uv,float bias){float k=exp2(bias);vec2 dx=dFdx(uv)*k,dy=dFdy(uv)*k;return OptTex5Grad(uv,dx,dy);}
+vec4 OptTex5Lod(vec2 uv,float lod){if(optTile==0u)return textureLod(s5[0],uv,lod);if(optTile==1u)return textureLod(s5[1],uv,lod);if(optTile==2u)return textureLod(s5[2],uv,lod);return textureLod(s5[3],uv,lod);}
+vec4 OptTex6Grad(vec2 uv,vec2 dx,vec2 dy){if(optTile==0u)return textureGrad(s6[0],uv,dx,dy);if(optTile==1u)return textureGrad(s6[1],uv,dx,dy);if(optTile==2u)return textureGrad(s6[2],uv,dx,dy);return textureGrad(s6[3],uv,dx,dy);}
+vec4 OptTex6(vec2 uv){vec2 dx=dFdx(uv),dy=dFdy(uv);return OptTex6Grad(uv,dx,dy);}
+vec4 OptTex6(vec2 uv,float bias){float k=exp2(bias);vec2 dx=dFdx(uv)*k,dy=dFdy(uv)*k;return OptTex6Grad(uv,dx,dy);}
+vec4 OptTex6Lod(vec2 uv,float lod){if(optTile==0u)return textureLod(s6[0],uv,lod);if(optTile==1u)return textureLod(s6[1],uv,lod);if(optTile==2u)return textureLod(s6[2],uv,lod);return textureLod(s6[3],uv,lod);}
+vec4 OptTex7Grad(vec2 uv,vec2 dx,vec2 dy){if(optTile==0u)return textureGrad(s7[0],uv,dx,dy);if(optTile==1u)return textureGrad(s7[1],uv,dx,dy);if(optTile==2u)return textureGrad(s7[2],uv,dx,dy);return textureGrad(s7[3],uv,dx,dy);}
+vec4 OptTex7(vec2 uv){vec2 dx=dFdx(uv),dy=dFdy(uv);return OptTex7Grad(uv,dx,dy);}
+vec4 OptTex7(vec2 uv,float bias){float k=exp2(bias);vec2 dx=dFdx(uv)*k,dy=dFdy(uv)*k;return OptTex7Grad(uv,dx,dy);}
+vec4 OptTex7Lod(vec2 uv,float lod){if(optTile==0u)return textureLod(s7[0],uv,lod);if(optTile==1u)return textureLod(s7[1],uv,lod);if(optTile==2u)return textureLod(s7[2],uv,lod);return textureLod(s7[3],uv,lod);}
+vec4 OptTex8Grad(vec2 uv,vec2 dx,vec2 dy){if(optTile==0u)return textureGrad(s8[0],uv,dx,dy);if(optTile==1u)return textureGrad(s8[1],uv,dx,dy);if(optTile==2u)return textureGrad(s8[2],uv,dx,dy);return textureGrad(s8[3],uv,dx,dy);}
+vec4 OptTex8(vec2 uv){vec2 dx=dFdx(uv),dy=dFdy(uv);return OptTex8Grad(uv,dx,dy);}
+vec4 OptTex8(vec2 uv,float bias){float k=exp2(bias);vec2 dx=dFdx(uv)*k,dy=dFdy(uv)*k;return OptTex8Grad(uv,dx,dy);}
+vec4 OptTex8Lod(vec2 uv,float lod){if(optTile==0u)return textureLod(s8[0],uv,lod);if(optTile==1u)return textureLod(s8[1],uv,lod);if(optTile==2u)return textureLod(s8[2],uv,lod);return textureLod(s8[3],uv,lod);}
+vec4 OptTex0Grad(vec3 uv,vec3 dx,vec3 dy){if(optTile==0u)return textureGrad(s0[0],uv,dx,dy);if(optTile==1u)return textureGrad(s0[1],uv,dx,dy);if(optTile==2u)return textureGrad(s0[2],uv,dx,dy);return textureGrad(s0[3],uv,dx,dy);}
+vec4 OptTex0(vec3 uv){vec3 dx=dFdx(uv),dy=dFdy(uv);return OptTex0Grad(uv,dx,dy);}
+vec4 OptTex0(vec3 uv,float bias){float k=exp2(bias);vec3 dx=dFdx(uv)*k,dy=dFdy(uv)*k;return OptTex0Grad(uv,dx,dy);}
+vec4 OptTex0Lod(vec3 uv,float lod){if(optTile==0u)return textureLod(s0[0],uv,lod);if(optTile==1u)return textureLod(s0[1],uv,lod);if(optTile==2u)return textureLod(s0[2],uv,lod);return textureLod(s0[3],uv,lod);}
+vec4 hdTex1(vec2 uv)
+{
+    vec4 value = OptTex1( uv);
+    bool _58 = hdOverride >= 0;
+    bool _77;
+    if (_58)
+    {
+        _77 = (uint(round(optRegs.rows[optTile*82u+uint(14)].z)) & 2u) != 0u;
+    }
+    else
+    {
+        _77 = _58;
+    }
+    vec4 _78;
+    if (_77)
+    {
+        _78 = vec4(float(hdOverride));
+    }
+    else
+    {
+        _78 = value;
+    }
+    return _78;
+}
+
+vec4 hdTex2(vec2 uv)
+{
+    vec4 value = OptTex2( uv);
+    bool _95 = hdOverride >= 0;
+    bool _105;
+    if (_95)
+    {
+        _105 = (uint(round(optRegs.rows[optTile*82u+uint(14)].z)) & 4u) != 0u;
+    }
+    else
+    {
+        _105 = _95;
+    }
+    vec4 _106;
+    if (_105)
+    {
+        _106 = vec4(float(hdOverride));
+    }
+    else
+    {
+        _106 = value;
+    }
+    return _106;
+}
+
+vec4 hdLod5(vec2 uv, float lod)
+{
+    vec4 value = OptTex5Lod( uv, lod);
+    bool _124 = hdOverride >= 0;
+    bool _134;
+    if (_124)
+    {
+        _134 = (uint(round(optRegs.rows[optTile*82u+uint(14)].z)) & 32u) != 0u;
+    }
+    else
+    {
+        _134 = _124;
+    }
+    vec4 _135;
+    if (_134)
+    {
+        _135 = vec4(float(hdOverride));
+    }
+    else
+    {
+        _135 = value;
+    }
+    return _135;
+}
+
+vec4 hdLod6(vec2 uv, float lod)
+{
+    vec4 value = OptTex6Lod( uv, lod);
+    bool _153 = hdOverride >= 0;
+    bool _163;
+    if (_153)
+    {
+        _163 = (uint(round(optRegs.rows[optTile*82u+uint(14)].z)) & 64u) != 0u;
+    }
+    else
+    {
+        _163 = _153;
+    }
+    vec4 _164;
+    if (_163)
+    {
+        _164 = vec4(float(hdOverride));
+    }
+    else
+    {
+        _164 = value;
+    }
+    return _164;
+}
+
+vec4 hdLod7(vec2 uv, float lod)
+{
+    vec4 value = OptTex7Lod( uv, lod);
+    bool _182 = hdOverride >= 0;
+    bool _192;
+    if (_182)
+    {
+        _192 = (uint(round(optRegs.rows[optTile*82u+uint(14)].z)) & 128u) != 0u;
+    }
+    else
+    {
+        _192 = _182;
+    }
+    vec4 _193;
+    if (_192)
+    {
+        _193 = vec4(float(hdOverride));
+    }
+    else
+    {
+        _193 = value;
+    }
+    return _193;
+}
+
+vec4 hdLod8(vec2 uv, float lod)
+{
+    vec4 value = OptTex8Lod( uv, lod);
+    bool _211 = hdOverride >= 0;
+    bool _221;
+    if (_211)
+    {
+        _221 = (uint(round(optRegs.rows[optTile*82u+uint(14)].z)) & 256u) != 0u;
+    }
+    else
+    {
+        _221 = _211;
+    }
+    vec4 _222;
+    if (_221)
+    {
+        _222 = vec4(float(hdOverride));
+    }
+    else
+    {
+        _222 = value;
+    }
+    return _222;
+}
+
+void HDActual()
+{
+    vec4 _RESERVED_IDENTIFIER_FIXUP_1080 = OptTex0( texcoord0.xyz);
+    vec2 param = texcoord1.xy;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_1084 = hdTex1(param);
+    vec2 param_1 = texcoord1.wz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_1088 = hdTex2(param_1);
+    vec2 _RESERVED_IDENTIFIER_FIXUP_1092 = abs(optRegs.rows[optTile*82u+uint(1)].xy);
+    float _RESERVED_IDENTIFIER_FIXUP_1094 = _RESERVED_IDENTIFIER_FIXUP_1092.x;
+    _RESERVED_IDENTIFIER_FIXUP_1088.y = _RESERVED_IDENTIFIER_FIXUP_1094;
+    float _RESERVED_IDENTIFIER_FIXUP_1096 = _RESERVED_IDENTIFIER_FIXUP_1092.y;
+    _RESERVED_IDENTIFIER_FIXUP_1088.z = _RESERVED_IDENTIFIER_FIXUP_1096;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1098 = vec4(0.5, 0.5, 0.5, _RESERVED_IDENTIFIER_FIXUP_3429).xyz;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1101 = _RESERVED_IDENTIFIER_FIXUP_1098 + _RESERVED_IDENTIFIER_FIXUP_1098;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2730;
+    _RESERVED_IDENTIFIER_FIXUP_2730.x = _RESERVED_IDENTIFIER_FIXUP_1101.x;
+    _RESERVED_IDENTIFIER_FIXUP_2730.y = _RESERVED_IDENTIFIER_FIXUP_1101.y;
+    _RESERVED_IDENTIFIER_FIXUP_2730.z = _RESERVED_IDENTIFIER_FIXUP_1101.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1109 = _RESERVED_IDENTIFIER_FIXUP_1080.xyz;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1112 = _RESERVED_IDENTIFIER_FIXUP_1109 * _RESERVED_IDENTIFIER_FIXUP_2730.xyz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2736 = vec4(0.0);
+    _RESERVED_IDENTIFIER_FIXUP_2736.x = _RESERVED_IDENTIFIER_FIXUP_1112.x;
+    _RESERVED_IDENTIFIER_FIXUP_2736.y = _RESERVED_IDENTIFIER_FIXUP_1112.y;
+    _RESERVED_IDENTIFIER_FIXUP_2736.z = _RESERVED_IDENTIFIER_FIXUP_1112.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1127 = mix(_RESERVED_IDENTIFIER_FIXUP_2736.xyz, _RESERVED_IDENTIFIER_FIXUP_1109, greaterThanEqual(-_RESERVED_IDENTIFIER_FIXUP_1088.yyy, vec3(0.0)));
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2742 = _RESERVED_IDENTIFIER_FIXUP_1080;
+    _RESERVED_IDENTIFIER_FIXUP_2742.x = _RESERVED_IDENTIFIER_FIXUP_1127.x;
+    _RESERVED_IDENTIFIER_FIXUP_2742.y = _RESERVED_IDENTIFIER_FIXUP_1127.y;
+    _RESERVED_IDENTIFIER_FIXUP_2742.z = _RESERVED_IDENTIFIER_FIXUP_1127.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1135 = _RESERVED_IDENTIFIER_FIXUP_1084.xyz;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1138 = _RESERVED_IDENTIFIER_FIXUP_1135 * _RESERVED_IDENTIFIER_FIXUP_2730.xyz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2748;
+    _RESERVED_IDENTIFIER_FIXUP_2748.x = _RESERVED_IDENTIFIER_FIXUP_1138.x;
+    _RESERVED_IDENTIFIER_FIXUP_2748.y = _RESERVED_IDENTIFIER_FIXUP_1138.y;
+    _RESERVED_IDENTIFIER_FIXUP_2748.z = _RESERVED_IDENTIFIER_FIXUP_1138.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1153 = mix(_RESERVED_IDENTIFIER_FIXUP_2748.xyz, _RESERVED_IDENTIFIER_FIXUP_1135, greaterThanEqual(-_RESERVED_IDENTIFIER_FIXUP_1088.zzz, vec3(0.0)));
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2754 = _RESERVED_IDENTIFIER_FIXUP_1084;
+    _RESERVED_IDENTIFIER_FIXUP_2754.x = _RESERVED_IDENTIFIER_FIXUP_1153.x;
+    _RESERVED_IDENTIFIER_FIXUP_2754.y = _RESERVED_IDENTIFIER_FIXUP_1153.y;
+    _RESERVED_IDENTIFIER_FIXUP_2754.z = _RESERVED_IDENTIFIER_FIXUP_1153.z;
+    float _RESERVED_IDENTIFIER_FIXUP_1171 = max(abs(texcoord4.x), abs(texcoord4.y));
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2762 = _RESERVED_IDENTIFIER_FIXUP_2742;
+    _RESERVED_IDENTIFIER_FIXUP_2762.x = _RESERVED_IDENTIFIER_FIXUP_1171;
+    float _RESERVED_IDENTIFIER_FIXUP_1177 = clamp((_RESERVED_IDENTIFIER_FIXUP_1171 * (-3.4482758045196533203125)) + 3.413793087005615234375, 0.0, 1.0);
+    _RESERVED_IDENTIFIER_FIXUP_2762.x = _RESERVED_IDENTIFIER_FIXUP_1177;
+    float _RESERVED_IDENTIFIER_FIXUP_1183 = ((-_RESERVED_IDENTIFIER_FIXUP_1177) >= 0.0) ? 0.0 : 1.0;
+    _RESERVED_IDENTIFIER_FIXUP_2762.y = _RESERVED_IDENTIFIER_FIXUP_1183;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3431;
+    if (_RESERVED_IDENTIFIER_FIXUP_1183 != (-_RESERVED_IDENTIFIER_FIXUP_1183))
+    {
+        vec4 _RESERVED_IDENTIFIER_FIXUP_1195 = (texcoord4.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1205 = (texcoord4.xy * vec2(0.5)) + vec2(0.5);
+        float _RESERVED_IDENTIFIER_FIXUP_1207 = _RESERVED_IDENTIFIER_FIXUP_1205.x;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2775 = _RESERVED_IDENTIFIER_FIXUP_2762;
+        _RESERVED_IDENTIFIER_FIXUP_2775.y = _RESERVED_IDENTIFIER_FIXUP_1207;
+        _RESERVED_IDENTIFIER_FIXUP_2775.z = _RESERVED_IDENTIFIER_FIXUP_1205.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1215 = _RESERVED_IDENTIFIER_FIXUP_2775.yz + optRegs.rows[optTile*82u+uint(3)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2779;
+        _RESERVED_IDENTIFIER_FIXUP_2779.x = _RESERVED_IDENTIFIER_FIXUP_1215.x;
+        _RESERVED_IDENTIFIER_FIXUP_2779.y = _RESERVED_IDENTIFIER_FIXUP_1215.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1222 = vec2(1.0, 0.0) * texcoord4.zx;
+        float _RESERVED_IDENTIFIER_FIXUP_1226 = _RESERVED_IDENTIFIER_FIXUP_1222.y;
+        _RESERVED_IDENTIFIER_FIXUP_2779.w = _RESERVED_IDENTIFIER_FIXUP_1226;
+        vec2 param_2 = _RESERVED_IDENTIFIER_FIXUP_1195.xy;
+        float param_3 = _RESERVED_IDENTIFIER_FIXUP_1195.w;
+        vec2 param_4 = _RESERVED_IDENTIFIER_FIXUP_2779.xy;
+        float param_5 = _RESERVED_IDENTIFIER_FIXUP_1226;
+        float _RESERVED_IDENTIFIER_FIXUP_1237 = hdLod5(param_2, param_3).x + hdLod5(param_4, param_5).x;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3451 = vec4(_RESERVED_IDENTIFIER_FIXUP_1177, _RESERVED_IDENTIFIER_FIXUP_1207, _RESERVED_IDENTIFIER_FIXUP_1205.y, _RESERVED_IDENTIFIER_FIXUP_1237);
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1244 = _RESERVED_IDENTIFIER_FIXUP_3451.yz + optRegs.rows[optTile*82u+uint(5)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2792;
+        _RESERVED_IDENTIFIER_FIXUP_2792.x = _RESERVED_IDENTIFIER_FIXUP_1244.x;
+        _RESERVED_IDENTIFIER_FIXUP_2792.y = _RESERVED_IDENTIFIER_FIXUP_1244.y;
+        _RESERVED_IDENTIFIER_FIXUP_2792.w = _RESERVED_IDENTIFIER_FIXUP_1226;
+        vec2 param_6 = _RESERVED_IDENTIFIER_FIXUP_2792.xy;
+        float param_7 = _RESERVED_IDENTIFIER_FIXUP_1226;
+        float _RESERVED_IDENTIFIER_FIXUP_1266 = _RESERVED_IDENTIFIER_FIXUP_1237 + hdLod5(param_6, param_7).x;
+        _RESERVED_IDENTIFIER_FIXUP_3451.w = _RESERVED_IDENTIFIER_FIXUP_1266;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1273 = _RESERVED_IDENTIFIER_FIXUP_3451.yz + optRegs.rows[optTile*82u+uint(7)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2805;
+        _RESERVED_IDENTIFIER_FIXUP_2805.x = _RESERVED_IDENTIFIER_FIXUP_1273.x;
+        _RESERVED_IDENTIFIER_FIXUP_2805.y = _RESERVED_IDENTIFIER_FIXUP_1273.y;
+        _RESERVED_IDENTIFIER_FIXUP_2805.w = _RESERVED_IDENTIFIER_FIXUP_1226;
+        vec2 param_8 = _RESERVED_IDENTIFIER_FIXUP_2805.xy;
+        float param_9 = _RESERVED_IDENTIFIER_FIXUP_1226;
+        float _RESERVED_IDENTIFIER_FIXUP_1295 = _RESERVED_IDENTIFIER_FIXUP_1266 + hdLod5(param_8, param_9).x;
+        _RESERVED_IDENTIFIER_FIXUP_3451.w = _RESERVED_IDENTIFIER_FIXUP_1295;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1302 = _RESERVED_IDENTIFIER_FIXUP_3451.yz + optRegs.rows[optTile*82u+uint(9)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2818;
+        _RESERVED_IDENTIFIER_FIXUP_2818.x = _RESERVED_IDENTIFIER_FIXUP_1302.x;
+        _RESERVED_IDENTIFIER_FIXUP_2818.y = _RESERVED_IDENTIFIER_FIXUP_1302.y;
+        _RESERVED_IDENTIFIER_FIXUP_2818.w = _RESERVED_IDENTIFIER_FIXUP_1226;
+        vec2 param_10 = _RESERVED_IDENTIFIER_FIXUP_2818.xy;
+        float param_11 = _RESERVED_IDENTIFIER_FIXUP_1226;
+        float _RESERVED_IDENTIFIER_FIXUP_1324 = _RESERVED_IDENTIFIER_FIXUP_1295 + hdLod5(param_10, param_11).x;
+        _RESERVED_IDENTIFIER_FIXUP_3451.y = _RESERVED_IDENTIFIER_FIXUP_1324;
+        float _RESERVED_IDENTIFIER_FIXUP_1329 = (_RESERVED_IDENTIFIER_FIXUP_1324 * 0.20000000298023223876953125) + (-1.0);
+        _RESERVED_IDENTIFIER_FIXUP_3451.y = _RESERVED_IDENTIFIER_FIXUP_1329;
+        _RESERVED_IDENTIFIER_FIXUP_3451.x = (_RESERVED_IDENTIFIER_FIXUP_1177 * _RESERVED_IDENTIFIER_FIXUP_1329) + 1.0;
+        _RESERVED_IDENTIFIER_FIXUP_3431 = _RESERVED_IDENTIFIER_FIXUP_3451;
+    }
+    else
+    {
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2772 = _RESERVED_IDENTIFIER_FIXUP_2762;
+        _RESERVED_IDENTIFIER_FIXUP_2772.x = 1.0;
+        _RESERVED_IDENTIFIER_FIXUP_3431 = _RESERVED_IDENTIFIER_FIXUP_2772;
+    }
+    float _RESERVED_IDENTIFIER_FIXUP_1347 = max(abs(texcoord5.x), abs(texcoord5.y));
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2840 = _RESERVED_IDENTIFIER_FIXUP_3431;
+    _RESERVED_IDENTIFIER_FIXUP_2840.y = _RESERVED_IDENTIFIER_FIXUP_1347;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3436;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3434;
+    if (_RESERVED_IDENTIFIER_FIXUP_1347 < 1.0)
+    {
+        vec4 _RESERVED_IDENTIFIER_FIXUP_1356 = (texcoord5.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1366 = (texcoord5.xy * vec2(0.5)) + vec2(0.5);
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2980 = _RESERVED_IDENTIFIER_FIXUP_2840;
+        _RESERVED_IDENTIFIER_FIXUP_2980.y = _RESERVED_IDENTIFIER_FIXUP_1366.x;
+        _RESERVED_IDENTIFIER_FIXUP_2980.z = _RESERVED_IDENTIFIER_FIXUP_1366.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1376 = _RESERVED_IDENTIFIER_FIXUP_2980.yz + optRegs.rows[optTile*82u+uint(3)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2984;
+        _RESERVED_IDENTIFIER_FIXUP_2984.x = _RESERVED_IDENTIFIER_FIXUP_1376.x;
+        _RESERVED_IDENTIFIER_FIXUP_2984.y = _RESERVED_IDENTIFIER_FIXUP_1376.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1383 = vec2(1.0, 0.0) * texcoord5.zx;
+        float _RESERVED_IDENTIFIER_FIXUP_1387 = _RESERVED_IDENTIFIER_FIXUP_1383.y;
+        _RESERVED_IDENTIFIER_FIXUP_2984.w = _RESERVED_IDENTIFIER_FIXUP_1387;
+        vec2 param_12 = _RESERVED_IDENTIFIER_FIXUP_1356.xy;
+        float param_13 = _RESERVED_IDENTIFIER_FIXUP_1356.w;
+        vec2 param_14 = _RESERVED_IDENTIFIER_FIXUP_2984.xy;
+        float param_15 = _RESERVED_IDENTIFIER_FIXUP_1387;
+        float _RESERVED_IDENTIFIER_FIXUP_1398 = hdLod6(param_12, param_13).x + hdLod6(param_14, param_15).x;
+        _RESERVED_IDENTIFIER_FIXUP_2980.w = _RESERVED_IDENTIFIER_FIXUP_1398;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1405 = _RESERVED_IDENTIFIER_FIXUP_2980.yz + optRegs.rows[optTile*82u+uint(5)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2997;
+        _RESERVED_IDENTIFIER_FIXUP_2997.x = _RESERVED_IDENTIFIER_FIXUP_1405.x;
+        _RESERVED_IDENTIFIER_FIXUP_2997.y = _RESERVED_IDENTIFIER_FIXUP_1405.y;
+        _RESERVED_IDENTIFIER_FIXUP_2997.w = _RESERVED_IDENTIFIER_FIXUP_1387;
+        vec2 param_16 = _RESERVED_IDENTIFIER_FIXUP_2997.xy;
+        float param_17 = _RESERVED_IDENTIFIER_FIXUP_1387;
+        float _RESERVED_IDENTIFIER_FIXUP_1427 = _RESERVED_IDENTIFIER_FIXUP_1398 + hdLod6(param_16, param_17).x;
+        _RESERVED_IDENTIFIER_FIXUP_2980.w = _RESERVED_IDENTIFIER_FIXUP_1427;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1434 = _RESERVED_IDENTIFIER_FIXUP_2980.yz + optRegs.rows[optTile*82u+uint(7)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3010;
+        _RESERVED_IDENTIFIER_FIXUP_3010.x = _RESERVED_IDENTIFIER_FIXUP_1434.x;
+        _RESERVED_IDENTIFIER_FIXUP_3010.y = _RESERVED_IDENTIFIER_FIXUP_1434.y;
+        _RESERVED_IDENTIFIER_FIXUP_3010.w = _RESERVED_IDENTIFIER_FIXUP_1387;
+        vec2 param_18 = _RESERVED_IDENTIFIER_FIXUP_3010.xy;
+        float param_19 = _RESERVED_IDENTIFIER_FIXUP_1387;
+        float _RESERVED_IDENTIFIER_FIXUP_1456 = _RESERVED_IDENTIFIER_FIXUP_1427 + hdLod6(param_18, param_19).x;
+        _RESERVED_IDENTIFIER_FIXUP_2980.w = _RESERVED_IDENTIFIER_FIXUP_1456;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_1463 = _RESERVED_IDENTIFIER_FIXUP_2980.yz + optRegs.rows[optTile*82u+uint(9)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3023;
+        _RESERVED_IDENTIFIER_FIXUP_3023.x = _RESERVED_IDENTIFIER_FIXUP_1463.x;
+        _RESERVED_IDENTIFIER_FIXUP_3023.y = _RESERVED_IDENTIFIER_FIXUP_1463.y;
+        _RESERVED_IDENTIFIER_FIXUP_3023.w = _RESERVED_IDENTIFIER_FIXUP_1387;
+        vec2 param_20 = _RESERVED_IDENTIFIER_FIXUP_3023.xy;
+        float param_21 = _RESERVED_IDENTIFIER_FIXUP_1387;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_1480 = hdLod6(param_20, param_21);
+        float _RESERVED_IDENTIFIER_FIXUP_1485 = _RESERVED_IDENTIFIER_FIXUP_1456 + _RESERVED_IDENTIFIER_FIXUP_1480.x;
+        _RESERVED_IDENTIFIER_FIXUP_2980.y = _RESERVED_IDENTIFIER_FIXUP_1485;
+        _RESERVED_IDENTIFIER_FIXUP_2980.y = _RESERVED_IDENTIFIER_FIXUP_1485 * 0.20000000298023223876953125;
+        _RESERVED_IDENTIFIER_FIXUP_3436 = _RESERVED_IDENTIFIER_FIXUP_1480;
+        _RESERVED_IDENTIFIER_FIXUP_3434 = _RESERVED_IDENTIFIER_FIXUP_2980;
+    }
+    else
+    {
+        float _RESERVED_IDENTIFIER_FIXUP_1498 = max(abs(texcoord6.x), abs(texcoord6.y));
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2845 = _RESERVED_IDENTIFIER_FIXUP_2840;
+        _RESERVED_IDENTIFIER_FIXUP_2845.z = _RESERVED_IDENTIFIER_FIXUP_1498;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3437;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3435;
+        if (_RESERVED_IDENTIFIER_FIXUP_1498 < 1.0)
+        {
+            vec4 _RESERVED_IDENTIFIER_FIXUP_1507 = (texcoord6.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+            vec2 param_22 = _RESERVED_IDENTIFIER_FIXUP_1507.xy;
+            float param_23 = _RESERVED_IDENTIFIER_FIXUP_1507.w;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_1513 = hdLod7(param_22, param_23);
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1517 = (texcoord6.xy * vec2(0.5)) + vec2(0.5);
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2920 = _RESERVED_IDENTIFIER_FIXUP_2845;
+            _RESERVED_IDENTIFIER_FIXUP_2920.z = _RESERVED_IDENTIFIER_FIXUP_1517.x;
+            _RESERVED_IDENTIFIER_FIXUP_2920.w = _RESERVED_IDENTIFIER_FIXUP_1517.y;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1527 = _RESERVED_IDENTIFIER_FIXUP_2920.zw + optRegs.rows[optTile*82u+uint(3)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2924;
+            _RESERVED_IDENTIFIER_FIXUP_2924.x = _RESERVED_IDENTIFIER_FIXUP_1527.x;
+            _RESERVED_IDENTIFIER_FIXUP_2924.y = _RESERVED_IDENTIFIER_FIXUP_1527.y;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1534 = vec2(1.0, 0.0) * texcoord6.zx;
+            float _RESERVED_IDENTIFIER_FIXUP_1538 = _RESERVED_IDENTIFIER_FIXUP_1534.y;
+            _RESERVED_IDENTIFIER_FIXUP_2924.w = _RESERVED_IDENTIFIER_FIXUP_1538;
+            vec2 param_24 = _RESERVED_IDENTIFIER_FIXUP_2924.xy;
+            float param_25 = _RESERVED_IDENTIFIER_FIXUP_1538;
+            float _RESERVED_IDENTIFIER_FIXUP_1549 = _RESERVED_IDENTIFIER_FIXUP_1513.x + hdLod7(param_24, param_25).x;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2935 = _RESERVED_IDENTIFIER_FIXUP_1513;
+            _RESERVED_IDENTIFIER_FIXUP_2935.x = _RESERVED_IDENTIFIER_FIXUP_1549;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1556 = _RESERVED_IDENTIFIER_FIXUP_2920.zw + optRegs.rows[optTile*82u+uint(5)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2937;
+            _RESERVED_IDENTIFIER_FIXUP_2937.x = _RESERVED_IDENTIFIER_FIXUP_1556.x;
+            _RESERVED_IDENTIFIER_FIXUP_2937.y = _RESERVED_IDENTIFIER_FIXUP_1556.y;
+            _RESERVED_IDENTIFIER_FIXUP_2937.w = _RESERVED_IDENTIFIER_FIXUP_1538;
+            vec2 param_26 = _RESERVED_IDENTIFIER_FIXUP_2937.xy;
+            float param_27 = _RESERVED_IDENTIFIER_FIXUP_1538;
+            float _RESERVED_IDENTIFIER_FIXUP_1578 = _RESERVED_IDENTIFIER_FIXUP_1549 + hdLod7(param_26, param_27).x;
+            _RESERVED_IDENTIFIER_FIXUP_2935.x = _RESERVED_IDENTIFIER_FIXUP_1578;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1585 = _RESERVED_IDENTIFIER_FIXUP_2920.zw + optRegs.rows[optTile*82u+uint(7)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2950;
+            _RESERVED_IDENTIFIER_FIXUP_2950.x = _RESERVED_IDENTIFIER_FIXUP_1585.x;
+            _RESERVED_IDENTIFIER_FIXUP_2950.y = _RESERVED_IDENTIFIER_FIXUP_1585.y;
+            _RESERVED_IDENTIFIER_FIXUP_2950.w = _RESERVED_IDENTIFIER_FIXUP_1538;
+            vec2 param_28 = _RESERVED_IDENTIFIER_FIXUP_2950.xy;
+            float param_29 = _RESERVED_IDENTIFIER_FIXUP_1538;
+            float _RESERVED_IDENTIFIER_FIXUP_1607 = _RESERVED_IDENTIFIER_FIXUP_1578 + hdLod7(param_28, param_29).x;
+            _RESERVED_IDENTIFIER_FIXUP_2935.x = _RESERVED_IDENTIFIER_FIXUP_1607;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1614 = _RESERVED_IDENTIFIER_FIXUP_2920.zw + optRegs.rows[optTile*82u+uint(9)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2963;
+            _RESERVED_IDENTIFIER_FIXUP_2963.x = _RESERVED_IDENTIFIER_FIXUP_1614.x;
+            _RESERVED_IDENTIFIER_FIXUP_2963.y = _RESERVED_IDENTIFIER_FIXUP_1614.y;
+            _RESERVED_IDENTIFIER_FIXUP_2963.w = _RESERVED_IDENTIFIER_FIXUP_1538;
+            vec2 param_30 = _RESERVED_IDENTIFIER_FIXUP_2963.xy;
+            float param_31 = _RESERVED_IDENTIFIER_FIXUP_1538;
+            float _RESERVED_IDENTIFIER_FIXUP_1636 = _RESERVED_IDENTIFIER_FIXUP_1607 + hdLod7(param_30, param_31).x;
+            _RESERVED_IDENTIFIER_FIXUP_2920.z = _RESERVED_IDENTIFIER_FIXUP_1636;
+            _RESERVED_IDENTIFIER_FIXUP_2920.y = _RESERVED_IDENTIFIER_FIXUP_1636 * 0.20000000298023223876953125;
+            _RESERVED_IDENTIFIER_FIXUP_3437 = _RESERVED_IDENTIFIER_FIXUP_2935;
+            _RESERVED_IDENTIFIER_FIXUP_3435 = _RESERVED_IDENTIFIER_FIXUP_2920;
+        }
+        else
+        {
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2849 = _RESERVED_IDENTIFIER_FIXUP_2845;
+            _RESERVED_IDENTIFIER_FIXUP_2849.z = texcoord4.w;
+            _RESERVED_IDENTIFIER_FIXUP_2849.w = texcoord5.w;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1652 = (texcoord4.ww * vec2(0.5, 0.0)) + vec2(0.5, 0.0);
+            float _RESERVED_IDENTIFIER_FIXUP_1656 = _RESERVED_IDENTIFIER_FIXUP_1652.y;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3452 = vec4(_RESERVED_IDENTIFIER_FIXUP_1652.x, (texcoord5.w * 0.5) + 0.5, texcoord6.w, _RESERVED_IDENTIFIER_FIXUP_1656);
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1667 = _RESERVED_IDENTIFIER_FIXUP_3452.xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3453 = vec4(_RESERVED_IDENTIFIER_FIXUP_1667 + optRegs.rows[optTile*82u+uint(3)].xy, texcoord6.w, _RESERVED_IDENTIFIER_FIXUP_1656);
+            vec2 param_32 = _RESERVED_IDENTIFIER_FIXUP_1667;
+            float param_33 = _RESERVED_IDENTIFIER_FIXUP_1656;
+            vec2 param_34 = _RESERVED_IDENTIFIER_FIXUP_3453.xy;
+            float param_35 = _RESERVED_IDENTIFIER_FIXUP_1656;
+            float _RESERVED_IDENTIFIER_FIXUP_1697 = hdLod8(param_32, param_33).x + hdLod8(param_34, param_35).x;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2876 = _RESERVED_IDENTIFIER_FIXUP_3452;
+            _RESERVED_IDENTIFIER_FIXUP_2876.z = _RESERVED_IDENTIFIER_FIXUP_1697;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1704 = _RESERVED_IDENTIFIER_FIXUP_2876.xy + optRegs.rows[optTile*82u+uint(5)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2878 = _RESERVED_IDENTIFIER_FIXUP_3453;
+            _RESERVED_IDENTIFIER_FIXUP_2878.x = _RESERVED_IDENTIFIER_FIXUP_1704.x;
+            _RESERVED_IDENTIFIER_FIXUP_2878.y = _RESERVED_IDENTIFIER_FIXUP_1704.y;
+            vec2 param_36 = _RESERVED_IDENTIFIER_FIXUP_2878.xy;
+            float param_37 = _RESERVED_IDENTIFIER_FIXUP_1656;
+            float _RESERVED_IDENTIFIER_FIXUP_1719 = _RESERVED_IDENTIFIER_FIXUP_1697 + hdLod8(param_36, param_37).x;
+            _RESERVED_IDENTIFIER_FIXUP_2876.z = _RESERVED_IDENTIFIER_FIXUP_1719;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1726 = _RESERVED_IDENTIFIER_FIXUP_2876.xy + optRegs.rows[optTile*82u+uint(7)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2887 = _RESERVED_IDENTIFIER_FIXUP_2878;
+            _RESERVED_IDENTIFIER_FIXUP_2887.x = _RESERVED_IDENTIFIER_FIXUP_1726.x;
+            _RESERVED_IDENTIFIER_FIXUP_2887.y = _RESERVED_IDENTIFIER_FIXUP_1726.y;
+            vec2 param_38 = _RESERVED_IDENTIFIER_FIXUP_2887.xy;
+            float param_39 = _RESERVED_IDENTIFIER_FIXUP_1656;
+            float _RESERVED_IDENTIFIER_FIXUP_1741 = _RESERVED_IDENTIFIER_FIXUP_1719 + hdLod8(param_38, param_39).x;
+            _RESERVED_IDENTIFIER_FIXUP_2876.z = _RESERVED_IDENTIFIER_FIXUP_1741;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_1748 = _RESERVED_IDENTIFIER_FIXUP_2876.xy + optRegs.rows[optTile*82u+uint(9)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2896 = _RESERVED_IDENTIFIER_FIXUP_2887;
+            _RESERVED_IDENTIFIER_FIXUP_2896.x = _RESERVED_IDENTIFIER_FIXUP_1748.x;
+            _RESERVED_IDENTIFIER_FIXUP_2896.y = _RESERVED_IDENTIFIER_FIXUP_1748.y;
+            vec2 param_40 = _RESERVED_IDENTIFIER_FIXUP_2896.xy;
+            float param_41 = _RESERVED_IDENTIFIER_FIXUP_1656;
+            float _RESERVED_IDENTIFIER_FIXUP_1763 = _RESERVED_IDENTIFIER_FIXUP_1741 + hdLod8(param_40, param_41).x;
+            _RESERVED_IDENTIFIER_FIXUP_2876.x = _RESERVED_IDENTIFIER_FIXUP_1763;
+            float _RESERVED_IDENTIFIER_FIXUP_1771 = max(abs(texcoord4.w), abs(texcoord5.w));
+            _RESERVED_IDENTIFIER_FIXUP_2876.y = _RESERVED_IDENTIFIER_FIXUP_1771;
+            float _RESERVED_IDENTIFIER_FIXUP_1777 = clamp((_RESERVED_IDENTIFIER_FIXUP_1771 * (-11.111110687255859375)) + 11.0, 0.0, 1.0);
+            _RESERVED_IDENTIFIER_FIXUP_2849.z = _RESERVED_IDENTIFIER_FIXUP_1777;
+            float _RESERVED_IDENTIFIER_FIXUP_1782 = (_RESERVED_IDENTIFIER_FIXUP_1763 * 0.20000000298023223876953125) + (-1.0);
+            _RESERVED_IDENTIFIER_FIXUP_2849.w = _RESERVED_IDENTIFIER_FIXUP_1782;
+            _RESERVED_IDENTIFIER_FIXUP_2849.y = (_RESERVED_IDENTIFIER_FIXUP_1777 * _RESERVED_IDENTIFIER_FIXUP_1782) + 1.0;
+            _RESERVED_IDENTIFIER_FIXUP_3437 = _RESERVED_IDENTIFIER_FIXUP_2876;
+            _RESERVED_IDENTIFIER_FIXUP_3435 = _RESERVED_IDENTIFIER_FIXUP_2849;
+        }
+        _RESERVED_IDENTIFIER_FIXUP_3436 = _RESERVED_IDENTIFIER_FIXUP_3437;
+        _RESERVED_IDENTIFIER_FIXUP_3434 = _RESERVED_IDENTIFIER_FIXUP_3435;
+    }
+    float _RESERVED_IDENTIFIER_FIXUP_1797 = min(_RESERVED_IDENTIFIER_FIXUP_3434.y, _RESERVED_IDENTIFIER_FIXUP_3434.x);
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3041 = _RESERVED_IDENTIFIER_FIXUP_3436;
+    _RESERVED_IDENTIFIER_FIXUP_3041.x = _RESERVED_IDENTIFIER_FIXUP_1797;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3454 = vec4((_RESERVED_IDENTIFIER_FIXUP_1797 * 0.300000011920928955078125) + 0.699999988079071044921875, 0.0, 0.0, 0.0);
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1819 = _RESERVED_IDENTIFIER_FIXUP_3041.xxx * _RESERVED_IDENTIFIER_FIXUP_3454.yzw;
+    float _RESERVED_IDENTIFIER_FIXUP_1821 = _RESERVED_IDENTIFIER_FIXUP_1819.x;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3052 = _RESERVED_IDENTIFIER_FIXUP_3454;
+    _RESERVED_IDENTIFIER_FIXUP_3052.y = _RESERVED_IDENTIFIER_FIXUP_1821;
+    _RESERVED_IDENTIFIER_FIXUP_3052.z = _RESERVED_IDENTIFIER_FIXUP_1819.y;
+    _RESERVED_IDENTIFIER_FIXUP_3052.w = _RESERVED_IDENTIFIER_FIXUP_1819.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1833 = (mix(_RESERVED_IDENTIFIER_FIXUP_2742, _RESERVED_IDENTIFIER_FIXUP_2754, _RESERVED_IDENTIFIER_FIXUP_1088.xxxx).xyz * _RESERVED_IDENTIFIER_FIXUP_3052.xxx) + _RESERVED_IDENTIFIER_FIXUP_3052.yzw;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3455 = vec4(_RESERVED_IDENTIFIER_FIXUP_1833.x, _RESERVED_IDENTIFIER_FIXUP_1821, _RESERVED_IDENTIFIER_FIXUP_1819.yz);
+    _RESERVED_IDENTIFIER_FIXUP_3455.y = _RESERVED_IDENTIFIER_FIXUP_1833.y;
+    _RESERVED_IDENTIFIER_FIXUP_3455.z = _RESERVED_IDENTIFIER_FIXUP_1833.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1846 = _RESERVED_IDENTIFIER_FIXUP_3455.xyz - optRegs.rows[optTile*82u+uint(2)].xyz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3064 = _RESERVED_IDENTIFIER_FIXUP_3455;
+    _RESERVED_IDENTIFIER_FIXUP_3064.x = _RESERVED_IDENTIFIER_FIXUP_1846.x;
+    _RESERVED_IDENTIFIER_FIXUP_3064.y = _RESERVED_IDENTIFIER_FIXUP_1846.y;
+    _RESERVED_IDENTIFIER_FIXUP_3064.z = _RESERVED_IDENTIFIER_FIXUP_1846.z;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_1899 = OptTex0( texcoord0.xyz);
+    vec2 param_42 = texcoord1.xy;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_1903 = hdTex1(param_42);
+    vec2 param_43 = texcoord1.wz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_1907 = hdTex2(param_43);
+    _RESERVED_IDENTIFIER_FIXUP_1907.y = _RESERVED_IDENTIFIER_FIXUP_1094;
+    _RESERVED_IDENTIFIER_FIXUP_1907.z = _RESERVED_IDENTIFIER_FIXUP_1096;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1920 = color0.xyz + color0.xyz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3082;
+    _RESERVED_IDENTIFIER_FIXUP_3082.x = _RESERVED_IDENTIFIER_FIXUP_1920.x;
+    _RESERVED_IDENTIFIER_FIXUP_3082.y = _RESERVED_IDENTIFIER_FIXUP_1920.y;
+    _RESERVED_IDENTIFIER_FIXUP_3082.z = _RESERVED_IDENTIFIER_FIXUP_1920.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1928 = _RESERVED_IDENTIFIER_FIXUP_1899.xyz;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1931 = _RESERVED_IDENTIFIER_FIXUP_1928 * _RESERVED_IDENTIFIER_FIXUP_3082.xyz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3088 = vec4(0.0);
+    _RESERVED_IDENTIFIER_FIXUP_3088.x = _RESERVED_IDENTIFIER_FIXUP_1931.x;
+    _RESERVED_IDENTIFIER_FIXUP_3088.y = _RESERVED_IDENTIFIER_FIXUP_1931.y;
+    _RESERVED_IDENTIFIER_FIXUP_3088.z = _RESERVED_IDENTIFIER_FIXUP_1931.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1946 = mix(_RESERVED_IDENTIFIER_FIXUP_3088.xyz, _RESERVED_IDENTIFIER_FIXUP_1928, greaterThanEqual(-_RESERVED_IDENTIFIER_FIXUP_1907.yyy, vec3(0.0)));
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3094 = _RESERVED_IDENTIFIER_FIXUP_1899;
+    _RESERVED_IDENTIFIER_FIXUP_3094.x = _RESERVED_IDENTIFIER_FIXUP_1946.x;
+    _RESERVED_IDENTIFIER_FIXUP_3094.y = _RESERVED_IDENTIFIER_FIXUP_1946.y;
+    _RESERVED_IDENTIFIER_FIXUP_3094.z = _RESERVED_IDENTIFIER_FIXUP_1946.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1954 = _RESERVED_IDENTIFIER_FIXUP_1903.xyz;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1957 = _RESERVED_IDENTIFIER_FIXUP_1954 * _RESERVED_IDENTIFIER_FIXUP_3082.xyz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3100;
+    _RESERVED_IDENTIFIER_FIXUP_3100.x = _RESERVED_IDENTIFIER_FIXUP_1957.x;
+    _RESERVED_IDENTIFIER_FIXUP_3100.y = _RESERVED_IDENTIFIER_FIXUP_1957.y;
+    _RESERVED_IDENTIFIER_FIXUP_3100.z = _RESERVED_IDENTIFIER_FIXUP_1957.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_1972 = mix(_RESERVED_IDENTIFIER_FIXUP_3100.xyz, _RESERVED_IDENTIFIER_FIXUP_1954, greaterThanEqual(-_RESERVED_IDENTIFIER_FIXUP_1907.zzz, vec3(0.0)));
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3106 = _RESERVED_IDENTIFIER_FIXUP_1903;
+    _RESERVED_IDENTIFIER_FIXUP_3106.x = _RESERVED_IDENTIFIER_FIXUP_1972.x;
+    _RESERVED_IDENTIFIER_FIXUP_3106.y = _RESERVED_IDENTIFIER_FIXUP_1972.y;
+    _RESERVED_IDENTIFIER_FIXUP_3106.z = _RESERVED_IDENTIFIER_FIXUP_1972.z;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_1983 = mix(_RESERVED_IDENTIFIER_FIXUP_3094, _RESERVED_IDENTIFIER_FIXUP_3106, _RESERVED_IDENTIFIER_FIXUP_1907.xxxx);
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3114 = _RESERVED_IDENTIFIER_FIXUP_3094;
+    _RESERVED_IDENTIFIER_FIXUP_3114.x = _RESERVED_IDENTIFIER_FIXUP_1171;
+    float _RESERVED_IDENTIFIER_FIXUP_1996 = clamp((_RESERVED_IDENTIFIER_FIXUP_1171 * (-3.4482758045196533203125)) + 3.413793087005615234375, 0.0, 1.0);
+    _RESERVED_IDENTIFIER_FIXUP_3114.x = _RESERVED_IDENTIFIER_FIXUP_1996;
+    float _RESERVED_IDENTIFIER_FIXUP_2002 = ((-_RESERVED_IDENTIFIER_FIXUP_1996) >= 0.0) ? 0.0 : 1.0;
+    _RESERVED_IDENTIFIER_FIXUP_3114.y = _RESERVED_IDENTIFIER_FIXUP_2002;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3441;
+    if (_RESERVED_IDENTIFIER_FIXUP_2002 != (-_RESERVED_IDENTIFIER_FIXUP_2002))
+    {
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2014 = (texcoord4.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2024 = (texcoord4.xy * vec2(0.5)) + vec2(0.5);
+        float _RESERVED_IDENTIFIER_FIXUP_2026 = _RESERVED_IDENTIFIER_FIXUP_2024.x;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3127 = _RESERVED_IDENTIFIER_FIXUP_3114;
+        _RESERVED_IDENTIFIER_FIXUP_3127.y = _RESERVED_IDENTIFIER_FIXUP_2026;
+        _RESERVED_IDENTIFIER_FIXUP_3127.z = _RESERVED_IDENTIFIER_FIXUP_2024.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2034 = _RESERVED_IDENTIFIER_FIXUP_3127.yz + optRegs.rows[optTile*82u+uint(3)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3131;
+        _RESERVED_IDENTIFIER_FIXUP_3131.x = _RESERVED_IDENTIFIER_FIXUP_2034.x;
+        _RESERVED_IDENTIFIER_FIXUP_3131.y = _RESERVED_IDENTIFIER_FIXUP_2034.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2041 = vec2(1.0, 0.0) * texcoord4.zx;
+        float _RESERVED_IDENTIFIER_FIXUP_2045 = _RESERVED_IDENTIFIER_FIXUP_2041.y;
+        _RESERVED_IDENTIFIER_FIXUP_3131.w = _RESERVED_IDENTIFIER_FIXUP_2045;
+        vec2 param_44 = _RESERVED_IDENTIFIER_FIXUP_2014.xy;
+        float param_45 = _RESERVED_IDENTIFIER_FIXUP_2014.w;
+        vec2 param_46 = _RESERVED_IDENTIFIER_FIXUP_3131.xy;
+        float param_47 = _RESERVED_IDENTIFIER_FIXUP_2045;
+        float _RESERVED_IDENTIFIER_FIXUP_2056 = hdLod5(param_44, param_45).x + hdLod5(param_46, param_47).x;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3457 = vec4(_RESERVED_IDENTIFIER_FIXUP_1996, _RESERVED_IDENTIFIER_FIXUP_2026, _RESERVED_IDENTIFIER_FIXUP_2024.y, _RESERVED_IDENTIFIER_FIXUP_2056);
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2063 = _RESERVED_IDENTIFIER_FIXUP_3457.yz + optRegs.rows[optTile*82u+uint(5)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3144;
+        _RESERVED_IDENTIFIER_FIXUP_3144.x = _RESERVED_IDENTIFIER_FIXUP_2063.x;
+        _RESERVED_IDENTIFIER_FIXUP_3144.y = _RESERVED_IDENTIFIER_FIXUP_2063.y;
+        _RESERVED_IDENTIFIER_FIXUP_3144.w = _RESERVED_IDENTIFIER_FIXUP_2045;
+        vec2 param_48 = _RESERVED_IDENTIFIER_FIXUP_3144.xy;
+        float param_49 = _RESERVED_IDENTIFIER_FIXUP_2045;
+        float _RESERVED_IDENTIFIER_FIXUP_2085 = _RESERVED_IDENTIFIER_FIXUP_2056 + hdLod5(param_48, param_49).x;
+        _RESERVED_IDENTIFIER_FIXUP_3457.w = _RESERVED_IDENTIFIER_FIXUP_2085;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2092 = _RESERVED_IDENTIFIER_FIXUP_3457.yz + optRegs.rows[optTile*82u+uint(7)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3157;
+        _RESERVED_IDENTIFIER_FIXUP_3157.x = _RESERVED_IDENTIFIER_FIXUP_2092.x;
+        _RESERVED_IDENTIFIER_FIXUP_3157.y = _RESERVED_IDENTIFIER_FIXUP_2092.y;
+        _RESERVED_IDENTIFIER_FIXUP_3157.w = _RESERVED_IDENTIFIER_FIXUP_2045;
+        vec2 param_50 = _RESERVED_IDENTIFIER_FIXUP_3157.xy;
+        float param_51 = _RESERVED_IDENTIFIER_FIXUP_2045;
+        float _RESERVED_IDENTIFIER_FIXUP_2114 = _RESERVED_IDENTIFIER_FIXUP_2085 + hdLod5(param_50, param_51).x;
+        _RESERVED_IDENTIFIER_FIXUP_3457.w = _RESERVED_IDENTIFIER_FIXUP_2114;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2121 = _RESERVED_IDENTIFIER_FIXUP_3457.yz + optRegs.rows[optTile*82u+uint(9)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3170;
+        _RESERVED_IDENTIFIER_FIXUP_3170.x = _RESERVED_IDENTIFIER_FIXUP_2121.x;
+        _RESERVED_IDENTIFIER_FIXUP_3170.y = _RESERVED_IDENTIFIER_FIXUP_2121.y;
+        _RESERVED_IDENTIFIER_FIXUP_3170.w = _RESERVED_IDENTIFIER_FIXUP_2045;
+        vec2 param_52 = _RESERVED_IDENTIFIER_FIXUP_3170.xy;
+        float param_53 = _RESERVED_IDENTIFIER_FIXUP_2045;
+        float _RESERVED_IDENTIFIER_FIXUP_2143 = _RESERVED_IDENTIFIER_FIXUP_2114 + hdLod5(param_52, param_53).x;
+        _RESERVED_IDENTIFIER_FIXUP_3457.y = _RESERVED_IDENTIFIER_FIXUP_2143;
+        float _RESERVED_IDENTIFIER_FIXUP_2148 = (_RESERVED_IDENTIFIER_FIXUP_2143 * 0.20000000298023223876953125) + (-1.0);
+        _RESERVED_IDENTIFIER_FIXUP_3457.y = _RESERVED_IDENTIFIER_FIXUP_2148;
+        _RESERVED_IDENTIFIER_FIXUP_3457.x = (_RESERVED_IDENTIFIER_FIXUP_1996 * _RESERVED_IDENTIFIER_FIXUP_2148) + 1.0;
+        _RESERVED_IDENTIFIER_FIXUP_3441 = _RESERVED_IDENTIFIER_FIXUP_3457;
+    }
+    else
+    {
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3124 = _RESERVED_IDENTIFIER_FIXUP_3114;
+        _RESERVED_IDENTIFIER_FIXUP_3124.x = 1.0;
+        _RESERVED_IDENTIFIER_FIXUP_3441 = _RESERVED_IDENTIFIER_FIXUP_3124;
+    }
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3192 = _RESERVED_IDENTIFIER_FIXUP_3441;
+    _RESERVED_IDENTIFIER_FIXUP_3192.y = _RESERVED_IDENTIFIER_FIXUP_1347;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3446;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3444;
+    if (_RESERVED_IDENTIFIER_FIXUP_1347 < 1.0)
+    {
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2175 = (texcoord5.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2185 = (texcoord5.xy * vec2(0.5)) + vec2(0.5);
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3332 = _RESERVED_IDENTIFIER_FIXUP_3192;
+        _RESERVED_IDENTIFIER_FIXUP_3332.y = _RESERVED_IDENTIFIER_FIXUP_2185.x;
+        _RESERVED_IDENTIFIER_FIXUP_3332.z = _RESERVED_IDENTIFIER_FIXUP_2185.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2195 = _RESERVED_IDENTIFIER_FIXUP_3332.yz + optRegs.rows[optTile*82u+uint(3)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3336;
+        _RESERVED_IDENTIFIER_FIXUP_3336.x = _RESERVED_IDENTIFIER_FIXUP_2195.x;
+        _RESERVED_IDENTIFIER_FIXUP_3336.y = _RESERVED_IDENTIFIER_FIXUP_2195.y;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2202 = vec2(1.0, 0.0) * texcoord5.zx;
+        float _RESERVED_IDENTIFIER_FIXUP_2206 = _RESERVED_IDENTIFIER_FIXUP_2202.y;
+        _RESERVED_IDENTIFIER_FIXUP_3336.w = _RESERVED_IDENTIFIER_FIXUP_2206;
+        vec2 param_54 = _RESERVED_IDENTIFIER_FIXUP_2175.xy;
+        float param_55 = _RESERVED_IDENTIFIER_FIXUP_2175.w;
+        vec2 param_56 = _RESERVED_IDENTIFIER_FIXUP_3336.xy;
+        float param_57 = _RESERVED_IDENTIFIER_FIXUP_2206;
+        float _RESERVED_IDENTIFIER_FIXUP_2217 = hdLod6(param_54, param_55).x + hdLod6(param_56, param_57).x;
+        _RESERVED_IDENTIFIER_FIXUP_3332.w = _RESERVED_IDENTIFIER_FIXUP_2217;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2224 = _RESERVED_IDENTIFIER_FIXUP_3332.yz + optRegs.rows[optTile*82u+uint(5)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3349;
+        _RESERVED_IDENTIFIER_FIXUP_3349.x = _RESERVED_IDENTIFIER_FIXUP_2224.x;
+        _RESERVED_IDENTIFIER_FIXUP_3349.y = _RESERVED_IDENTIFIER_FIXUP_2224.y;
+        _RESERVED_IDENTIFIER_FIXUP_3349.w = _RESERVED_IDENTIFIER_FIXUP_2206;
+        vec2 param_58 = _RESERVED_IDENTIFIER_FIXUP_3349.xy;
+        float param_59 = _RESERVED_IDENTIFIER_FIXUP_2206;
+        float _RESERVED_IDENTIFIER_FIXUP_2246 = _RESERVED_IDENTIFIER_FIXUP_2217 + hdLod6(param_58, param_59).x;
+        _RESERVED_IDENTIFIER_FIXUP_3332.w = _RESERVED_IDENTIFIER_FIXUP_2246;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2253 = _RESERVED_IDENTIFIER_FIXUP_3332.yz + optRegs.rows[optTile*82u+uint(7)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3362;
+        _RESERVED_IDENTIFIER_FIXUP_3362.x = _RESERVED_IDENTIFIER_FIXUP_2253.x;
+        _RESERVED_IDENTIFIER_FIXUP_3362.y = _RESERVED_IDENTIFIER_FIXUP_2253.y;
+        _RESERVED_IDENTIFIER_FIXUP_3362.w = _RESERVED_IDENTIFIER_FIXUP_2206;
+        vec2 param_60 = _RESERVED_IDENTIFIER_FIXUP_3362.xy;
+        float param_61 = _RESERVED_IDENTIFIER_FIXUP_2206;
+        float _RESERVED_IDENTIFIER_FIXUP_2275 = _RESERVED_IDENTIFIER_FIXUP_2246 + hdLod6(param_60, param_61).x;
+        _RESERVED_IDENTIFIER_FIXUP_3332.w = _RESERVED_IDENTIFIER_FIXUP_2275;
+        vec2 _RESERVED_IDENTIFIER_FIXUP_2282 = _RESERVED_IDENTIFIER_FIXUP_3332.yz + optRegs.rows[optTile*82u+uint(9)].xy;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3375;
+        _RESERVED_IDENTIFIER_FIXUP_3375.x = _RESERVED_IDENTIFIER_FIXUP_2282.x;
+        _RESERVED_IDENTIFIER_FIXUP_3375.y = _RESERVED_IDENTIFIER_FIXUP_2282.y;
+        _RESERVED_IDENTIFIER_FIXUP_3375.w = _RESERVED_IDENTIFIER_FIXUP_2206;
+        vec2 param_62 = _RESERVED_IDENTIFIER_FIXUP_3375.xy;
+        float param_63 = _RESERVED_IDENTIFIER_FIXUP_2206;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_2299 = hdLod6(param_62, param_63);
+        float _RESERVED_IDENTIFIER_FIXUP_2304 = _RESERVED_IDENTIFIER_FIXUP_2275 + _RESERVED_IDENTIFIER_FIXUP_2299.x;
+        _RESERVED_IDENTIFIER_FIXUP_3332.y = _RESERVED_IDENTIFIER_FIXUP_2304;
+        _RESERVED_IDENTIFIER_FIXUP_3332.y = _RESERVED_IDENTIFIER_FIXUP_2304 * 0.20000000298023223876953125;
+        _RESERVED_IDENTIFIER_FIXUP_3446 = _RESERVED_IDENTIFIER_FIXUP_2299;
+        _RESERVED_IDENTIFIER_FIXUP_3444 = _RESERVED_IDENTIFIER_FIXUP_3332;
+    }
+    else
+    {
+        float _RESERVED_IDENTIFIER_FIXUP_2317 = max(abs(texcoord6.x), abs(texcoord6.y));
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3197 = _RESERVED_IDENTIFIER_FIXUP_3192;
+        _RESERVED_IDENTIFIER_FIXUP_3197.z = _RESERVED_IDENTIFIER_FIXUP_2317;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3447;
+        vec4 _RESERVED_IDENTIFIER_FIXUP_3445;
+        if (_RESERVED_IDENTIFIER_FIXUP_2317 < 1.0)
+        {
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2326 = (texcoord6.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+            vec2 param_64 = _RESERVED_IDENTIFIER_FIXUP_2326.xy;
+            float param_65 = _RESERVED_IDENTIFIER_FIXUP_2326.w;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_2332 = hdLod7(param_64, param_65);
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2336 = (texcoord6.xy * vec2(0.5)) + vec2(0.5);
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3272 = _RESERVED_IDENTIFIER_FIXUP_3197;
+            _RESERVED_IDENTIFIER_FIXUP_3272.z = _RESERVED_IDENTIFIER_FIXUP_2336.x;
+            _RESERVED_IDENTIFIER_FIXUP_3272.w = _RESERVED_IDENTIFIER_FIXUP_2336.y;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2346 = _RESERVED_IDENTIFIER_FIXUP_3272.zw + optRegs.rows[optTile*82u+uint(3)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3276;
+            _RESERVED_IDENTIFIER_FIXUP_3276.x = _RESERVED_IDENTIFIER_FIXUP_2346.x;
+            _RESERVED_IDENTIFIER_FIXUP_3276.y = _RESERVED_IDENTIFIER_FIXUP_2346.y;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2353 = vec2(1.0, 0.0) * texcoord6.zx;
+            float _RESERVED_IDENTIFIER_FIXUP_2357 = _RESERVED_IDENTIFIER_FIXUP_2353.y;
+            _RESERVED_IDENTIFIER_FIXUP_3276.w = _RESERVED_IDENTIFIER_FIXUP_2357;
+            vec2 param_66 = _RESERVED_IDENTIFIER_FIXUP_3276.xy;
+            float param_67 = _RESERVED_IDENTIFIER_FIXUP_2357;
+            float _RESERVED_IDENTIFIER_FIXUP_2368 = _RESERVED_IDENTIFIER_FIXUP_2332.x + hdLod7(param_66, param_67).x;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3287 = _RESERVED_IDENTIFIER_FIXUP_2332;
+            _RESERVED_IDENTIFIER_FIXUP_3287.x = _RESERVED_IDENTIFIER_FIXUP_2368;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2375 = _RESERVED_IDENTIFIER_FIXUP_3272.zw + optRegs.rows[optTile*82u+uint(5)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3289;
+            _RESERVED_IDENTIFIER_FIXUP_3289.x = _RESERVED_IDENTIFIER_FIXUP_2375.x;
+            _RESERVED_IDENTIFIER_FIXUP_3289.y = _RESERVED_IDENTIFIER_FIXUP_2375.y;
+            _RESERVED_IDENTIFIER_FIXUP_3289.w = _RESERVED_IDENTIFIER_FIXUP_2357;
+            vec2 param_68 = _RESERVED_IDENTIFIER_FIXUP_3289.xy;
+            float param_69 = _RESERVED_IDENTIFIER_FIXUP_2357;
+            float _RESERVED_IDENTIFIER_FIXUP_2397 = _RESERVED_IDENTIFIER_FIXUP_2368 + hdLod7(param_68, param_69).x;
+            _RESERVED_IDENTIFIER_FIXUP_3287.x = _RESERVED_IDENTIFIER_FIXUP_2397;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2404 = _RESERVED_IDENTIFIER_FIXUP_3272.zw + optRegs.rows[optTile*82u+uint(7)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3302;
+            _RESERVED_IDENTIFIER_FIXUP_3302.x = _RESERVED_IDENTIFIER_FIXUP_2404.x;
+            _RESERVED_IDENTIFIER_FIXUP_3302.y = _RESERVED_IDENTIFIER_FIXUP_2404.y;
+            _RESERVED_IDENTIFIER_FIXUP_3302.w = _RESERVED_IDENTIFIER_FIXUP_2357;
+            vec2 param_70 = _RESERVED_IDENTIFIER_FIXUP_3302.xy;
+            float param_71 = _RESERVED_IDENTIFIER_FIXUP_2357;
+            float _RESERVED_IDENTIFIER_FIXUP_2426 = _RESERVED_IDENTIFIER_FIXUP_2397 + hdLod7(param_70, param_71).x;
+            _RESERVED_IDENTIFIER_FIXUP_3287.x = _RESERVED_IDENTIFIER_FIXUP_2426;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2433 = _RESERVED_IDENTIFIER_FIXUP_3272.zw + optRegs.rows[optTile*82u+uint(9)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3315;
+            _RESERVED_IDENTIFIER_FIXUP_3315.x = _RESERVED_IDENTIFIER_FIXUP_2433.x;
+            _RESERVED_IDENTIFIER_FIXUP_3315.y = _RESERVED_IDENTIFIER_FIXUP_2433.y;
+            _RESERVED_IDENTIFIER_FIXUP_3315.w = _RESERVED_IDENTIFIER_FIXUP_2357;
+            vec2 param_72 = _RESERVED_IDENTIFIER_FIXUP_3315.xy;
+            float param_73 = _RESERVED_IDENTIFIER_FIXUP_2357;
+            float _RESERVED_IDENTIFIER_FIXUP_2455 = _RESERVED_IDENTIFIER_FIXUP_2426 + hdLod7(param_72, param_73).x;
+            _RESERVED_IDENTIFIER_FIXUP_3272.z = _RESERVED_IDENTIFIER_FIXUP_2455;
+            _RESERVED_IDENTIFIER_FIXUP_3272.y = _RESERVED_IDENTIFIER_FIXUP_2455 * 0.20000000298023223876953125;
+            _RESERVED_IDENTIFIER_FIXUP_3447 = _RESERVED_IDENTIFIER_FIXUP_3287;
+            _RESERVED_IDENTIFIER_FIXUP_3445 = _RESERVED_IDENTIFIER_FIXUP_3272;
+        }
+        else
+        {
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3201 = _RESERVED_IDENTIFIER_FIXUP_3197;
+            _RESERVED_IDENTIFIER_FIXUP_3201.z = texcoord4.w;
+            _RESERVED_IDENTIFIER_FIXUP_3201.w = texcoord5.w;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2471 = (texcoord4.ww * vec2(0.5, 0.0)) + vec2(0.5, 0.0);
+            float _RESERVED_IDENTIFIER_FIXUP_2475 = _RESERVED_IDENTIFIER_FIXUP_2471.y;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3458 = vec4(_RESERVED_IDENTIFIER_FIXUP_2471.x, (texcoord5.w * 0.5) + 0.5, texcoord6.w, _RESERVED_IDENTIFIER_FIXUP_2475);
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2486 = _RESERVED_IDENTIFIER_FIXUP_3458.xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3459 = vec4(_RESERVED_IDENTIFIER_FIXUP_2486 + optRegs.rows[optTile*82u+uint(3)].xy, texcoord6.w, _RESERVED_IDENTIFIER_FIXUP_2475);
+            vec2 param_74 = _RESERVED_IDENTIFIER_FIXUP_2486;
+            float param_75 = _RESERVED_IDENTIFIER_FIXUP_2475;
+            vec2 param_76 = _RESERVED_IDENTIFIER_FIXUP_3459.xy;
+            float param_77 = _RESERVED_IDENTIFIER_FIXUP_2475;
+            float _RESERVED_IDENTIFIER_FIXUP_2516 = hdLod8(param_74, param_75).x + hdLod8(param_76, param_77).x;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3228 = _RESERVED_IDENTIFIER_FIXUP_3458;
+            _RESERVED_IDENTIFIER_FIXUP_3228.z = _RESERVED_IDENTIFIER_FIXUP_2516;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2523 = _RESERVED_IDENTIFIER_FIXUP_3228.xy + optRegs.rows[optTile*82u+uint(5)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3230 = _RESERVED_IDENTIFIER_FIXUP_3459;
+            _RESERVED_IDENTIFIER_FIXUP_3230.x = _RESERVED_IDENTIFIER_FIXUP_2523.x;
+            _RESERVED_IDENTIFIER_FIXUP_3230.y = _RESERVED_IDENTIFIER_FIXUP_2523.y;
+            vec2 param_78 = _RESERVED_IDENTIFIER_FIXUP_3230.xy;
+            float param_79 = _RESERVED_IDENTIFIER_FIXUP_2475;
+            float _RESERVED_IDENTIFIER_FIXUP_2538 = _RESERVED_IDENTIFIER_FIXUP_2516 + hdLod8(param_78, param_79).x;
+            _RESERVED_IDENTIFIER_FIXUP_3228.z = _RESERVED_IDENTIFIER_FIXUP_2538;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2545 = _RESERVED_IDENTIFIER_FIXUP_3228.xy + optRegs.rows[optTile*82u+uint(7)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3239 = _RESERVED_IDENTIFIER_FIXUP_3230;
+            _RESERVED_IDENTIFIER_FIXUP_3239.x = _RESERVED_IDENTIFIER_FIXUP_2545.x;
+            _RESERVED_IDENTIFIER_FIXUP_3239.y = _RESERVED_IDENTIFIER_FIXUP_2545.y;
+            vec2 param_80 = _RESERVED_IDENTIFIER_FIXUP_3239.xy;
+            float param_81 = _RESERVED_IDENTIFIER_FIXUP_2475;
+            float _RESERVED_IDENTIFIER_FIXUP_2560 = _RESERVED_IDENTIFIER_FIXUP_2538 + hdLod8(param_80, param_81).x;
+            _RESERVED_IDENTIFIER_FIXUP_3228.z = _RESERVED_IDENTIFIER_FIXUP_2560;
+            vec2 _RESERVED_IDENTIFIER_FIXUP_2567 = _RESERVED_IDENTIFIER_FIXUP_3228.xy + optRegs.rows[optTile*82u+uint(9)].xy;
+            vec4 _RESERVED_IDENTIFIER_FIXUP_3248 = _RESERVED_IDENTIFIER_FIXUP_3239;
+            _RESERVED_IDENTIFIER_FIXUP_3248.x = _RESERVED_IDENTIFIER_FIXUP_2567.x;
+            _RESERVED_IDENTIFIER_FIXUP_3248.y = _RESERVED_IDENTIFIER_FIXUP_2567.y;
+            vec2 param_82 = _RESERVED_IDENTIFIER_FIXUP_3248.xy;
+            float param_83 = _RESERVED_IDENTIFIER_FIXUP_2475;
+            float _RESERVED_IDENTIFIER_FIXUP_2582 = _RESERVED_IDENTIFIER_FIXUP_2560 + hdLod8(param_82, param_83).x;
+            _RESERVED_IDENTIFIER_FIXUP_3228.x = _RESERVED_IDENTIFIER_FIXUP_2582;
+            float _RESERVED_IDENTIFIER_FIXUP_2590 = max(abs(texcoord4.w), abs(texcoord5.w));
+            _RESERVED_IDENTIFIER_FIXUP_3228.y = _RESERVED_IDENTIFIER_FIXUP_2590;
+            float _RESERVED_IDENTIFIER_FIXUP_2596 = clamp((_RESERVED_IDENTIFIER_FIXUP_2590 * (-11.111110687255859375)) + 11.0, 0.0, 1.0);
+            _RESERVED_IDENTIFIER_FIXUP_3201.z = _RESERVED_IDENTIFIER_FIXUP_2596;
+            float _RESERVED_IDENTIFIER_FIXUP_2601 = (_RESERVED_IDENTIFIER_FIXUP_2582 * 0.20000000298023223876953125) + (-1.0);
+            _RESERVED_IDENTIFIER_FIXUP_3201.w = _RESERVED_IDENTIFIER_FIXUP_2601;
+            _RESERVED_IDENTIFIER_FIXUP_3201.y = (_RESERVED_IDENTIFIER_FIXUP_2596 * _RESERVED_IDENTIFIER_FIXUP_2601) + 1.0;
+            _RESERVED_IDENTIFIER_FIXUP_3447 = _RESERVED_IDENTIFIER_FIXUP_3228;
+            _RESERVED_IDENTIFIER_FIXUP_3445 = _RESERVED_IDENTIFIER_FIXUP_3201;
+        }
+        _RESERVED_IDENTIFIER_FIXUP_3446 = _RESERVED_IDENTIFIER_FIXUP_3447;
+        _RESERVED_IDENTIFIER_FIXUP_3444 = _RESERVED_IDENTIFIER_FIXUP_3445;
+    }
+    float _RESERVED_IDENTIFIER_FIXUP_2616 = min(_RESERVED_IDENTIFIER_FIXUP_3444.y, _RESERVED_IDENTIFIER_FIXUP_3444.x);
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3393 = _RESERVED_IDENTIFIER_FIXUP_3446;
+    _RESERVED_IDENTIFIER_FIXUP_3393.x = _RESERVED_IDENTIFIER_FIXUP_2616;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3460 = vec4((_RESERVED_IDENTIFIER_FIXUP_2616 * 0.300000011920928955078125) + 0.699999988079071044921875, _RESERVED_IDENTIFIER_FIXUP_1983.www * color1.xyz);
+    vec3 _RESERVED_IDENTIFIER_FIXUP_2638 = _RESERVED_IDENTIFIER_FIXUP_3393.xxx * _RESERVED_IDENTIFIER_FIXUP_3460.yzw;
+    float _RESERVED_IDENTIFIER_FIXUP_2640 = _RESERVED_IDENTIFIER_FIXUP_2638.x;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3404 = _RESERVED_IDENTIFIER_FIXUP_3460;
+    _RESERVED_IDENTIFIER_FIXUP_3404.y = _RESERVED_IDENTIFIER_FIXUP_2640;
+    _RESERVED_IDENTIFIER_FIXUP_3404.z = _RESERVED_IDENTIFIER_FIXUP_2638.y;
+    _RESERVED_IDENTIFIER_FIXUP_3404.w = _RESERVED_IDENTIFIER_FIXUP_2638.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_2652 = (_RESERVED_IDENTIFIER_FIXUP_1983.xyz * _RESERVED_IDENTIFIER_FIXUP_3404.xxx) + _RESERVED_IDENTIFIER_FIXUP_3404.yzw;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3461 = vec4(_RESERVED_IDENTIFIER_FIXUP_2652.x, _RESERVED_IDENTIFIER_FIXUP_2640, _RESERVED_IDENTIFIER_FIXUP_2638.yz);
+    _RESERVED_IDENTIFIER_FIXUP_3461.y = _RESERVED_IDENTIFIER_FIXUP_2652.y;
+    _RESERVED_IDENTIFIER_FIXUP_3461.z = _RESERVED_IDENTIFIER_FIXUP_2652.z;
+    vec3 _RESERVED_IDENTIFIER_FIXUP_2665 = _RESERVED_IDENTIFIER_FIXUP_3461.xyz - optRegs.rows[optTile*82u+uint(2)].xyz;
+    vec4 _RESERVED_IDENTIFIER_FIXUP_3416 = _RESERVED_IDENTIFIER_FIXUP_3461;
+    _RESERVED_IDENTIFIER_FIXUP_3416.x = _RESERVED_IDENTIFIER_FIXUP_2665.x;
+    _RESERVED_IDENTIFIER_FIXUP_3416.y = _RESERVED_IDENTIFIER_FIXUP_2665.y;
+    _RESERVED_IDENTIFIER_FIXUP_3416.z = _RESERVED_IDENTIFIER_FIXUP_2665.z;
+    oC0 = vec4((vec4(fog0, 0.0, 0.0, 0.0).xxx * _RESERVED_IDENTIFIER_FIXUP_3416.xyz) + optRegs.rows[optTile*82u+uint(2)].xyz, 1.0);
+    bool _RESERVED_IDENTIFIER_FIXUP_942 = optRegs.rows[optTile*82u+16u].x > 0.0;
+    bool _RESERVED_IDENTIFIER_FIXUP_951;
+    if (_RESERVED_IDENTIFIER_FIXUP_942)
+    {
+        _RESERVED_IDENTIFIER_FIXUP_951 = oC0.w < optRegs.rows[optTile*82u+16u].x;
+    }
+    else
+    {
+        _RESERVED_IDENTIFIER_FIXUP_951 = _RESERVED_IDENTIFIER_FIXUP_942;
+    }
+    if (_RESERVED_IDENTIFIER_FIXUP_951)
+    {
+        hdKilled = true;
+        return;
+    }
+    float _RESERVED_IDENTIFIER_FIXUP_988 = dot(wxlGBuf.xyz, wxlGBuf.xyz);
+    wxlAlbedo = vec4(max(vec4(_RESERVED_IDENTIFIER_FIXUP_3064.xyz + optRegs.rows[optTile*82u+uint(2)].xyz, 1.0).xyz, vec3(0.0)), (((clamp(round(wxlGClass), 0.0, 31.0) + ((optRegs.rows[optTile*82u+uint(14)].y > 0.5) ? 32.0 : 0.0)) + ((optRegs.rows[optTile*82u+uint(14)].x > 0.5) ? 64.0 : 0.0)) + ((wxlGPlain < 0.0040000001899898052215576171875) ? 128.0 : 0.0)) * 0.0039215688593685626983642578125);
+    float _RESERVED_IDENTIFIER_FIXUP_1014 = 0.4900000095367431640625 * clamp((log2(max(1.0 / gl_FragCoord.w, 0.0625)) + 4.0) * 0.0625, 0.0, 1.0);
+    vec4 _RESERVED_IDENTIFIER_FIXUP_2718;
+    if (_RESERVED_IDENTIFIER_FIXUP_988 > 9.9999999392252902907785028219223e-09)
+    {
+        _RESERVED_IDENTIFIER_FIXUP_2718 = vec4(wxlGBuf.xyz * inversesqrt(_RESERVED_IDENTIFIER_FIXUP_988), 0.50499999523162841796875 + _RESERVED_IDENTIFIER_FIXUP_1014);
+    }
+    else
+    {
+        _RESERVED_IDENTIFIER_FIXUP_2718 = vec4(0.0, 0.0, 0.0, (-0.50499999523162841796875) - _RESERVED_IDENTIFIER_FIXUP_1014);
+    }
+    wxlNormal = _RESERVED_IDENTIFIER_FIXUP_2718;
+    wxlLight = vec4(color0.xyz * 2.0, 1.0);
+}
+
+void HDEndpoint()
+{
+    vec4 r0 = vec4(0.0);
+    vec4 r1 = vec4(0.0);
+    vec4 r2 = vec4(0.0);
+    vec4 r3 = vec4(0.0);
+    vec4 r4 = vec4(0.0);
+    vec4 r5 = vec4(0.0);
+    oC0 = vec4(0.0);
+    vec4 v0 = color0;
+    vec4 v1 = color1;
+    vec4 v2 = texcoord0;
+    vec4 v3 = texcoord1;
+    vec4 v4 = texcoord4;
+    vec4 v5 = texcoord5;
+    vec4 v6 = texcoord6;
+    vec4 v7 = vec4(fog0, 0.0, 0.0, 0.0);
+    r0 = OptTex0( v2.xyz);
+    vec2 param = v3.xy;
+    r1 = hdTex1(param);
+    vec2 param_1 = v3.wz;
+    r2 = hdTex2(param_1);
+    vec2 hdB84 = abs(optRegs.rows[optTile*82u+uint(1)].xy);
+    r2.y = hdB84.x;
+    r2.z = hdB84.y;
+    vec3 hdB96 = v0.xyz + v0.xyz;
+    r3.x = hdB96.x;
+    r3.y = hdB96.y;
+    r3.z = hdB96.z;
+    vec3 hdB108 = r0.xyz * r3.xyz;
+    r4.x = hdB108.x;
+    r4.y = hdB108.y;
+    r4.z = hdB108.z;
+    vec4 hdB117 = r0;
+    vec3 hdB126 = mix(r4.xyz, hdB117.xyz, greaterThanEqual(-r2.yyy, vec3(0.0)));
+    r0.x = hdB126.x;
+    r0.y = hdB126.y;
+    r0.z = hdB126.z;
+    vec4 hdB135 = r3;
+    vec3 hdB137 = r1.xyz * hdB135.xyz;
+    r3.x = hdB137.x;
+    r3.y = hdB137.y;
+    r3.z = hdB137.z;
+    vec4 hdB146 = r1;
+    vec3 hdB152 = mix(r3.xyz, hdB146.xyz, greaterThanEqual(-r2.zzz, vec3(0.0)));
+    r1.x = hdB152.x;
+    r1.y = hdB152.y;
+    r1.z = hdB152.z;
+    r3 = mix(r0, r1, r2.xxxx);
+    r0.x = max(abs(v4.x), abs(v4.y));
+    r0.x = clamp((r0.x * (-3.4482758045196533203125)) + 3.413793087005615234375, 0.0, 1.0);
+    r0.y = ((-r0.x) >= 0.0) ? 0.0 : 1.0;
+    if (r0.y != (-r0.y))
+    {
+        r1 = (v4.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+        vec2 param_2 = r1.xy;
+        float param_3 = r1.w;
+        r1 = hdLod5(param_2, param_3);
+        vec2 hdB214 = (v4.xy * vec2(0.5)) + vec2(0.5);
+        r0.y = hdB214.x;
+        r0.z = hdB214.y;
+        vec2 hdB225 = r0.yz + optRegs.rows[optTile*82u+uint(3)].xy;
+        r2.x = hdB225.x;
+        r2.y = hdB225.y;
+        vec2 hdB233 = vec2(1.0, 0.0) * v4.zx;
+        r2.z = hdB233.x;
+        r2.w = hdB233.y;
+        vec2 param_4 = r2.xy;
+        float param_5 = r2.w;
+        r2 = hdLod5(param_4, param_5);
+        r0.w = r1.x + r2.x;
+        vec2 hdB256 = r0.yz + optRegs.rows[optTile*82u+uint(5)].xy;
+        r1.x = hdB256.x;
+        r1.y = hdB256.y;
+        vec2 hdB263 = vec2(1.0, 0.0) * v4.zx;
+        r1.z = hdB263.x;
+        r1.w = hdB263.y;
+        vec2 param_6 = r1.xy;
+        float param_7 = r1.w;
+        r1 = hdLod5(param_6, param_7);
+        r0.w += r1.x;
+        vec2 hdB286 = r0.yz + optRegs.rows[optTile*82u+uint(7)].xy;
+        r1.x = hdB286.x;
+        r1.y = hdB286.y;
+        vec2 hdB293 = vec2(1.0, 0.0) * v4.zx;
+        r1.z = hdB293.x;
+        r1.w = hdB293.y;
+        vec2 param_8 = r1.xy;
+        float param_9 = r1.w;
+        r1 = hdLod5(param_8, param_9);
+        r0.w += r1.x;
+        vec2 hdB316 = r0.yz + optRegs.rows[optTile*82u+uint(9)].xy;
+        r1.x = hdB316.x;
+        r1.y = hdB316.y;
+        vec2 hdB323 = vec2(1.0, 0.0) * v4.zx;
+        r1.z = hdB323.x;
+        r1.w = hdB323.y;
+        vec2 param_10 = r1.xy;
+        float param_11 = r1.w;
+        r1 = hdLod5(param_10, param_11);
+        r0.y = r0.w + r1.x;
+        r0.y = (r0.y * 0.20000000298023223876953125) + (-1.0);
+        r0.x = (r0.x * r0.y) + 1.0;
+    }
+    else
+    {
+        r0.x = 1.0;
+    }
+    r0.y = max(abs(v5.x), abs(v5.y));
+    if (r0.y < 1.0)
+    {
+        r1 = (v5.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+        vec2 param_12 = r1.xy;
+        float param_13 = r1.w;
+        r1 = hdLod6(param_12, param_13);
+        vec2 hdB383 = (v5.xy * vec2(0.5)) + vec2(0.5);
+        r0.y = hdB383.x;
+        r0.z = hdB383.y;
+        vec2 hdB393 = r0.yz + optRegs.rows[optTile*82u+uint(3)].xy;
+        r2.x = hdB393.x;
+        r2.y = hdB393.y;
+        vec2 hdB400 = vec2(1.0, 0.0) * v5.zx;
+        r2.z = hdB400.x;
+        r2.w = hdB400.y;
+        vec2 param_14 = r2.xy;
+        float param_15 = r2.w;
+        r2 = hdLod6(param_14, param_15);
+        r0.w = r1.x + r2.x;
+        vec2 hdB422 = r0.yz + optRegs.rows[optTile*82u+uint(5)].xy;
+        r1.x = hdB422.x;
+        r1.y = hdB422.y;
+        vec2 hdB429 = vec2(1.0, 0.0) * v5.zx;
+        r1.z = hdB429.x;
+        r1.w = hdB429.y;
+        vec2 param_16 = r1.xy;
+        float param_17 = r1.w;
+        r1 = hdLod6(param_16, param_17);
+        r0.w += r1.x;
+        vec2 hdB451 = r0.yz + optRegs.rows[optTile*82u+uint(7)].xy;
+        r1.x = hdB451.x;
+        r1.y = hdB451.y;
+        vec2 hdB458 = vec2(1.0, 0.0) * v5.zx;
+        r1.z = hdB458.x;
+        r1.w = hdB458.y;
+        vec2 param_18 = r1.xy;
+        float param_19 = r1.w;
+        r1 = hdLod6(param_18, param_19);
+        r0.w += r1.x;
+        vec2 hdB480 = r0.yz + optRegs.rows[optTile*82u+uint(9)].xy;
+        r1.x = hdB480.x;
+        r1.y = hdB480.y;
+        vec2 hdB487 = vec2(1.0, 0.0) * v5.zx;
+        r1.z = hdB487.x;
+        r1.w = hdB487.y;
+        vec2 param_20 = r1.xy;
+        float param_21 = r1.w;
+        r1 = hdLod6(param_20, param_21);
+        r0.y = r0.w + r1.x;
+        r0.y *= 0.20000000298023223876953125;
+    }
+    else
+    {
+        r0.z = max(abs(v6.x), abs(v6.y));
+        if (r0.z < 1.0)
+        {
+            r1 = (v6.xyzx * vec4(0.5, 0.5, 1.0, 0.0)) + vec4(0.5, 0.5, 0.0, 0.0);
+            vec2 param_22 = r1.xy;
+            float param_23 = r1.w;
+            r1 = hdLod7(param_22, param_23);
+            vec2 hdB536 = (v6.xy * vec2(0.5)) + vec2(0.5);
+            r0.z = hdB536.x;
+            r0.w = hdB536.y;
+            vec2 hdB546 = r0.zw + optRegs.rows[optTile*82u+uint(3)].xy;
+            r2.x = hdB546.x;
+            r2.y = hdB546.y;
+            vec2 hdB553 = vec2(1.0, 0.0) * v6.zx;
+            r2.z = hdB553.x;
+            r2.w = hdB553.y;
+            vec2 param_24 = r2.xy;
+            float param_25 = r2.w;
+            r2 = hdLod7(param_24, param_25);
+            r1.x += r2.x;
+            vec2 hdB575 = r0.zw + optRegs.rows[optTile*82u+uint(5)].xy;
+            r2.x = hdB575.x;
+            r2.y = hdB575.y;
+            vec2 hdB582 = vec2(1.0, 0.0) * v6.zx;
+            r2.z = hdB582.x;
+            r2.w = hdB582.y;
+            vec2 param_26 = r2.xy;
+            float param_27 = r2.w;
+            r2 = hdLod7(param_26, param_27);
+            r1.x += r2.x;
+            vec2 hdB604 = r0.zw + optRegs.rows[optTile*82u+uint(7)].xy;
+            r2.x = hdB604.x;
+            r2.y = hdB604.y;
+            vec2 hdB611 = vec2(1.0, 0.0) * v6.zx;
+            r2.z = hdB611.x;
+            r2.w = hdB611.y;
+            vec2 param_28 = r2.xy;
+            float param_29 = r2.w;
+            r2 = hdLod7(param_28, param_29);
+            r1.x += r2.x;
+            vec2 hdB633 = r0.zw + optRegs.rows[optTile*82u+uint(9)].xy;
+            r2.x = hdB633.x;
+            r2.y = hdB633.y;
+            vec2 hdB640 = vec2(1.0, 0.0) * v6.zx;
+            r2.z = hdB640.x;
+            r2.w = hdB640.y;
+            vec2 param_30 = r2.xy;
+            float param_31 = r2.w;
+            r2 = hdLod7(param_30, param_31);
+            r0.z = r1.x + r2.x;
+            r0.y = r0.z * 0.20000000298023223876953125;
+        }
+        else
+        {
+            r0.z = v4.w;
+            r0.w = v5.w;
+            vec2 hdB672 = (v4.ww * vec2(0.5, 0.0)) + vec2(0.5, 0.0);
+            r1.x = hdB672.x;
+            r1.w = hdB672.y;
+            r1.y = (v5.w * 0.5) + 0.5;
+            r1.z = v6.w;
+            vec2 param_32 = r1.xy;
+            float param_33 = r1.w;
+            r2 = hdLod8(param_32, param_33);
+            vec2 hdB697 = r1.xy + optRegs.rows[optTile*82u+uint(3)].xy;
+            r4.x = hdB697.x;
+            r4.y = hdB697.y;
+            r4.z = r1.z;
+            r4.w = r1.w;
+            vec2 param_34 = r4.xy;
+            float param_35 = r4.w;
+            r5 = hdLod8(param_34, param_35);
+            r1.z = r2.x + r5.x;
+            vec2 hdB725 = r1.xy + optRegs.rows[optTile*82u+uint(5)].xy;
+            r4.x = hdB725.x;
+            r4.y = hdB725.y;
+            vec2 param_36 = r4.xy;
+            float param_37 = r4.w;
+            r2 = hdLod8(param_36, param_37);
+            r1.z += r2.x;
+            vec2 hdB747 = r1.xy + optRegs.rows[optTile*82u+uint(7)].xy;
+            r4.x = hdB747.x;
+            r4.y = hdB747.y;
+            vec2 param_38 = r4.xy;
+            float param_39 = r4.w;
+            r2 = hdLod8(param_38, param_39);
+            r1.z += r2.x;
+            vec2 hdB769 = r1.xy + optRegs.rows[optTile*82u+uint(9)].xy;
+            r4.x = hdB769.x;
+            r4.y = hdB769.y;
+            vec2 param_40 = r4.xy;
+            float param_41 = r4.w;
+            r2 = hdLod8(param_40, param_41);
+            r1.x = r1.z + r2.x;
+            r1.y = max(abs(r0.z), abs(r0.w));
+            r0.z = clamp((r1.y * (-11.111110687255859375)) + 11.0, 0.0, 1.0);
+            r0.w = (r1.x * 0.20000000298023223876953125) + (-1.0);
+            r0.y = (r0.z * r0.w) + 1.0;
+        }
+    }
+    r1.x = min(r0.y, r0.x);
+    r0.x = (r1.x * 0.300000011920928955078125) + 0.699999988079071044921875;
+    vec3 hdB831 = r3.www * v1.xyz;
+    r0.y = hdB831.x;
+    r0.z = hdB831.y;
+    r0.w = hdB831.z;
+    vec4 hdB840 = r0;
+    vec3 hdB842 = r1.xxx * hdB840.yzw;
+    r0.y = hdB842.x;
+    r0.z = hdB842.y;
+    r0.w = hdB842.z;
+    vec4 hdB851 = r0;
+    vec4 hdB854 = r0;
+    vec3 hdB856 = (r3.xyz * hdB851.xxx) + hdB854.yzw;
+    r0.x = hdB856.x;
+    r0.y = hdB856.y;
+    r0.z = hdB856.z;
+    vec4 hdB863 = r0;
+    vec3 hdB870 = hdB863.xyz + (-optRegs.rows[optTile*82u+uint(2)].xyz);
+    r0.x = hdB870.x;
+    r0.y = hdB870.y;
+    r0.z = hdB870.z;
+    vec3 hdB885 = (v7.xxx * r0.xyz) + optRegs.rows[optTile*82u+uint(2)].xyz;
+    oC0.x = hdB885.x;
+    oC0.y = hdB885.y;
+    oC0.z = hdB885.z;
+    oC0.w = 1.0;
+    bool hdB897 = optRegs.rows[optTile*82u+16u].x > 0.0;
+    bool hdB905;
+    if (hdB897)
+    {
+        hdB905 = oC0.w < optRegs.rows[optTile*82u+16u].x;
+    }
+    else
+    {
+        hdB905 = hdB897;
+    }
+    if (hdB905)
+    {
+        hdKilled = true;
+        return;
+    }
+}
+
+
+layout(push_constant,std430) uniform OptPush {mat4 clipToTarget;uint verticesPerTile;uint flags;uvec2 pad;}optPush;
+void OptNativeMain()
+{
+    hdOverride = -1;
+    hdKilled = false;
+    hdOverride = -1;
+    hdKilled = false;
+    HDActual();
+    bool hdDiscardActual = hdKilled;
+    vec4 hdSaved0 = oC0;
+    vec4 hdSaved1 = wxlAlbedo;
+    vec4 hdSaved2 = wxlNormal;
+    vec4 hdSaved3 = wxlLight;
+    hdLow = vec4(0.0);
+    hdHigh = vec4(0.0);
+    bool _3261 = optRegs.rows[optTile*82u+uint(14)].w >= 65536.0;
+    bool _3271;
+    if (_3261)
+    {
+        _3271 = (uint(round(optRegs.rows[optTile*82u+uint(14)].z)) & 486u) != 0u;
+    }
+    else
+    {
+        _3271 = _3261;
+    }
+    if (_3271)
+    {
+        hdOverride = 0;
+        hdKilled = false;
+        HDEndpoint();
+        vec3 lo = oC0.xyz;
+        hdOverride = 1;
+        hdKilled = false;
+        HDEndpoint();
+        vec3 hi = oC0.xyz;
+        float tag = 0.50499999523162841796875 + (0.4900000095367431640625 * clamp((log2(max(1.0 / gl_FragCoord.w, 0.0625)) + 4.0) / 16.0, 0.0, 1.0));
+        bool _3296 = optRegs.rows[optTile*82u+uint(14)].y > 0.5;
+        bool _3311;
+        if (!_3296)
+        {
+            _3311 = ((uint(round(optRegs.rows[optTile*82u+uint(14)].w)) & uint(round(optRegs.rows[optTile*82u+uint(14)].z))) & 486u) != 0u;
+        }
+        else
+        {
+            _3311 = _3296;
+        }
+        if (_3311)
+        {
+            tag = -tag;
+        }
+        vec3 hdStored = clamp(hdSaved0.xyz, vec3(0.0), vec3(1.0));
+        hdLow = vec4(clamp(lo, vec3(0.0), vec3(1.0)) - hdStored, tag);
+        hdHigh = vec4(clamp(hi, vec3(0.0), vec3(1.0)) - hdStored, tag);
+    }
+    oC0 = hdSaved0;
+    wxlAlbedo = hdSaved1;
+    wxlNormal = hdSaved2;
+    wxlLight = hdSaved3;
+    if (hdDiscardActual)
+    {
+        discard;
+    }
+}
+
+
+void main(){optTile=min(optTileIn,3u);if((optPush.flags&2u)!=0u&&optClipIn<0)discard;OptNativeMain();}

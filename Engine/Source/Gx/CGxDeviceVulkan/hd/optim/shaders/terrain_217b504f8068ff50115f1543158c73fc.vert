@@ -1,0 +1,294 @@
+#version 450
+
+uint optTile=0u;
+layout(set=1,binding=0,std430)readonly buffer OptRegisters{vec4 rows[];}optRegs;
+
+
+
+layout(location = 0) in vec4 v0;
+layout(location = 1) in vec4 v1;
+layout(location = 2) in vec4 v2;
+layout(location = 13) out vec4 wxlGBuf;
+layout(location = 14) flat out float wxlGClass;
+layout(location = 15) out float wxlGPlain;
+layout(location = 0) out vec4 color0;
+layout(location = 1) out vec4 color1;
+layout(location = 2) out vec4 texcoord0;
+layout(location = 3) out vec4 texcoord1;
+layout(location = 5) out vec4 texcoord3;
+layout(location = 6) out vec4 texcoord4;
+layout(location = 7) out vec4 texcoord5;
+layout(location = 8) out vec4 texcoord6;
+layout(location = 10) out float fog0;
+
+
+layout(push_constant,std430) uniform OptPush {mat4 clipToTarget;uint verticesPerTile;uint flags;uvec2 pad;}optPush;
+
+layout(location=11)flat out uint optTileOut;layout(location=12)out float optClipOut;
+void OptNativeMain()
+{
+    vec4 _119 = ((v0.zzzz * optRegs.rows[optTile*82u+17u+uint(2)]) + ((v0.xxxx * optRegs.rows[optTile*82u+17u+uint(0)]) + (optRegs.rows[optTile*82u+17u+uint(1)] * v0.yyyy))) + optRegs.rows[optTile*82u+17u+uint(3)];
+    vec4 _141 = (_119.zzzz * optRegs.rows[optTile*82u+17u+uint(6)]) + ((_119.xxxx * optRegs.rows[optTile*82u+17u+uint(4)]) + (_119.yyyy * optRegs.rows[optTile*82u+17u+uint(5)]));
+    vec4 _149 = (_119.wwww * optRegs.rows[optTile*82u+17u+uint(7)]) + _141;
+    vec2 _158 = v0.xy - optRegs.rows[optTile*82u+17u+uint(23)].xy;
+    vec4 _1116 = _141;
+    _1116.x = _158.x;
+    _1116.y = _158.y;
+    vec4 _1120 = vec4(0.0);
+    _1120.x = optRegs.rows[optTile*82u+17u+uint(18)].x;
+    _1120.y = optRegs.rows[optTile*82u+17u+uint(18)].y;
+    vec2 _182 = (_1116.yx * _1120.yx) + optRegs.rows[optTile*82u+17u+uint(13)].yx;
+    vec4 _1124 = vec4(0.0);
+    _1124.x = _182.x;
+    _1124.y = _182.y;
+    _1120.x = optRegs.rows[optTile*82u+17u+uint(19)].x;
+    _1120.y = optRegs.rows[optTile*82u+17u+uint(19)].y;
+    vec4 _1136 = _1120;
+    _1136.x = optRegs.rows[optTile*82u+17u+uint(20)].x;
+    _1136.y = optRegs.rows[optTile*82u+17u+uint(20)].y;
+    float _234 = _119.z;
+    float _242 = (_234 * optRegs.rows[optTile*82u+17u+uint(12)].x) + optRegs.rows[optTile*82u+17u+uint(12)].y;
+    vec4 _1145 = _1116;
+    _1145.x = _242;
+    float _246 = max(_242, 0.0);
+    _1145.x = _246;
+    float _1111;
+    if (_246 == 0.0)
+    {
+        _1111 = 0.0;
+    }
+    else
+    {
+        _1111 = exp2(optRegs.rows[optTile*82u+17u+uint(12)].z * log2(abs(_246)));
+    }
+    vec4 _1151 = _1136;
+    _1151.x = _1111;
+    vec3 _266 = optRegs.rows[optTile*82u+17u+uint(1)].xyz * v1.yyy;
+    _1145.x = _266.x;
+    _1145.y = _266.y;
+    _1145.z = _266.z;
+    vec3 _281 = (v1.xxx * optRegs.rows[optTile*82u+17u+uint(0)].xyz) + _1145.xyz;
+    vec4 _1162 = _1145;
+    _1162.x = _281.x;
+    _1162.y = _281.y;
+    _1162.z = _281.z;
+    vec3 _296 = (v1.zzz * optRegs.rows[optTile*82u+17u+uint(2)].xyz) + _1162.xyz;
+    float _298 = _296.x;
+    vec3 _304 = _119.xyz;
+    vec3 _305 = -_304;
+    float _309 = dot(_305, _305);
+    vec4 _1512 = vec4(_298, _296.yz, _309);
+    _1512.w = inversesqrt(abs(_309));
+    vec3 _326 = (_305 * _1512.www) + optRegs.rows[optTile*82u+17u+uint(24)].xyz;
+    _1151.x = _326.x;
+    _1151.y = _326.y;
+    _1151.z = _326.z;
+    vec4 _1080 = _1151 * inversesqrt(dot(_1151.xyz, _1151.xyz));
+    vec4 _1185 = vec4(0.0);
+    _1185.x = _1080.x;
+    _1185.y = _1080.y;
+    _1185.z = _1080.z;
+    float _347 = dot(_1185.xyz, _1512.xyz);
+    vec4 _1191 = _1512;
+    _1191.w = _347;
+    float _351 = max(_347, 0.0);
+    _1191.w = _351;
+    float _1112;
+    if (_351 == 0.0)
+    {
+        _1112 = 0.0;
+    }
+    else
+    {
+        _1112 = exp2(optRegs.rows[optTile*82u+17u+uint(27)].w * log2(abs(_351)));
+    }
+    _1151.x = _1112;
+    _1191.w = clamp(dot(optRegs.rows[optTile*82u+17u+uint(24)].xyz, _1191.xyz), 0.0, 1.0);
+    vec4 _1207 = _1151;
+    _1207.x = optRegs.rows[optTile*82u+17u+uint(26)].x;
+    _1207.y = optRegs.rows[optTile*82u+17u+uint(26)].y;
+    _1207.z = optRegs.rows[optTile*82u+17u+uint(26)].z;
+    vec3 _403 = (_1207.xyz * _1191.www) + optRegs.rows[optTile*82u+17u+uint(25)].xyz;
+    float _405 = _403.x;
+    vec4 _1213 = _1207;
+    _1213.x = _405;
+    _1213.y = _403.y;
+    _1213.z = _403.z;
+    _1185.x = optRegs.rows[optTile*82u+17u+uint(1)].x;
+    _1185.y = optRegs.rows[optTile*82u+17u+uint(1)].y;
+    _1185.z = optRegs.rows[optTile*82u+17u+uint(1)].z;
+    vec3 _427 = _1185.xyz * optRegs.rows[optTile*82u+17u+uint(28)].yyy;
+    vec4 _1225 = vec4(0.0);
+    _1225.x = _427.x;
+    _1225.y = _427.y;
+    _1225.z = _427.z;
+    vec4 _1231 = vec4(0.0);
+    _1231.x = optRegs.rows[optTile*82u+17u+uint(0)].x;
+    _1231.y = optRegs.rows[optTile*82u+17u+uint(0)].y;
+    _1231.z = optRegs.rows[optTile*82u+17u+uint(0)].z;
+    vec3 _451 = (optRegs.rows[optTile*82u+17u+uint(28)].xxx * _1231.xyz) + _1225.xyz;
+    vec4 _1237 = _1225;
+    _1237.x = _451.x;
+    _1237.y = _451.y;
+    _1237.z = _451.z;
+    vec4 _1243 = vec4(0.0);
+    _1243.x = optRegs.rows[optTile*82u+17u+uint(2)].x;
+    _1243.y = optRegs.rows[optTile*82u+17u+uint(2)].y;
+    _1243.z = optRegs.rows[optTile*82u+17u+uint(2)].z;
+    vec3 _475 = (optRegs.rows[optTile*82u+17u+uint(28)].zzz * _1243.xyz) + _1237.xyz;
+    vec4 _1249 = _1237;
+    _1249.x = _475.x;
+    _1249.y = _475.y;
+    _1249.z = _475.z;
+    vec3 _487 = _1249.xyz - _304;
+    vec4 _1255 = _1249;
+    _1255.x = _487.x;
+    _1255.y = _487.y;
+    _1255.z = _487.z;
+    float _498 = dot(_1255.xyz, _1255.xyz);
+    vec4 _1261 = _1191;
+    _1261.w = _498;
+    float _1100 = inversesqrt(abs(_498));
+    _1261.w = _1100;
+    vec3 _509 = _1255.xyz * _1261.www;
+    vec4 _1266 = _1255;
+    _1266.x = _509.x;
+    _1266.y = _509.y;
+    _1266.z = _509.z;
+    float _518 = 1.0 / _1100;
+    _1261.w = _518;
+    vec4 _1513 = vec4(_405, _403.yz, clamp(dot(_1266.xyz, _1261.xyz), 0.0, 1.0));
+    vec3 _533 = _1513.www * optRegs.rows[optTile*82u+17u+uint(29)].xyz;
+    vec4 _1277 = _1266;
+    _1277.x = _533.x;
+    _1277.y = _533.y;
+    _1277.z = _533.z;
+    float _548 = (optRegs.rows[optTile*82u+17u+uint(30)].y * _518) + optRegs.rows[optTile*82u+17u+uint(30)].x;
+    _1513.w = _548;
+    float _554 = 1.0 / (_1100 * _1100);
+    _1261.w = _554;
+    float _563 = (_554 * optRegs.rows[optTile*82u+17u+uint(30)].z) + _548;
+    _1261.w = _563;
+    _1261.w = 1.0 / _563;
+    vec4 _1515 = vec4((_1277.xyz * _1261.www) + _1513.xyz, _548);
+    vec3 _589 = _1185.xyz * optRegs.rows[optTile*82u+17u+uint(31)].yyy;
+    vec4 _1303 = _1277;
+    _1303.x = _589.x;
+    _1303.y = _589.y;
+    _1303.z = _589.z;
+    vec3 _604 = (optRegs.rows[optTile*82u+17u+uint(31)].xxx * _1231.xyz) + _1303.xyz;
+    vec4 _1309 = _1303;
+    _1309.x = _604.x;
+    _1309.y = _604.y;
+    _1309.z = _604.z;
+    vec3 _619 = (optRegs.rows[optTile*82u+17u+uint(31)].zzz * _1243.xyz) + _1309.xyz;
+    vec4 _1315 = _1309;
+    _1315.x = _619.x;
+    _1315.y = _619.y;
+    _1315.z = _619.z;
+    vec3 _631 = _1315.xyz - _304;
+    vec4 _1321 = _1315;
+    _1321.x = _631.x;
+    _1321.y = _631.y;
+    _1321.z = _631.z;
+    float _642 = dot(_1321.xyz, _1321.xyz);
+    vec4 _1327 = _1261;
+    _1327.w = _642;
+    float _1105 = inversesqrt(abs(_642));
+    _1327.w = _1105;
+    vec3 _653 = _1321.xyz * _1327.www;
+    vec4 _1332 = _1321;
+    _1332.x = _653.x;
+    _1332.y = _653.y;
+    _1332.z = _653.z;
+    float _662 = 1.0 / _1105;
+    _1327.w = _662;
+    _1515.w = clamp(dot(_1332.xyz, _1327.xyz), 0.0, 1.0);
+    vec3 _677 = _1515.www * optRegs.rows[optTile*82u+17u+uint(32)].xyz;
+    _1332.x = _677.x;
+    _1332.y = _677.y;
+    _1332.z = _677.z;
+    float _692 = (optRegs.rows[optTile*82u+17u+uint(33)].y * _662) + optRegs.rows[optTile*82u+17u+uint(33)].x;
+    _1515.w = _692;
+    float _698 = 1.0 / (_1105 * _1105);
+    _1327.w = _698;
+    float _707 = (_698 * optRegs.rows[optTile*82u+17u+uint(33)].z) + _692;
+    _1327.w = _707;
+    _1327.w = 1.0 / _707;
+    vec4 _1517 = vec4((_1332.xyz * _1327.www) + _1515.xyz, _692);
+    vec3 _733 = _1185.xyz * optRegs.rows[optTile*82u+17u+uint(34)].yyy;
+    vec4 _1369 = _1185;
+    _1369.x = _733.x;
+    _1369.y = _733.y;
+    _1369.z = _733.z;
+    vec3 _748 = (optRegs.rows[optTile*82u+17u+uint(34)].xxx * _1231.xyz) + _1369.xyz;
+    vec4 _1375 = _1369;
+    _1375.x = _748.x;
+    _1375.y = _748.y;
+    _1375.z = _748.z;
+    vec3 _763 = (optRegs.rows[optTile*82u+17u+uint(34)].zzz * _1243.xyz) + _1375.xyz;
+    vec4 _1381 = _1375;
+    _1381.x = _763.x;
+    _1381.y = _763.y;
+    _1381.z = _763.z;
+    vec3 _775 = _1381.xyz - _304;
+    vec4 _1387 = _1381;
+    _1387.x = _775.x;
+    _1387.y = _775.y;
+    _1387.z = _775.z;
+    float _786 = dot(_1387.xyz, _1387.xyz);
+    vec4 _1393 = _1327;
+    _1393.w = _786;
+    float _1110 = inversesqrt(abs(_786));
+    _1393.w = _1110;
+    vec3 _797 = _1387.xyz * _1393.www;
+    vec4 _1398 = _1387;
+    _1398.x = _797.x;
+    _1398.y = _797.y;
+    _1398.z = _797.z;
+    float _806 = 1.0 / _1110;
+    _1393.w = _806;
+    _1393.x = clamp(dot(_1398.xyz, _1393.xyz), 0.0, 1.0);
+    vec4 _1518 = vec4(_1393.xxx * optRegs.rows[optTile*82u+17u+uint(35)].xyz, _806);
+    float _836 = (optRegs.rows[optTile*82u+17u+uint(36)].y * _806) + optRegs.rows[optTile*82u+17u+uint(36)].x;
+    _1517.w = _836;
+    float _842 = 1.0 / (_1110 * _1110);
+    _1518.w = _842;
+    float _851 = (_842 * optRegs.rows[optTile*82u+17u+uint(36)].z) + _836;
+    _1518.w = _851;
+    float _855 = 1.0 / _851;
+    _1518.w = _855;
+    vec4 _1520 = vec4((_1518.xyz * _1518.www) + _1517.xyz, _855);
+    vec3 _873 = min(_1520.xyz, vec3(1.0));
+    vec4 _1435 = _1520;
+    _1435.x = _873.x;
+    _1435.y = _873.y;
+    _1435.z = _873.z;
+    vec4 _1471 = vec4(0.0);
+    _1471.x = _119.x;
+    _1471.y = _119.y;
+    _1471.z = _234;
+    vec4 _1524 = vec4(_1435.xyz * v2.xyz, 1.0);
+    wxlGBuf = vec4(_298, _296.yz, 0.0);
+    wxlGClass = 1.0;
+    vec3 _996 = abs((_1524.xyz * 2.0) - _1213.xyz);
+    wxlGPlain = max(max(_996.x, _996.y), _996.z);
+    gl_Position = vec4(_149.x, -_149.y, _149.zw);
+    color0 = _1524;
+    color1 = vec4(_1151.xxx * optRegs.rows[optTile*82u+17u+uint(27)].xyz, 1.0);
+    texcoord0 = _1124;
+    texcoord1 = vec4((_1116.yx * _1120.yx) + optRegs.rows[optTile*82u+17u+uint(14)].yx, (_1116.xy * _1136.xy) + optRegs.rows[optTile*82u+17u+uint(15)].xy);
+    texcoord3 = _1471;
+    texcoord4 = vec4(dot(_119, optRegs.rows[optTile*82u+17u+uint(37)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(38)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(39)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(46)]));
+    texcoord5 = vec4(dot(_119, optRegs.rows[optTile*82u+17u+uint(40)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(41)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(42)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(47)]));
+    texcoord6 = vec4(dot(_119, optRegs.rows[optTile*82u+17u+uint(43)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(44)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(45)]), dot(_119, optRegs.rows[optTile*82u+17u+uint(48)]));
+    fog0 = min(_1111, 1.0);
+}
+
+
+void main(){
+optTile=min(uint(gl_VertexIndex)/max(optPush.verticesPerTile,1u),3u);
+OptNativeMain();
+optTileOut=optTile;optClipOut=dot(optRegs.rows[optTile*82u+81u],vec4(v0.xyz,1));
+if((optPush.flags&1u)!=0u){vec4 p=optPush.clipToTarget*vec4(gl_Position.x,-gl_Position.y,gl_Position.z,gl_Position.w);gl_Position=vec4(p.x,-p.y,p.z,p.w);}
+}
