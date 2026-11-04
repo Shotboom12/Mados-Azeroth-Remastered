@@ -1,3 +1,4 @@
+#include "WoW/Source/WorldClient/HD/HdTime.h"
 #include "WoW/Source/WorldClient/HD/HdFog.h"
 #include <cmath>
 #include <cstdio>
@@ -442,7 +443,7 @@ float4 main(float2 vpos : VPOS) : COLOR0 {
     }
 
     // HD: Forever's fog for one light, clear weather blended to storm like the client's colours.
-    bool LightFog(const LightRec* light, int32_t time, float storm, HD::ForeverFog& out) {
+    bool LightFog(const LightRec* light, float time, float storm, HD::ForeverFog& out) {
         if (!HD::ForeverFogAt(light, 0, time, &out)) return false;
         if (storm > 0.0f) {
             HD::ForeverFog stormFog;
@@ -458,7 +459,7 @@ float4 main(float2 vpos : VPOS) : COLOR0 {
         const DayNight::DNInfo& info = DayNight::g_dnInfo;
         const TSGrowableArray<const LightRec*>& lights = DayNight::g_areaLights;
         if (!lights.m_count) return 0.0f;
-        int32_t time = static_cast<int32_t>(info.m_dayProgression * 2880.0f);
+        float time = HD::DayNightBandTime(info.m_dayProgression * 2880.0f);
         float storm = info.m_stormBlend;
 
         bool have = LightFog(lights.m_data[0], time, storm, fog);
@@ -787,8 +788,8 @@ void HD::FogEndWorld() {
         r[3] = l.density * kFogDensityScale * density;
         r[7] = l.g;
         r[8] = l.start; r[9] = l.strength; r[10] = l.exponent;
-        r[11] = (l.flags & 1) ? 1.0f : 0.0f; // sun shadow: shadow maps and the sun being down
-        float rel = (l.flags & 2) ? playerZ : 0.0f;
+        r[11] = HD::SmoothFogFeatures()?HD::FogShadowWeight(l):((l.flags & 1)?1.0f:0.0f); // sun shadow: shadow maps and the sun being down
+        float rel = (HD::SmoothFogFeatures()?HD::FogRelativeHeightWeight(l):((l.flags & 2)?1.0f:0.0f))*playerZ;
         r[12] = l.topRate * 0.01f; r[13] = l.topHeight + rel;
         r[14] = l.bottomRate * 0.01f; r[15] = l.bottomHeight + rel;
         r[19] = l.shadowMul;

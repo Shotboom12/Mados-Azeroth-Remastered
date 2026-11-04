@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#version 450
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x=8,local_size_y=8)in;
+layout(set=0,binding=0)uniform sampler2D sceneDepth;
+layout(set=0,binding=1)uniform sampler2D shadowAtlas;
+layout(set=0,binding=2,rgba8)uniform image2D frame;
+layout(set=0,binding=3,std140)uniform Params {
+    mat4 worldFromView,matrices[6];vec4 screen,view,depth,light,atlas;uvec4 flags;
+} p;
+#include "HdLocalShadowLookup.glsl"
+void main(){
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(frame);if(any(greaterThanEqual(pixel,size)))return;
+    vec2 uv=(vec2(pixel)+.5)*p.screen.xy;float value=1;
+    if(p.flags.x==1u){
+        // Exact pixel-centre point rescale. Avoid a rounded reciprocal choosing a neighbouring
+        // atlas texel at a face/occluder boundary for odd window widths.
+        uvec2 source=(uvec2(pixel)*2u+1u)*uvec2(textureSize(shadowAtlas,0))/(uvec2(size)*2u);
+        value=texelFetch(shadowAtlas,ivec2(source),0).r;
+    }
+    else {
+        vec2 local=(uv-p.view.xy)*p.view.zw;float raw=textureLod(sceneDepth,uv,0).r;
+        float z01=(raw-p.depth.x)/max(p.depth.y-p.depth.x,1e-6);
+        if(raw<.99999 && z01<.99999 && all(greaterThanEqual(local,vec2(0))) && all(lessThanEqual(local,vec2(1)))){
+            float z=-p.depth.w/max(p.depth.z-z01,1e-7);
+            vec3 v=vec3((local*vec2(p.screen.z,p.screen.w)+p.atlas.xy)*z,z);
+            vec4 world=p.worldFromView*vec4(v,1);
+            value=HdLocalShadowVisibility(shadowAtlas,p.matrices,p.light,world.xyz/max(abs(world.w),1e-8),p.atlas.z,int(p.atlas.w));
+        }
+    }
+    vec4 original=imageLoad(frame,pixel);imageStore(frame,pixel,vec4(vec3(value),original.a));
+}

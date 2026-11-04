@@ -626,3 +626,194 @@ namespace wxlvk::vk::manifest
 
     void GetStats(Stats& out) { out = s.stats; }
 }
+
+// SPDX-License-Identifier: GPL-3.0-or-later
+#ifdef WOWDECOMP_FSR
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wincrypt.h>
+#include <sstream>
+#include <unordered_map>
+namespace wxlvk::vk::manifest {
+bool EnableVelocity(){
+ static bool attempted=false,accepted=false;
+ if(attempted)return accepted;attempted=true;
+ const auto refuse=[](const char*why){wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M2 shader overlay refused (%s); original shaders and camera motion retained; restart after correcting assets",why);return false;};
+ if(!s.loaded)return refuse("base manifest not loaded");
+ std::string overlay;
+ if(!ReadWhole(wxlvk::path::Resolve("shaders\\translated\\manifest-m2.txt"),overlay))return refuse("manifest-m2.txt missing");
+ if(overlay.size()>4*1024*1024)return refuse("overlay exceeds bound");
+ HCRYPTPROV provider=0;if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT))return refuse("SHA256 provider unavailable");
+ struct ProviderEnd{HCRYPTPROV p;~ProviderEnd(){CryptReleaseContext(p,0);}}providerEnd{provider};
+ std::unordered_map<std::string,std::string> hashes;
+ const auto digest=[&](const std::string&relative)->std::string{
+  const auto found=hashes.find(relative);if(found!=hashes.end())return found->second;
+  std::string bytes,result;
+  if(!ReadWhole(wxlvk::path::Resolve(relative.c_str()),bytes))return result;
+  HCRYPTHASH hash=0;
+  if(!CryptCreateHash(provider,CALG_SHA_256,0,0,&hash))return result;
+  BYTE value[32]{};DWORD size=sizeof value;
+  const bool ok=bytes.size()<=0xffffffffULL&&CryptHashData(hash,reinterpret_cast<const BYTE*>(bytes.data()),DWORD(bytes.size()),0)&&CryptGetHashParam(hash,HP_HASHVAL,value,&size,0)&&size==32;
+  CryptDestroyHash(hash);if(!ok)return result;
+  const char*hex="0123456789abcdef";for(BYTE b:value){result+=hex[b>>4];result+=hex[b&15];}
+  hashes.emplace(relative,result);return result;
+ };
+ const auto safe=[](const std::string&p){return !p.empty()&&p.size()<128&&p.find("..") == std::string::npos&&p.find(':')==std::string::npos&&p.find('\\')==std::string::npos&&p[0]!='/'&&p.find_first_of("\r\n\t ")==std::string::npos;};
+ const auto suffix=[](const char*p,const char*tail){std::string s=p;return s.size()>4?s.substr(0,s.size()-4)+tail:std::string();};
+ struct Change{Record*r;bool Record::*flag;};std::vector<Change> changes;std::unordered_map<std::string,bool> seen;
+ bool base=false;std::istringstream stream(overlay);std::string line;
+ while(std::getline(stream,line)){
+  if(line.empty()||line[0]=='#'||line=="\r")continue;
+  std::istringstream row(line);std::vector<std::string> tokens;std::string word;while(row>>word)tokens.push_back(word);
+  if(tokens.empty())continue;
+  if(tokens[0]=="base_sha256"){
+   if(base||tokens.size()!=2||tokens[1].size()!=64||digest(kManifestRelative)!=tokens[1])return refuse("base manifest SHA256 mismatch");base=true;continue;
+  }
+  if(!base||tokens.size()!=7||tokens[0]!="m2"||tokens[1].size()!=32||!safe(tokens[3])||!safe(tokens[5])||tokens[4].size()!=64||tokens[6].size()!=64)return refuse("malformed overlay line");
+  if(!seen.emplace(tokens[1]+":"+tokens[2],true).second)return refuse("duplicate overlay record/token");
+  Record*r=nullptr;for(uint32_t i=0;i<s.recordCount;++i)if(std::strcmp(s.records[i].md5,tokens[1].c_str())==0){r=&s.records[i];break;}
+  if(!r)return refuse("unknown overlay MD5");
+  bool Record::*flag=nullptr;std::string source;
+  if(tokens[2]=="vel"&&r->kind==Kind::Vertex&&r->gbuf){flag=&Record::vel;source=suffix(r->spv,".gbuf.spv");}
+  else if(tokens[2]=="velbones"&&r->kind==Kind::Vertex&&r->gbufBones&&r->bones[0]){flag=&Record::velBones;source=suffix(r->bones,".gbuf.spv");}
+  else if(tokens[2]=="velfrag"&&r->kind==Kind::Pixel&&r->gbuf){flag=&Record::velFrag;source=suffix(r->spv,".gbuf.spv");}
+  else if(tokens[2]=="velfragwind"&&r->kind==Kind::Pixel&&r->gbufWind&&r->wind[0]){flag=&Record::velFragWind;source=suffix(r->wind,".gbuf.spv");}
+  else if(tokens[2]=="velzero"&&r->kind==Kind::Pixel){flag=&Record::velZero;source=r->spv;}
+  else if(tokens[2]=="velzerowind"&&r->kind==Kind::Pixel&&r->wind[0]){flag=&Record::velZeroWind;source=r->wind;}
+  else if(tokens[2]=="gbufvelzero"&&r->kind==Kind::Pixel&&r->gbuf){flag=&Record::gbufVelZero;source=suffix(r->spv,".gbuf.spv");}
+  else if(tokens[2]=="gbufwindvelzero"&&r->kind==Kind::Pixel&&r->gbufWind&&r->wind[0]){flag=&Record::gbufWindVelZero;source=suffix(r->wind,".gbuf.spv");}
+  else return refuse("invalid variant kind or missing parent");
+  const bool zero=tokens[2].find("zero")!=std::string::npos;
+  const std::string expected=suffix(source.c_str(),zero?".velzero.spv":".vel.spv");
+  if(tokens[3]!=source||tokens[5]!=expected||digest("shaders/translated/"+source)!=tokens[4]||digest("shaders/translated/"+expected)!=tokens[6])return refuse("source or variant SHA256/path mismatch");
+  changes.push_back({r,flag});if(changes.size()>kMaxRecords*8u)return refuse("too many overlay entries");
+ }
+ if(!base||changes.empty())return refuse("empty overlay");
+ // No record is marked until EVERY source+variant fingerprint, parent relation and duplicate check passed.
+ for(const auto&change:changes)change.r->*change.flag=true;
+ wxl::ScriptMgr::Log(WXL_LOG_INFO,"fsr: M2 SHA256-verified shader overlay accepted (%u variants); original manifest and modules unchanged",unsigned(changes.size()));
+ accepted=true;return true;
+}
+}
+#endif
+
+#ifdef WOWDECOMP_FSR
+namespace wxlvk::vk::manifest {
+bool EnableSkinVelocity(){
+ static bool attempted=false,accepted=false;
+ if(attempted)return accepted;attempted=true;
+ const auto refuse=[](const char*why){wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M3 shader overlay refused (%s); original shaders and camera motion retained; restart after correcting assets",why);return false;};
+ if(!EnableVelocity())return refuse("M2 shader overlay prerequisite refused");
+ if(!s.loaded)return refuse("base manifest not loaded");
+ std::string overlay;
+ if(!ReadWhole(wxlvk::path::Resolve("shaders\\translated\\manifest-m3.txt"),overlay))return refuse("manifest-m3.txt missing");
+ if(overlay.size()>4*1024*1024)return refuse("overlay exceeds bound");
+ HCRYPTPROV provider=0;if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT))return refuse("SHA256 provider unavailable");
+ struct ProviderEnd{HCRYPTPROV p;~ProviderEnd(){CryptReleaseContext(p,0);}}providerEnd{provider};
+ std::unordered_map<std::string,std::string> hashes;
+ const auto digest=[&](const std::string&relative)->std::string{
+  const auto found=hashes.find(relative);if(found!=hashes.end())return found->second;
+  std::string bytes,result;
+  if(!ReadWhole(wxlvk::path::Resolve(relative.c_str()),bytes))return result;
+  HCRYPTHASH hash=0;
+  if(!CryptCreateHash(provider,CALG_SHA_256,0,0,&hash))return result;
+  BYTE value[32]{};DWORD size=sizeof value;
+  const bool ok=bytes.size()<=0xffffffffULL&&CryptHashData(hash,reinterpret_cast<const BYTE*>(bytes.data()),DWORD(bytes.size()),0)&&CryptGetHashParam(hash,HP_HASHVAL,value,&size,0)&&size==32;
+  CryptDestroyHash(hash);if(!ok)return result;
+  const char*hex="0123456789abcdef";for(BYTE b:value){result+=hex[b>>4];result+=hex[b&15];}
+  hashes.emplace(relative,result);return result;
+ };
+ const auto safe=[](const std::string&p){return !p.empty()&&p.size()<128&&p.find("..") == std::string::npos&&p.find(':')==std::string::npos&&p.find('\\')==std::string::npos&&p[0]!='/'&&p.find_first_of("\r\n\t ")==std::string::npos;};
+ const auto suffix=[](const char*p,const char*tail){std::string s=p;return s.size()>4?s.substr(0,s.size()-4)+tail:std::string();};
+ struct Change{Record*r;bool Record::*flag;};std::vector<Change> changes;std::unordered_map<std::string,bool> seen;
+ bool base=false;std::istringstream stream(overlay);std::string line;
+ while(std::getline(stream,line)){
+  if(line.empty()||line[0]=='#'||line=="\r")continue;
+  std::istringstream row(line);std::vector<std::string> tokens;std::string word;while(row>>word)tokens.push_back(word);
+  if(tokens.empty())continue;
+  if(tokens[0]=="base_sha256"){
+   if(base||tokens.size()!=2||tokens[1].size()!=64||digest(kManifestRelative)!=tokens[1])return refuse("base manifest SHA256 mismatch");base=true;continue;
+  }
+  if(!base||tokens.size()!=7||tokens[0]!="m3"||tokens[1].size()!=32||!safe(tokens[3])||!safe(tokens[5])||tokens[4].size()!=64||tokens[6].size()!=64)return refuse("malformed overlay line");
+  if(!seen.emplace(tokens[1]+":"+tokens[2],true).second)return refuse("duplicate overlay record/token");
+  Record*r=nullptr;for(uint32_t i=0;i<s.recordCount;++i)if(std::strcmp(s.records[i].md5,tokens[1].c_str())==0){r=&s.records[i];break;}
+  if(!r)return refuse("unknown overlay MD5");
+  bool Record::*flag=nullptr;std::string source;
+  if(tokens[2]=="skinbones"&&r->kind==Kind::Vertex&&r->gbufBones&&r->bones[0]){flag=&Record::skinBones;source=suffix(r->bones,".gbuf.spv");}
+  else return refuse("invalid variant kind or missing parent");
+  const std::string expected=suffix(source.c_str(),".skinvel.spv");
+  if(tokens[3]!=source||tokens[5]!=expected||digest("shaders/translated/"+source)!=tokens[4]||digest("shaders/translated/"+expected)!=tokens[6])return refuse("source or variant SHA256/path mismatch");
+  changes.push_back({r,flag});if(changes.size()>kMaxRecords*8u)return refuse("too many overlay entries");
+ }
+ if(!base||changes.empty())return refuse("empty overlay");
+ // No record is marked until EVERY source+variant fingerprint, parent relation and duplicate check passed.
+ for(const auto&change:changes)change.r->*change.flag=true;
+ wxl::ScriptMgr::Log(WXL_LOG_INFO,"fsr: M3 SHA256-verified shader overlay accepted (%u variants); original manifest and modules unchanged",unsigned(changes.size()));
+ accepted=true;return true;
+}
+}
+
+#endif
+
+#ifdef WOWDECOMP_FSR
+namespace wxlvk::vk::manifest {
+bool EnableWindVelocity(){
+ static bool attempted=false,accepted=false;
+ if(attempted)return accepted;attempted=true;
+ const auto refuse=[](const char*why){wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M4 shader overlay refused (%s); original shaders and camera motion retained; restart after correcting assets",why);return false;};
+ if(!EnableVelocity())return refuse("M2 shader overlay prerequisite refused");
+ if(!s.loaded)return refuse("base manifest not loaded");
+ std::string overlay;
+ if(!ReadWhole(wxlvk::path::Resolve("shaders\\translated\\manifest-m4.txt"),overlay))return refuse("manifest-m4.txt missing");
+ if(overlay.size()>4*1024*1024)return refuse("overlay exceeds bound");
+ HCRYPTPROV provider=0;if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT))return refuse("SHA256 provider unavailable");
+ struct ProviderEnd{HCRYPTPROV p;~ProviderEnd(){CryptReleaseContext(p,0);}}providerEnd{provider};
+ std::unordered_map<std::string,std::string> hashes;
+ const auto digest=[&](const std::string&relative)->std::string{
+  const auto found=hashes.find(relative);if(found!=hashes.end())return found->second;
+  std::string bytes,result;
+  if(!ReadWhole(wxlvk::path::Resolve(relative.c_str()),bytes))return result;
+  HCRYPTHASH hash=0;
+  if(!CryptCreateHash(provider,CALG_SHA_256,0,0,&hash))return result;
+  BYTE value[32]{};DWORD size=sizeof value;
+  const bool ok=bytes.size()<=0xffffffffULL&&CryptHashData(hash,reinterpret_cast<const BYTE*>(bytes.data()),DWORD(bytes.size()),0)&&CryptGetHashParam(hash,HP_HASHVAL,value,&size,0)&&size==32;
+  CryptDestroyHash(hash);if(!ok)return result;
+  const char*hex="0123456789abcdef";for(BYTE b:value){result+=hex[b>>4];result+=hex[b&15];}
+  hashes.emplace(relative,result);return result;
+ };
+ const auto safe=[](const std::string&p){return !p.empty()&&p.size()<128&&p.find("..") == std::string::npos&&p.find(':')==std::string::npos&&p.find('\\')==std::string::npos&&p[0]!='/'&&p.find_first_of("\r\n\t ")==std::string::npos;};
+ const auto suffix=[](const char*p,const char*tail){std::string s=p;return s.size()>4?s.substr(0,s.size()-4)+tail:std::string();};
+ struct Change{Record*r;bool Record::*flag;};std::vector<Change> changes;std::unordered_map<std::string,bool> seen;
+ bool base=false;std::istringstream stream(overlay);std::string line;
+ while(std::getline(stream,line)){
+  if(line.empty()||line[0]=='#'||line=="\r")continue;
+  std::istringstream row(line);std::vector<std::string> tokens;std::string word;while(row>>word)tokens.push_back(word);
+  if(tokens.empty())continue;
+  if(tokens[0]=="base_sha256"){
+   if(base||tokens.size()!=2||tokens[1].size()!=64||digest(kManifestRelative)!=tokens[1])return refuse("base manifest SHA256 mismatch");base=true;continue;
+  }
+  if(!base||tokens.size()!=7||tokens[0]!="m4"||tokens[1].size()!=32||!safe(tokens[3])||!safe(tokens[5])||tokens[4].size()!=64||tokens[6].size()!=64)return refuse("malformed overlay line");
+  if(!seen.emplace(tokens[1]+":"+tokens[2],true).second)return refuse("duplicate overlay record/token");
+  Record*r=nullptr;for(uint32_t i=0;i<s.recordCount;++i)if(std::strcmp(s.records[i].md5,tokens[1].c_str())==0){r=&s.records[i];break;}
+  if(!r)return refuse("unknown overlay MD5");
+  bool Record::*flag=nullptr;std::string source;
+  if(tokens[2]=="wind"&&r->kind==Kind::Vertex&&r->gbufWind&&r->wind[0]){flag=&Record::windVelocity;source=suffix(r->wind,".gbuf.spv");}
+  else if(tokens[2]=="windbones"&&r->kind==Kind::Vertex&&r->gbufWindBones&&r->windBones[0]){flag=&Record::windBonesVelocity;source=suffix(r->windBones,".gbuf.spv");}
+  else if(tokens[2]=="grass"&&r->kind==Kind::Vertex&&r->gbuf){flag=&Record::grassVelocity;source=suffix(r->spv,".gbuf.spv");}
+  else return refuse("invalid variant kind or missing parent");
+  const std::string expected=suffix(source.c_str(),".m4vel.spv");
+  if(tokens[3]!=source||tokens[5]!=expected||digest("shaders/translated/"+source)!=tokens[4]||digest("shaders/translated/"+expected)!=tokens[6])return refuse("source or variant SHA256/path mismatch");
+  changes.push_back({r,flag});if(changes.size()>kMaxRecords*8u)return refuse("too many overlay entries");
+ }
+ if(!base||changes.empty())return refuse("empty overlay");
+ // No record is marked until EVERY source+variant fingerprint, parent relation and duplicate check passed.
+ for(const auto&change:changes)change.r->*change.flag=true;
+ wxl::ScriptMgr::Log(WXL_LOG_INFO,"fsr: M4 SHA256-verified shader overlay accepted (%u variants); original manifest and modules unchanged",unsigned(changes.size()));
+ accepted=true;return true;
+}
+}
+
+
+#endif

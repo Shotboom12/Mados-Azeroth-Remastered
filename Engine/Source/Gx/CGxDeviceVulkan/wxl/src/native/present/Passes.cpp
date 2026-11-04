@@ -59,10 +59,18 @@ namespace wxlvk::native::present::detail
      * and transfers on the same images (a pass resumed after an inline transfer, the other frame in
      * flight's depth writes) -- the cases where no layout change, so no barrier, sits in between.
      */
-    VkRenderPass MakePass(VkFormat colour, VkFormat depth, bool clearColour, bool clearDepth, bool gbuffer, bool clearGBuffer)
+    VkRenderPass MakePass(VkFormat colour, VkFormat depth, bool clearColour, bool clearDepth, bool gbuffer, bool clearGBuffer
+#ifdef WOWDECOMP_FSR
+        , bool objectMotion
+#endif
+    )
     {
         // The attachment order of every class: the colour, a G-buffer class's three, the depth.
-        VkAttachmentDescription a[2 + kGBufferAttachments] = {};
+        VkAttachmentDescription a[2 + kGBufferAttachments
+#ifdef WOWDECOMP_FSR
+            +1
+#endif
+        ] = {};
         a[0].format         = colour;
         a[0].samples        = VK_SAMPLE_COUNT_1_BIT;
         a[0].loadOp         = clearColour ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -75,7 +83,11 @@ namespace wxlvk::native::present::detail
         // A G-buffer class: its three attachments after the colour, in GENERAL for the device's life (the
         // consumers sample them between passes with no layout change; Pass.cpp orders the accesses).
         uint32_t n = 1;
-        VkAttachmentReference colourRefs[1 + kGBufferAttachments] = {};
+        VkAttachmentReference colourRefs[1 + kGBufferAttachments
+#ifdef WOWDECOMP_FSR
+            +1
+#endif
+        ] = {};
         colourRefs[0] = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
         if (gbuffer)
         {
@@ -93,6 +105,14 @@ namespace wxlvk::native::present::detail
             }
         }
 
+#ifdef WOWDECOMP_FSR
+        if(objectMotion){
+            a[n]=a[1];a[n].format=VK_FORMAT_R16G16B16A16_SFLOAT;
+            // Cleared explicitly at WorldTargetBegin, then LOAD through every opaque pass break.
+            a[n].loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
+            colourRefs[1+kGBufferAttachments]={n,VK_IMAGE_LAYOUT_GENERAL};++n;
+        }
+#endif
         const bool hasDepth = depth != VK_FORMAT_UNDEFINED;
         VkAttachmentReference depthRef = { n, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
         if (hasDepth)
@@ -111,6 +131,9 @@ namespace wxlvk::native::present::detail
         VkSubpassDescription sub = {};
         sub.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount    = gbuffer ? 1 + kGBufferAttachments : 1;
+#ifdef WOWDECOMP_FSR
+        if(objectMotion)++sub.colorAttachmentCount;
+#endif
         sub.pColorAttachments       = colourRefs;
         sub.pDepthStencilAttachment = hasDepth ? &depthRef : nullptr;
 
@@ -141,6 +164,9 @@ namespace wxlvk::native::present::detail
         const VkResult r = s.dapi->CreateRenderPass(s.device, &info, nullptr, &pass);
         if (r != VK_SUCCESS)
         {
+#ifdef WOWDECOMP_FSR
+            if(objectMotion){wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M1 render pass refused (%s); retrying the existing camera path",ResultName(r));return VK_NULL_HANDLE;}
+#endif
             Fail("vkCreateRenderPass", r);
             return VK_NULL_HANDLE;
         }
@@ -151,8 +177,15 @@ namespace wxlvk::native::present::detail
     /// key holds the handle, so a pass is never destroyed and its handle never reused).
     VkRenderPass ClassPass(VkFormat colour, VkFormat depth, bool gbuffer)
     {
+#ifdef WOWDECOMP_FSR
+        const bool objectMotion=gbuffer&&WorldObjectMotionActive();
+#endif
         for (uint32_t i = 0; i < s.classCount; ++i)
-            if (s.classes[i].colour == colour && s.classes[i].depth == depth && s.classes[i].gbuffer == gbuffer)
+            if (s.classes[i].colour == colour && s.classes[i].depth == depth && s.classes[i].gbuffer == gbuffer
+#ifdef WOWDECOMP_FSR
+                &&s.classes[i].objectMotion==objectMotion
+#endif
+            )
                 return s.classes[i].pass;
         if (s.classCount == kMaxPassClasses)
         {
@@ -166,12 +199,19 @@ namespace wxlvk::native::present::detail
             }
             return VK_NULL_HANDLE;
         }
-        const VkRenderPass pass = MakePass(colour, depth, false, false, gbuffer, false);
+        const VkRenderPass pass = MakePass(colour, depth, false, false, gbuffer, false
+#ifdef WOWDECOMP_FSR
+            ,objectMotion
+#endif
+        );
         if (pass == VK_NULL_HANDLE) return VK_NULL_HANDLE;
         PassClass c;
         c.colour      = colour;
         c.depth       = depth;
         c.gbuffer     = gbuffer;
+#ifdef WOWDECOMP_FSR
+        c.objectMotion=objectMotion;
+#endif
         c.pass        = pass;
         c.clearing[0] = pass;
         s.classes[s.classCount++] = c;
@@ -210,7 +250,11 @@ namespace wxlvk::native::present::detail
             PassClass& c = s.classes[i];
             if (c.pass != base) continue;
             if (c.clearing[which] == VK_NULL_HANDLE)
-                c.clearing[which] = MakePass(c.colour, c.depth, (which & 1u) != 0, (which & 2u) != 0, c.gbuffer, (which & 4u) != 0);
+                c.clearing[which] = MakePass(c.colour, c.depth, (which & 1u) != 0, (which & 2u) != 0, c.gbuffer, (which & 4u) != 0
+#ifdef WOWDECOMP_FSR
+                    ,c.objectMotion
+#endif
+                );
             if (c.clearing[which] == VK_NULL_HANDLE) return base;
             clearing = true;
             return c.clearing[which];
@@ -246,7 +290,11 @@ namespace wxlvk::native::present::detail
         if (view == VK_NULL_HANDLE) return;
         for (uint32_t i = 0; i < s.fbCount;)
         {
-            if (s.fbs[i].colour == view || s.fbs[i].depth == view)
+            if (s.fbs[i].colour == view || s.fbs[i].depth == view
+#ifdef WOWDECOMP_FSR
+                ||s.fbs[i].objectMotion==view
+#endif
+            )
                 RemoveFramebuffer(i, lastUsed, now);
             else
                 ++i;
@@ -255,11 +303,18 @@ namespace wxlvk::native::present::detail
 
     VkFramebuffer FramebufferFor(VkRenderPass pass, VkImageView colour, VkImageView depth, VkExtent2D extent)
     {
+#ifdef WOWDECOMP_FSR
+        const VkImageView motionView=WorldObjectMotionPass(pass)?s.world.objectMotion.view:VK_NULL_HANDLE;
+#endif
         for (uint32_t i = 0; i < s.fbCount; ++i)
         {
             Framebuffer& f = s.fbs[i];
             if (f.pass == pass && f.colour == colour && f.depth == depth && f.extent.width == extent.width
-                && f.extent.height == extent.height)
+                && f.extent.height == extent.height
+#ifdef WOWDECOMP_FSR
+                &&f.objectMotion==motionView
+#endif
+            )
             {
                 f.lastUsed = s.serial;
                 return f.fb;
@@ -274,11 +329,18 @@ namespace wxlvk::native::present::detail
             RemoveFramebuffer(oldest, 0, false);
         }
         // The class's attachment order: the colour, a G-buffer class's three, the depth.
-        VkImageView attachments[2 + kGBufferAttachments] = {};
+        VkImageView attachments[2 + kGBufferAttachments
+#ifdef WOWDECOMP_FSR
+            +1
+#endif
+        ] = {};
         uint32_t    count = 0;
         attachments[count++] = colour;
         if (IsGBufferPass(pass))
             for (uint32_t i = 0; i < kGBufferAttachments; ++i) attachments[count++] = s.gbufView[i];
+#ifdef WOWDECOMP_FSR
+        if(motionView)attachments[count++]=motionView;
+#endif
         if (depth != VK_NULL_HANDLE) attachments[count++] = depth;
         VkFramebufferCreateInfo info = {};
         info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -292,6 +354,9 @@ namespace wxlvk::native::present::detail
         const VkResult r = s.dapi->CreateFramebuffer(s.device, &info, nullptr, &fb);
         if (r != VK_SUCCESS)
         {
+#ifdef WOWDECOMP_FSR
+            if(motionView){WorldObjectMotionRefuse();wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M1 framebuffer refused (%s); retrying the existing camera path",ResultName(r));return VK_NULL_HANDLE;}
+#endif
             Fail("vkCreateFramebuffer", r);
             return VK_NULL_HANDLE;
         }
@@ -299,6 +364,9 @@ namespace wxlvk::native::present::detail
         f.pass     = pass;
         f.colour   = colour;
         f.depth    = depth;
+#ifdef WOWDECOMP_FSR
+        f.objectMotion=motionView;
+#endif
         f.extent   = extent;
         f.fb       = fb;
         f.lastUsed = s.serial;

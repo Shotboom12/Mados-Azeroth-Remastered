@@ -13,6 +13,15 @@
 #include "WoW/Source/UIUtil/Camera.h"
 #include "WoW/Source/Ui/WorldFrame.h"
 #include "WoW/Source/WorldClient/World.h"
+#ifdef WOWDECOMP_LUMEN
+// HD 2026-11-02, kit commun R1 lot G1: Seyris wind model (GPLv3, hd/seyris), read only of map, area and weather.
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/seyris/SxCore.h"
+#include "WoW/Source/DB/DBClient/DBClient.h"
+#include "WoW/Source/WorldClient/Map.h"
+#include "WoW/Source/WorldClient/MapWeather.h"
+#include <cstdio>
+#include <cstring>
+#endif
 
 namespace {
     const double kTwoPi = 6.283185307179586;
@@ -67,6 +76,89 @@ namespace {
         *position = object->GetPosition();
         return true;
     }
+
+#ifdef WOWDECOMP_LUMEN
+    // Lot G1 (Seyris S2): hdSxWind 1 = the FORCE of the wind comes from the Seyris wind model at the player: the
+    // zone's profile (Vulkan\seyris\WindProfile.cdbc, subzone > zone > map > world), the native weather intensity
+    // and its travelling gusts, eased by the model. The sway itself is unchanged: same shader, same c53..c59, same
+    // heading (hdGrassWindDirection), so the FSR motion path and the For Ever grass light do not move. A heading that
+    // turns with time is NOT taken: the waves' phase is k . world position, turning k would make far grass flicker.
+    // hdSxWind 0 (default) = exactly the old wind. hdSxInfo (read only) says what was used.
+    const float kSxReference = 0.475f; // the profile file's world default (ground wind .3 .. .65): its middle = strength 1
+    CVar* s_sxWind = nullptr;
+    CVar* s_sxInfo = nullptr;
+    HD::Seyris::Cdbc s_sxTable;
+    bool s_sxTried = false;
+    HD::Seyris::WindModel s_sxModel;
+    bool s_sxRunning = false;
+    double s_sxSeconds = 0.0;
+    double s_sxInfoAt = -1.0;
+
+    void SxStatus(const char* text) {
+        if (!s_sxInfo) return;
+        if (!s_sxInfo->m_stringValue.m_str || std::strcmp(s_sxInfo->m_stringValue.m_str, text)) { s_sxInfo->SetReadOnly(false); s_sxInfo->InternalSet(text, true, false, false, false); } // read-only cvars ignore InternalSet
+        s_sxInfo->SetReadOnly(true);
+    }
+
+    // The area chain under the player, subzone first (AreaTable parents), at most 16.
+    HD::Seyris::Place SxPlace(const C3Vector& player) {
+        HD::Seyris::Place place;
+        place.map = s_mapId;
+        int32_t id = CMap::bDungeon ? 0 : CMap::QueryAreaIdTerrain(&player);
+        while (id > 0 && place.areaCount < 16) {
+            bool seen = false;
+            for (uint32_t i = 0; i < place.areaCount; i++) seen |= place.areas[i] == static_cast<uint32_t>(id);
+            if (seen) break;
+            place.areas[place.areaCount++] = static_cast<uint32_t>(id);
+            const AreaTableRec* area = g_areaTableDB.GetRecord(id);
+            id = area ? area->m_parentAreaID : 0;
+        }
+        return place;
+    }
+
+    // Returns the strength multiplier (1 = the old wind) and the speed multiplier, or false = keep the old wind.
+    bool SeyrisWind(double dt, float* strengthScale, float* speedScale) {
+        if (!s_sxWind) {
+            s_sxWind = CVar::Register("hdSxWind", "HD: 1 = grass wind force from the Seyris wind model (zone, weather, gusts), 0 = old wind", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+            s_sxInfo = CVar::LookupRegistered("hdSxInfo");
+            if (!s_sxInfo) s_sxInfo = CVar::Register("hdSxInfo", "HD: Seyris wind state (read only)", 0, "off", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+            SxStatus("off");
+        }
+        if (!s_sxWind || s_sxWind->m_intValue == 0) {
+            if (s_sxRunning) { s_sxModel.Reset(); s_sxRunning = false; SxStatus("off"); }
+            return false;
+        }
+        if (!s_sxTried) {
+            s_sxTried = true;
+            s_sxTable.Load("Vulkan\\seyris\\WindProfile.cdbc");
+        }
+        if (s_sxTable.Rows() == 0) { SxStatus("WindProfile.cdbc absent ou invalide : vent d'origine"); return false; }
+        C3Vector player;
+        if (!PlayerPosition(&player)) return false;
+        HD::Seyris::Place place = SxPlace(player);
+        float weather = 0.0f;
+        if (World::s_weather && World::s_weather->GetType() != 0) {
+            weather = World::s_weather->m_intensity;
+            weather = std::isfinite(weather) ? Clamp(weather, 0.0f, 1.0f) : 0.0f;
+        }
+        s_sxSeconds += dt;
+        s_sxModel.Update(HD::Seyris::ResolveWind(s_sxTable, place), place.map, weather, s_sxSeconds, dt);
+        s_sxRunning = true;
+        HD::Seyris::WindSample sample = s_sxModel.At({ player.x, player.y, player.z });
+        float force = std::sqrt(sample.x * sample.x + sample.y * sample.y);
+        if (!std::isfinite(force)) force = 0.0f;
+        *strengthScale = Clamp(force / kSxReference, 0.0f, 6.0f);
+        *speedScale = Clamp(0.5f + 0.5f * *strengthScale, 0.5f, 2.5f);
+        if (s_sxInfoAt < 0.0 || s_sxSeconds - s_sxInfoAt > 0.25) {
+            s_sxInfoAt = s_sxSeconds;
+            char text[160];
+            std::snprintf(text, sizeof(text), "vent Seyris : carte %d, zone %u, meteo %.2f, force x%.2f, rafale %.2f",
+                place.map, place.areaCount ? place.areas[0] : 0u, weather, *strengthScale, sample.gust);
+            SxStatus(text);
+        }
+        return true;
+    }
+#endif
 }
 
 void HD::GrassWindRegister() {
@@ -92,6 +184,10 @@ void HD::GrassWindPrepare() {
     float speed = s_speed ? s_speed->m_floatValue : 3.0f;
     float heading = s_direction ? s_direction->m_floatValue : 45.0f;
     float strength = s_strength ? Clamp(s_strength->m_floatValue, 0.0f, 50.0f) : 1.0f;
+#ifdef WOWDECOMP_LUMEN
+    float sxStrength = 1.0f, sxSpeed = 1.0f;
+    if (wind && SeyrisWind(dt, &sxStrength, &sxSpeed)) { strength = Clamp(strength * sxStrength, 0.0f, 50.0f); speed *= sxSpeed; } // lot G1
+#endif
     if (!wind) strength = 0.0f;
 
     float a1 = static_cast<float>(heading * (kTwoPi / 360.0));

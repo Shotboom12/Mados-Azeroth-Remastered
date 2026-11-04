@@ -1,3 +1,4 @@
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/lamp/HdLampHooks.h"
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -82,6 +83,9 @@ CM2Light::CM2Light() {
 
 // INLINED
 CM2Light::~CM2Light() {
+#ifdef WOWDECOMP_VULKAN
+    HD::Lamp::Native::Forget(this);
+#endif
     this->Unlink();
 }
 

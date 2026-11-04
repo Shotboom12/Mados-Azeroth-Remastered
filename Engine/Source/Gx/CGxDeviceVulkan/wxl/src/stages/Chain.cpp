@@ -421,6 +421,18 @@ namespace wxlvk::stages::chain
         g.world.valid  = wxlvk::native::render::SceneNow(extent, g.world.scene, g.world.viewport, g.world.jitter);
     }
 
+#ifdef WOWDECOMP_FSR
+    bool WorldSceneOf(uint64_t serial, WXL_VkSceneConstants& scene, VkViewport& viewport, float jitter[2])
+    {
+        if (!g.world.valid || g.world.serial != serial) return false;
+        scene       = g.world.scene;
+        viewport    = g.world.viewport;
+        jitter[0]   = g.world.jitter[0];
+        jitter[1]   = g.world.jitter[1];
+        return true;
+    }
+#endif
+
     void Run(Point point)
     {
         if (point >= Point::Count) return;

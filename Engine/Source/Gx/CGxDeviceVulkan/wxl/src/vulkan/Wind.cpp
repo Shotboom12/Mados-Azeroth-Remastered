@@ -152,6 +152,9 @@ namespace
         VkDescriptorPool pool = VK_NULL_HANDLE;
         VkDescriptorSet  sets[kSlots] = {};
 
+#ifdef WOWDECOMP_FSR
+        WXL_VkWindParams motionParams[kSlots]{};bool motionHave[kSlots]{};uint64_t motionRevision=0;
+#endif
         WXL_VkWindParams params = {};
         bool             paramsSet = false;
         uint64_t         viewFrame = ~0ull;   ///< the frame whose live camera the slot's block holds
@@ -353,6 +356,9 @@ namespace
         if (identity || !Inverse(view, inv)) return;   // no world camera now: the consumer's view stays
         std::memcpy(g.params.view, view, sizeof view);
         std::memcpy(g.params.viewInv, inv, sizeof inv);
+#ifdef WOWDECOMP_FSR
+        g.motionParams[frameSlot]=g.params;g.motionHave[frameSlot]=true;
+#endif
         std::memcpy(g.blocks[frameSlot].block.mapped, &g.params, sizeof g.params);
         memory::FlushHost(g.blocks[frameSlot].block);
     }
@@ -697,6 +703,9 @@ namespace wxlvk::vk::wind
             return;
         }
         if (!g.ready || frameSlot >= kSlots) return;
+#ifdef WOWDECOMP_FSR
+        g.motionParams[frameSlot]=g.params;g.motionHave[frameSlot]=true;
+#endif
         std::memcpy(g.blocks[frameSlot].block.mapped, &g.params, sizeof g.params);
         memory::FlushHost(g.blocks[frameSlot].block);
     }
@@ -858,6 +867,9 @@ namespace wxlvk::vk::wind
         m.indices.clear();
         m.indices.shrink_to_fit();
         m.out.clear();
+#ifdef WOWDECOMP_FSR
+        ++g.motionRevision; // new per-vertex data must never be paired with an old model history
+#endif
         ++g.stats.windyModels;
         return 1;
     }
@@ -947,3 +959,10 @@ namespace wxlvk::vk::wind
                             g.params.wind[2], g.params.time[1], g.params.time[2]);
     }
 }
+
+#ifdef WOWDECOMP_FSR
+namespace wxlvk::vk::wind{
+bool MotionResourcesFor(uint32_t slot,MotionResources&out){out=MotionResources{};if(!g.ready||slot>=kSlots)return false;out.block=g.blocks[slot].handle;out.data=g.data.handle;out.dataBytes=kDataBytes;out.revision=g.motionRevision;return out.block&&out.data;}
+const WXL_VkWindParams* MotionSnapshot(uint32_t slot,uint64_t&revision){if(!g.ready||slot>=kSlots||!g.motionHave[slot])return nullptr;revision=g.motionRevision;return &g.motionParams[slot];}
+}
+#endif

@@ -17,6 +17,7 @@
 #include "native/render/Jitter.hpp"
 
 #include "native/Present.hpp"
+#include <cmath>
 
 namespace
 {
@@ -38,6 +39,10 @@ namespace
     {
         bool     inWorld  = false;
         bool     active   = false;
+#ifdef WOWDECOMP_FSR
+        bool fsrOverride=false;
+        float fsrX=0,fsrY=0;
+#endif
         uint32_t requests = 0;   ///< consumers asking for the jitter (RequestJitter)
         uint32_t index    = 0;
         float    x        = 0.0f;
@@ -54,6 +59,9 @@ namespace wxlvk::native::render::jitter
     {
         g.inWorld = true;
         g.active = g.requests > 0;
+#ifdef WOWDECOMP_FSR
+        if(g.fsrOverride){g.active=true;g.x=g.fsrX;g.y=g.fsrY;return;}
+#endif
         if (!g.active)
         {
             g.x = g.y = 0.0f;
@@ -65,11 +73,26 @@ namespace wxlvk::native::render::jitter
     }
 
     void EndWorld() { g.inWorld = false; }
+#ifdef WOWDECOMP_FSR
+    bool SetFsrSample(bool enabled,float x,float y)
+    {
+        if(g.inWorld)return false;
+        if(enabled&&(!std::isfinite(x)||!std::isfinite(y)||std::abs(x)>.5f||std::abs(y)>.5f||(x==0&&y==0)))return false;
+        g.fsrOverride=enabled;g.fsrX=enabled?x:0;g.fsrY=enabled?y:0;return true;
+    }
+#endif
+
 
     void Apply(VkViewport& viewport)
     {
         if (!g.inWorld || !g.active || !wxlvk::native::present::OnBackBuffer()) return;
-        if (viewport.maxDepth >= 0.999f)
+        // HD 2026-11-01 (Q1): under FSR the sky / full-range draws are jittered too (AMD: jitter ALL rendering);
+        // the engine's own TAA path keeps skipping them.
+        if (viewport.maxDepth >= 0.999f
+#ifdef WOWDECOMP_FSR
+            && !g.fsrOverride
+#endif
+           )
         {
             ++g.skipped;
             return;

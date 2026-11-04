@@ -2107,7 +2107,18 @@ void CMapRenderChunk::SetVertexShader(CMapRenderChunk* renderChunk, int32_t laye
     CGxShader* shader = CMapRenderChunk::GetVertexShader(pointLights, layerCount - 1, specular, vertexColor, a3, CShadowCache::GetShadowValue());
     g_theGxDevicePtr->RsSet(GxRs_VertexShader, shader);
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&consts), sizeof(SVertexShaderConstants) / sizeof(C4Vector));
-    HD::TerrainVertexConstants(&renderChunk->m_sphere, World::s_m2Scene, &CWorldScene::s_activeWorldView); // HD: c49-c53 for our terrain vertex shader, pixel c16.. (Forever lighting, hdLights)
+    // HD: hdLights picks the lamps that reach the chunk's ground: 5 x 5 of its outer vertices per map chunk (its
+    // sphere also bounds what stands on it, ~50 yards, and ranked every lamp inside it as equally near)
+    C3Vector ground[50];
+    int32_t groundCount = 0;
+    for (int32_t m = 0; m < 2; m++) {
+        CMapChunk* mapChunk = renderChunk->m_mapChunks[m];
+        if (!mapChunk || !mapChunk->m_height) continue;
+        for (int32_t r = 0; r <= 8; r += 2) {
+            for (int32_t col = 0; col <= 8; col += 2) mapChunk->GetVertexPosition(r * 17 + col, &ground[groundCount++]);
+        }
+    }
+    HD::TerrainVertexConstants(&renderChunk->m_sphere, World::s_m2Scene, &CWorldScene::s_activeWorldView, ground, groundCount); // HD: c49-c53 for our terrain vertex shader, pixel c16.. (Forever lighting, hdLights)
 }
 
 // VERIFY: 2226742d manual

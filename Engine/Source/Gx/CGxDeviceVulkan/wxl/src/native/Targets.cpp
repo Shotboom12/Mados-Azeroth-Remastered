@@ -31,6 +31,7 @@
 #include "wxl/offsets/engine/Gx.hpp"
 #include "wxl/offsets/engine/GxDevice.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -258,6 +259,22 @@ namespace
             ++g.copyRefused;
             return false;
         }
+#ifdef WOWDECOMP_FSR
+        // Inside the FSR world target the "back buffer" is the world at the render size while the engine's rects are
+        // in native pixels: the source rect is scaled onto it and the copy becomes a stretch.
+        float fx = 1.0f, fy = 1.0f;
+        if (present::WorldTargetScale(fx, fy) && (fx != 1.0f || fy != 1.0f))
+        {
+            auto scale = [](int32_t v, float f, bool up) {
+                if (v <= 0 || v == 0x7FFFFFFF) return v;
+                const double x = static_cast<double>(v) * f;
+                return static_cast<int32_t>(up ? std::ceil(x) : std::floor(x));
+            };
+            sx0 = scale(sx0, fx, false); sy0 = scale(sy0, fy, false);
+            sx1 = scale(sx1, fx, true);  sy1 = scale(sy1, fy, true);
+            stretch = true;
+        }
+#endif
         const int32_t bw = static_cast<int32_t>(backExtent.width), bh = static_cast<int32_t>(backExtent.height);
         const int32_t lw = static_cast<int32_t>(LevelSide(d.image->extent.width, level));
         const int32_t lh = static_cast<int32_t>(LevelSide(d.image->extent.height, level));

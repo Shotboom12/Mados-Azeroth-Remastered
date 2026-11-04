@@ -13,7 +13,7 @@ struct Settings {
     bool enabled = false, halfResolution = false, debug = false, useGBufferNormals = false;
     float radius = 1.0f, strength = .85f;
     uint32_t quality = 1; // HD: XeGTAO low 1x2, medium 2x2, high 3x3, ultra 9x3
-    bool temporal = false; // HD (Claude): accumulate over frames with camera reprojection (cvar default on)
+    bool temporal = false; // HD: accumulate over frames with camera reprojection (cvar default on)
     // Extra PROJECTION jitter only, in full-resolution pixels. ctx.viewport already includes
     // wxl's placement jitter and D3D9 centre shift; never pass either a second time here.
     float extraJitterX = 0, extraJitterY = 0;

@@ -16,6 +16,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
+#ifdef WOWDECOMP_FRAME_QUANTILES
+#include "common/FrameQuantiles.hpp"
+#endif
 
 #include "vulkan/Memory.hpp"
 #include "vulkan/Texture.hpp"
@@ -312,6 +315,9 @@ namespace wxlvk::native::present
         double   sumMs;
         uint64_t slow;     ///< intervals above 33 ms
         uint64_t hitches;  ///< intervals above 100 ms
+#ifdef WOWDECOMP_FRAME_QUANTILES
+        wxlvk::framepacing::Window recent; // quantiles of the latest <=4096 intervals, independently of the all-session counters
+#endif
     };
 
     /**
@@ -452,6 +458,94 @@ namespace wxlvk::native::present
      *         of this frame yet
      */
     bool SceneDepth(VkCommandBuffer cmd, VkImageLayout layout, VkImageView& view, VkFormat& format);
+
+#ifdef WOWDECOMP_FSR
+    // --- the FSR world target (src/native/present/WorldTarget.cpp) ---------------------------------------
+
+    /// One image the FSR pass hands the SDK: the VkImage itself (never a view cast), its view and what it was made with.
+    struct WorldImageDesc
+    {
+        VkImage           image  = VK_NULL_HANDLE;
+        VkImageView       view   = VK_NULL_HANDLE;
+        VkFormat          format = VK_FORMAT_UNDEFINED;
+        VkExtent2D        extent = { 0, 0 };
+        VkImageUsageFlags usage  = 0;
+    };
+
+    /// What WorldTargetEnd hands over, all in the layouts named.
+    struct WorldImages
+    {
+        VkCommandBuffer cmd = nullptr;   ///< the main command buffer, outside any pass
+        WorldImageDesc  colour;          ///< the world at the render size, SHADER_READ_ONLY_OPTIMAL
+        WorldImageDesc  depth;           ///< its raw depth (viewport range), SHADER_READ_ONLY_OPTIMAL; null image when
+                                         ///< the frame never wrote it
+        WorldImageDesc  fsrDepth;        ///< R32_SFLOAT, render size, UNDEFINED (written each frame)
+        WorldImageDesc  objectMotion;   ///< M1: optional RGBA16F, GENERAL, cleared every world frame.
+        WorldImageDesc  motion;          ///< R16G16_SFLOAT, render size, UNDEFINED (written each frame)
+        WorldImageDesc  output;          ///< R8G8B8A8_UNORM, native size, UNDEFINED (written each frame)
+        VkImage         back = VK_NULL_HANDLE;   ///< the native back buffer, TRANSFER_DST_OPTIMAL
+        VkFormat        backFormat = VK_FORMAT_UNDEFINED;
+        VkExtent2D      native = { 0, 0 };
+    };
+
+    /**
+     * Before the world scene pass (src/native/render/WorldPass.cpp): from here to WorldTargetEnd the "back buffer"
+     * every path draws into is the world set at `render` (its colour starts as the native back buffer scaled down, its
+     * depth is cleared at first use). Made or re-made at a size change (the old images retired by serial).
+     *
+     * @return bool ok : false (nothing changed, the world draws natively) without an own back buffer, a sampled depth,
+     *         a frame, or memory, or when `render` is not smaller than or equal to the back buffer
+     */
+    bool WorldTargetBegin(VkExtent2D render, bool objectMotion=false);
+    bool WorldObjectMotionActive(); // true only inside a supported, initialized world target
+    void WorldObjectMotionRefuse(); // optional G-buffer allocation failed: preserve the existing six-attachment path
+    bool WorldObjectMotionPass(VkRenderPass pass);
+    bool WorldTargetDebugOutput(const WorldImages& images); // optional debug: output -> GENERAL, never touches water passes
+
+    /// Between WorldTargetBegin and WorldTargetEnd.
+    bool WorldTargetActive();
+    // R1: main world only; ends the current pass, transitions the tracked back colour.
+    bool WorldTargetMaskSource(VkImageLayout layout, VkCommandBuffer& cmd, WorldImageDesc& out);
+
+    /// While active: render size / native size on each axis (the copies from the back buffer scale their rects by it).
+    bool WorldTargetScale(float& x, float& y);
+
+    /**
+     * After BeforeUi: ends the pass, moves the world's colour and depth to SHADER_READ_ONLY_OPTIMAL, swaps the native
+     * back buffer back (its depth fresh) and moves it to TRANSFER_DST_OPTIMAL. The caller records its upscale and its
+     * copy into `out.back`, then calls pipelines::InvalidateBindings() itself after any foreign dispatch.
+     *
+     * @return bool ok : false when the world set was not active (nothing to do)
+     */
+    bool WorldTargetEnd(WorldImages& out);
+
+    /**
+     * The copy onto the whole native back buffer (a blit, linear where the format allows): of the FSR output
+     * (`fromOutput`, which the caller left in `outputLayout`), or of the world colour itself -- hdFSRTest 1, and every
+     * frame whose upscale could not be recorded, so a frame never loses its world.
+     */
+    void WorldTargetBlit(const WorldImages& in, bool fromOutput, VkImageLayout outputLayout);
+
+    /// Retires the world set's images by serial (FSR turned off); the next Begin makes them again.
+    void WorldTargetDrop();
+
+    /**
+     * Frame generation's HUD-less image: right after WorldTargetBlit, the back buffer (the world alone, the interface
+     * not drawn yet) is copied into hudless image `index` (0 or 1, alternating), left SHADER_READ_ONLY_OPTIMAL for the
+     * SDK, which reads it at this frame's present. The back buffer is left TRANSFER_SRC_OPTIMAL.
+     *
+     * @return bool ok : false (nothing recorded) before the blit, at a size change (the rebuild remakes them), or
+     *         without memory
+     */
+    bool WorldTargetHudless(const WorldImages& in, uint32_t index, WorldImageDesc& out);
+
+    /// Destroys the HUD-less images at once: the caller drained the generation's presents and the device.
+    void WorldTargetHudlessDrop();
+
+    /// The present writes the back buffer unchanged onto the swapchain image (no gamma LUT, no scaling): what frame
+    /// generation needs to compare it with the HUD-less image.
+    bool PresentCopiesBackBuffer();
+#endif
 
     /// A tracked texture image to `to` (whole image), outside a pass. A no-op when it is there.
     void Transition(VkCommandBuffer cmd, wxlvk::vk::texture::Image& image, VkImageLayout to);

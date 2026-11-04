@@ -1,3 +1,7 @@
+#ifdef WOWDECOMP_FSR
+#include "../../../../hd/fsr/HdFsrRigid.h"
+#include "native/Present.hpp"
+#endif
 // Recording one draw: its key and pipeline, what it reads (src/vulkan/pipelines/RecordInputs.cpp), its
 // binds, the shadow capture, and the draw itself.
 // Copyright (C) 2026 WarcraftXL
@@ -18,10 +22,54 @@
 #include "vulkan/pipelines/Internal.hpp"
 
 #include "native/render/WmoGroups.hpp"
+#include "../../../../hd/HdVulkanShadowBridge.h"
 
 #include <intrin.h>
 
 #include <cmath>
+#include <cstring>
+#ifdef WOWDECOMP_FSR
+#include <initializer_list>
+#include <cstdio>
+namespace {
+// DIAG M2 (2026-10-31): names the programs that make a frame unsafe (each distinct reason+vs+ps logged once, 64 max).
+void FsrUnsafeNote(const char*why,const wxlvk::draw::Cmd&c,const wxlvk::vk::pipelines::detail::PipelineEntry*entry,unsigned mode,unsigned blend,int colorWrite){
+ static unsigned long long seen[64],hits[64],total=0;static unsigned count=0;
+ unsigned long long h=1469598103934665603ULL;for(const char*t:{why,(const char*)c.vs,(const char*)c.ps})for(const char*q=t;q&&*q;++q){h^=(unsigned char)*q;h*=1099511628211ULL;}h^=blend*31u+unsigned(colorWrite)+c.vertexFormat*977u;
+ unsigned i=0;for(;i<count;++i)if(seen[i]==h)break;
+ if(i==count){if(count>=64)return;seen[count]=h;hits[count]=0;++count;
+  const char*rv=entry&&entry->row&&entry->row->vertSpv?entry->row->vertSpv:"-";const char*rf=entry&&entry->row&&entry->row->fragSpv?entry->row->fragSpv:"-";
+  wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M2 DIAG unsafe #%u (%s): vs=\"%s\" ps=\"%s\" mode %u blend %u colorWrite %d format %u stride %u textures 0x%x indices %u; source %s row %s/%s gbufNull %d",
+   count,why,c.vs,c.ps,mode,blend,colorWrite,c.vertexFormat,c.vertexStride,c.engineTexMask,c.indexCount,!entry?"no pipeline":entry->row?"hand-written row":entry->vrec?"translated modules":"fixed-function",rv,rf,entry?int(entry->gbufNull):-1);}
+ ++hits[i];
+ if(++total%20000==0){char line[900];int n=std::snprintf(line,sizeof line,"fsr: M2 DIAG unsafe totals after %llu:",total);for(unsigned k=0;k<count&&n>0&&n<int(sizeof line)-24;++k)n+=std::snprintf(line+n,sizeof line-n," #%u=%llu",k+1,hits[k]);wxl::ScriptMgr::Log(WXL_LOG_WARN,"%s",line);}
+}
+// DIAG M3 (2026-10-31): every distinct (model file, vs, ps, final mode, reasons) of a depth-writing draw on the motion pass,
+// logged once: which model parts get a motion writer (mode 2 rigid / 3 skin) and why the others do not. Read only.
+bool FsrDiagNamed(const char*n){static const char*k[]={"transport","zeppelin","ship","boat","gunship","elevator"};
+ for(const char*w:k){const size_t l=std::strlen(w);for(const char*p=n;p&&*p;++p){size_t j=0;while(j<l&&p[j]&&(p[j]|32)==w[j])++j;if(j==l)return true;}}return false;}
+void FsrModelNote(const wxlvk::draw::Cmd&c,unsigned bits,int mode,const char*whyRigid,const char*whySkin){
+ static unsigned long long seen[640];static unsigned count=0,named=0,other=0;
+ const char*name=HD::Fsr::Rigid::DiagModelName();const bool priority=name&&FsrDiagNamed(name);
+ unsigned long long h=1469598103934665603ULL;for(const char*t:{name,(const char*)c.vs,(const char*)c.ps,whyRigid,whySkin})for(const char*q=t;q&&*q;++q){h^=(unsigned char)*q;h*=1099511628211ULL;}h^=unsigned(mode+1)*131u+bits*7u+c.blend*977u;
+ for(unsigned i=0;i<count;++i)if(seen[i]==h)return;
+ if(count>=640||(priority?named>=240:other>=400))return;seen[count++]=h;if(priority)++named;else ++other;
+ wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M3 DIAG %s model \"%s\" (section bones %u, model bones %u, scope %u): vs=\"%s\" ps=\"%s\" mode %d rigid %s skin %s wind %s | why not rigid: %s | why not skin: %s | blend %u colorWrite %d topology %u vconst %u paletteCount %u indices %u",
+  priority?"TRANSPORT":"model",name?name:"(no DrawBatch)",HD::Fsr::Rigid::DiagSectionBones(),HD::Fsr::Rigid::DiagModelBones(),HD::Fsr::Rigid::DiagScopeKind(),c.vs,c.ps,mode,(bits&8u)?"yes":"no",(bits&32u)?"yes":"no",(bits&64u)?"yes":"no",whyRigid,whySkin,c.blend,c.colorWrite,c.topology,c.vconst,c.paletteCount,c.indexCount);
+}
+// DIAG herbe M4 (2026-10-31): every distinct grass draw on the motion pass (HdGrass/DetailDoodad), logged once with
+// the first CanDraw condition that refuses it. Read only.
+void FsrGrassNote(const wxlvk::draw::Cmd&c,unsigned bits,int mode){
+ static unsigned long long seen[96];static unsigned count=0;
+ const bool scope=HD::Fsr::Rigid::GrassScope();const bool owner=HD::Fsr::Rigid::MotionOwner()!=0;
+ const char*why=!owner?(scope?"grass scope without owner (M4 off or not collecting)":"no grass scope (draw outside CDetailDoodad scope)"):!scope?"owner but not grass scope":!c.vertexRows?"no vertex rows":!c.depthWrite||!c.depthTest?"no depth write/test":c.blend>1?"blended (blend > 1)":!c.colorWrite?"no colour write":c.topology!=3?"not triangle list":"ok (or viewport/vs family, see values)";
+ unsigned long long h=1469598103934665603ULL;for(const char*t:{(const char*)c.vs,(const char*)c.ps,why})for(const char*q=t;q&&*q;++q){h^=(unsigned char)*q;h*=1099511628211ULL;}h^=unsigned(mode+1)*131u+bits*7u+c.blend*977u+unsigned(c.depthWrite)*3u;
+ for(unsigned i=0;i<count;++i)if(seen[i]==h)return;if(count>=96)return;seen[count++]=h;
+ wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M4 DIAG herbe #%u: vs=\"%s\" ps=\"%s\" mode %d wind-bit %s | why not M4: %s | grass scope %d owner %d blend %u depthWrite %d colorWrite %d topology %u viewport %gx%g indices %u",
+  count,c.vs,c.ps,mode,(bits&64u)?"yes":"no",why,int(scope),int(owner),c.blend,int(c.depthWrite),c.colorWrite,c.topology,double(c.viewport.width),double(c.viewport.height),c.indexCount);
+}
+}
+#endif
 
 
 using namespace wxlvk::vk::pipelines::detail;
@@ -48,6 +96,14 @@ namespace
         dr.windDraw = wxlvk::vk::wind::Observe(c, dr.frameSlot);
         MakeKey(c, dr.frameSlot, dr.windDraw != nullptr, IsGBufferPass(pass), dr.key);
         Key& key = dr.key;
+#ifdef WOWDECOMP_FSR
+        if(HD::Fsr::Rigid::Active()&&wxlvk::native::present::WorldObjectMotionPass(pass)){
+            key.bones|=16u;
+            if(HD::Fsr::WindMotion::Global().CanDraw(c,dr.windDraw))key.bones|=64u;
+            if(HD::Fsr::Skin::Global().CanDraw(c,dr.windDraw!=nullptr))key.bones|=32u;
+            if(HD::Fsr::Rigid::Prepare(c,dr.windDraw!=nullptr,dr.rigidReprojection,&dr.rigidCookie))key.bones|=8u;
+        }
+#endif
 
         // --- what cannot be drawn, decided before anything is bound -----------------------------
         if (c.vertexBuffer == VK_NULL_HANDLE || (c.indexed && c.indexBuffer == VK_NULL_HANDLE) || c.indexCount == 0
@@ -81,6 +137,17 @@ namespace
         // --- the pipeline ----------------------------------------------------------------------
         const char* failed = nullptr;
         dr.entry = Pipeline(key, pass, failed);
+#ifdef WOWDECOMP_FSR
+        if(!dr.entry&&(key.bones&16u)){
+            FsrUnsafeNote("velocity pipeline failed",c,nullptr,0,c.blend,c.colorWrite);
+            HD::Fsr::Rigid::UnsafeFrame();key.bones&=~120u;failed=nullptr;
+            dr.entry=Pipeline(key,pass,failed); // optional velocity may fail; preserve original colour draw
+        }
+        if((key.bones&16u)&&(!std::strncmp(c.vs,"HdGrass",7)||!std::strncmp(c.vs,"DetailDoodad",12))) // DIAG herbe M4 (2026-10-31)
+            FsrGrassNote(c,key.bones,dr.entry?int(dr.entry->velocityMode):-1);
+        if((key.bones&16u)&&c.depthWrite&&c.depthTest&&HD::Fsr::Rigid::DiagModelName()) // DIAG M3 (2026-10-31)
+            FsrModelNote(c,key.bones,dr.entry?int(dr.entry->velocityMode):-1,HD::Fsr::Rigid::WhyNoRigid(c,dr.windDraw!=nullptr),HD::Fsr::Skin::Global().WhyNot(c,dr.windDraw!=nullptr));
+#endif
         if (!dr.entry && (key.bones & 2u))
         {
             // The wind key could not be had (no room, a failed build): the draw as it was, still.
@@ -191,9 +258,17 @@ namespace
         const PipelineEntry*   entry  = dr.entry;
         const LayoutEntry&     layout = s.layouts[entry->layout];
         const uint32_t         frameSlot  = dr.frameSlot;
-        const VkPipelineLayout pipeLayout = entry->bones ? (entry->wind ? layout.windBones : layout.bones)
+        const VkPipelineLayout pipeLayout =
+#ifdef WOWDECOMP_FSR
+            entry->velocityMode==4?(entry->bones?layout.motionWindBones:layout.motionWind):
+            entry->velocityMode==3?layout.skinBones:
+#endif
+            entry->bones ? (entry->wind ? layout.windBones : layout.bones)
                                                          : (entry->wind ? layout.wind : layout.pipeline);
 
+#ifdef WOWDECOMP_FSR
+        const VkPipelineLayout skinLayout=entry->velocityMode==3?layout.skinBones:VK_NULL_HANDLE;
+#endif
         static const VkDeviceSize zeros[Cmd::kMaxStreams + 1] = {};
         vbs[0]  = c.vertexBuffer;
         vbCount = 1;
@@ -358,7 +433,11 @@ namespace
                 ++s.stats.setBindsSkipped;
             ++s.stats.bonesDraws;
         }
-        if (entry->wind)
+        if (entry->wind
+#ifdef WOWDECOMP_FSR
+            &&entry->velocityMode!=4
+#endif
+        )
         {
             // Set 3 (the wind block and the per-vertex data) and the model's push values. The push
             // range is the UI's, unused by every other pair, so what the UI cached is stale. Never a
@@ -376,6 +455,23 @@ namespace
             b.push = false;
             if (dr.windDraw) wxlvk::vk::wind::Drawn();
         }
+#ifdef WOWDECOMP_FSR
+        if(entry->velocityMode==4){
+            const VkDescriptorSet set=HD::Fsr::WindMotion::Global().Set(frameSlot);
+            d.CmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeLayout,3,1,&set,3,dr.windData.offsets);
+            if(entry->wind){const wxlvk::vk::wind::Draw still{};d.CmdPushConstants(cmd,pipeLayout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof still,dr.windDraw?dr.windDraw:&still);if(dr.windDraw)wxlvk::vk::wind::Drawn();}
+            d.CmdPushConstants(cmd,pipeLayout,VK_SHADER_STAGE_VERTEX_BIT,16,4,&dr.windData.valid);b.push=false;
+        }
+        if(entry->velocityMode==3){
+            const VkDescriptorSet previous=HD::Fsr::Skin::Global().Set(frameSlot);
+            d.CmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeLayout,3,1,&previous,2,dr.skinData.offsets);
+            d.CmdPushConstants(cmd,pipeLayout,VK_SHADER_STAGE_VERTEX_BIT,0,4,&dr.skinData.valid);b.push=false;
+        }
+        if(entry->velocityMode==2){
+            d.CmdPushConstants(cmd,pipeLayout,VK_SHADER_STAGE_VERTEX_BIT,0,64,dr.rigidReprojection);
+            b.push=false; // the UI push-constant cache must not claim these values
+        }
+#endif
         return true;
     }
 
@@ -540,8 +636,19 @@ namespace
     }
 
     /// The draw itself, and its counts.
-    void Issue(VkCommandBuffer cmd, const Cmd& c, const PipelineEntry* entry)
+    void Issue(VkCommandBuffer cmd, const Cmd& c, const PipelineEntry* entry
+#ifdef WOWDECOMP_FSR
+        ,uint32_t rigidCookie,const HD::Fsr::Skin::DrawData&skinData,const HD::Fsr::WindMotion::DrawData&windData
+#endif
+    )
     {
+#ifdef WOWDECOMP_FSR
+        if(HD::Fsr::Rigid::Active()&&entry->motionPass&&c.depthWrite&&c.depthTest){
+            // FIX 2026-10-31: a blended or colourless depth writer with its zero marker is safe (Build.cpp).
+            if(!entry->velocityMode)FsrUnsafeNote(!HD::Fsr::Rigid::WroteMotion()?"no marker variant, before any motion writer (safe)":c.colorWrite&&c.blend<=1?"no zero/velocity variant AFTER a motion writer (unsafe)":"blend or no colour, no zero variant, AFTER a motion writer (unsafe)",c,entry,entry->velocityMode,c.blend,c.colorWrite);
+            HD::Fsr::Rigid::Issued(entry->velocityMode,rigidCookie);
+        }
+#endif
         const loader::Device& d = *s.dapi;
         State::Bound&         b = s.bound;
         if (c.indexed)
@@ -563,12 +670,24 @@ namespace
             d.CmdDraw(cmd, c.indexCount, 1, static_cast<uint32_t>(c.vertexOffset), 0);
         }
 
+#ifdef WOWDECOMP_FSR
+        if(entry->velocityMode==3)HD::Fsr::Skin::Global().Commit(skinData);
+        if(entry->velocityMode==4)HD::Fsr::WindMotion::Global().Commit(windData);
+#endif
         ++s.stats.drawn;
         if (entry->vconst == Cmd::kVertexRegsHigh) ++s.stats.class256;
         else                                        ++s.stats.class64;
         if (entry->companion) ++s.stats.companionDraws;
         if (entry->gbuf) ++s.stats.gbufferDraws;
         else if (entry->gbufNull) ++s.stats.gbufferNullDraws;
+        // HD diagnostic (hdSunInfo): how the terrain's draws reached the G-buffer
+        if (std::strncmp(c.ps, "Terrain", 7) == 0)
+        {
+            namespace B = ::HD::VulkanShadows::Bridge;
+            if (entry->gbuf) ++B::diagRecGbuf;
+            else if (entry->gbufNull) ++B::diagRecNull;
+            else ++B::diagRecPlain;
+        }
     }
 }
 
@@ -610,6 +729,10 @@ namespace wxlvk::vk::pipelines
             if (!inputs) return;
             WriteSlice(dr);
             WritePalette(c, dr);
+#ifdef WOWDECOMP_FSR
+            if(dr.entry->velocityMode==3)dr.skinData=HD::Fsr::Skin::Global().Record(c,dr.misc);
+        if(dr.entry->velocityMode==4)dr.windData=HD::Fsr::WindMotion::Global().Record(c,dr.misc,dr.entry->bones,dr.windDraw);
+#endif
             mark(2);
             VkBuffer vbs[Cmd::kMaxStreams + 1] = {};
             uint32_t vbCount = 0;
@@ -618,18 +741,30 @@ namespace wxlvk::vk::pipelines
             if (!bound) return;
             Capture(c, dr, vbs, vbCount);
             mark(4);
-            Issue(cmd, c, dr.entry);
+            Issue(cmd, c, dr.entry
+#ifdef WOWDECOMP_FSR
+                ,dr.rigidCookie,dr.skinData,dr.windData
+#endif
+            );
             mark(5);
             return;
         }
         if (!Accept(pass, c, dr) || !Textures(c, dr) || !PlanSlice(c, dr) || !DescriptorSet(c, dr)) return;
         WriteSlice(dr);
         WritePalette(c, dr);
+#ifdef WOWDECOMP_FSR
+        if(dr.entry->velocityMode==3)dr.skinData=HD::Fsr::Skin::Global().Record(c,dr.misc);
+        if(dr.entry->velocityMode==4)dr.windData=HD::Fsr::WindMotion::Global().Record(c,dr.misc,dr.entry->bones,dr.windDraw);
+#endif
 
         VkBuffer vbs[Cmd::kMaxStreams + 1] = {};
         uint32_t vbCount = 0;
         if (!Bind(cmd, c, dr, vbs, vbCount)) return;
         Capture(c, dr, vbs, vbCount);
-        Issue(cmd, c, dr.entry);
+        Issue(cmd, c, dr.entry
+#ifdef WOWDECOMP_FSR
+                ,dr.rigidCookie,dr.skinData,dr.windData
+#endif
+            );
     }
 }

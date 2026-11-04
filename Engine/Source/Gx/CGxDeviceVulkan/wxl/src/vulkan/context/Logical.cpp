@@ -15,6 +15,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "vulkan/context/Internal.hpp"
+#ifdef WOWDECOMP_DLSS
+#include "../../../../hd/dlss/HdDlssVk.h"
+#endif
 
 namespace wxlvk::vk::context::detail
 {
@@ -35,6 +38,78 @@ namespace wxlvk::vk::context::detail
      */
     bool CreateDevice()
     {
+#ifdef WOWDECOMP_FSR
+        // FSR frame generation's swapchain needs three queues of its own besides the game's (Context.hpp
+        // FrameGenQueues): taken here, where a device's queues are decided, and unused unless generation runs. The
+        // spec's one-create-info-per-family rule holds: each family's count is raised instead.
+        constexpr uint32_t kFamilies = 16, kPerFamily = 8;
+        const float priorities[kPerFamily] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+        uint32_t used[kFamilies] = {};
+        VkQueueFamilyProperties props[kFamilies] = {};
+        uint32_t familyCount = kFamilies;
+        g.iapi.GetPhysicalDeviceQueueFamilyProperties(g.physical, &familyCount, props);
+        if (familyCount > kFamilies) familyCount = kFamilies;
+        if (g.graphicsFamily < familyCount) used[g.graphicsFamily] = 1;
+        if (g.presentFamily < familyCount) used[g.presentFamily] = 1;
+        g.fgQueues = FrameGenQueues();
+        auto take = [&](QueueSlot& slot, uint32_t family) {
+            if (slot.family != UINT32_MAX || family >= familyCount) return;
+            if (used[family] >= props[family].queueCount || used[family] >= kPerFamily) return;
+            slot.family = family;
+            slot.index  = used[family]++;
+        };
+        auto presents = [&](uint32_t family) {
+            VkBool32 ok = VK_FALSE;
+            return g.iapi.GetPhysicalDeviceSurfaceSupportKHR
+                   && g.iapi.GetPhysicalDeviceSurfaceSupportKHR(g.physical, family, g.surface, &ok) == VK_SUCCESS && ok;
+        };
+        // Present (UI composition and the paced presents): a graphics family that presents first, then any that does.
+        if (presents(g.graphicsFamily)) take(g.fgQueues.present, g.graphicsFamily);
+        for (uint32_t f = 0; f < familyCount; ++f)
+            if ((props[f].queueFlags & VK_QUEUE_GRAPHICS_BIT) && presents(f)) take(g.fgQueues.present, f);
+        for (uint32_t f = 0; f < familyCount; ++f)
+            if ((props[f].queueFlags & VK_QUEUE_COMPUTE_BIT) && presents(f)) take(g.fgQueues.present, f);
+        // Asynchronous compute: a compute family without graphics first, then the graphics family.
+        for (uint32_t f = 0; f < familyCount; ++f)
+            if ((props[f].queueFlags & VK_QUEUE_COMPUTE_BIT) && !(props[f].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+                take(g.fgQueues.asyncCompute, f);
+        for (uint32_t f = 0; f < familyCount; ++f)
+            if (props[f].queueFlags & VK_QUEUE_COMPUTE_BIT) take(g.fgQueues.asyncCompute, f);
+        // Image acquire: no capability needed; the graphics family, then any.
+        take(g.fgQueues.imageAcquire, g.graphicsFamily);
+        for (uint32_t f = 0; f < familyCount; ++f) take(g.fgQueues.imageAcquire, f);
+
+        VkDeviceQueueCreateInfo queues[kFamilies] = {};
+        uint32_t queueCount = 0;
+        for (uint32_t f = 0; f < familyCount; ++f)
+        {
+            if (!used[f]) continue;
+            queues[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queues[queueCount].queueFamilyIndex = f;
+            queues[queueCount].queueCount       = used[f];
+            queues[queueCount].pQueuePriorities = priorities;
+            ++queueCount;
+        }
+        if (g.graphicsFamily >= familyCount || g.presentFamily >= familyCount)
+        {
+            // Out of the table (more than 16 families): the queues as without FSR, and no generation queues.
+            g.fgQueues = FrameGenQueues();
+            queueCount = 0;
+            queues[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queues[queueCount].queueFamilyIndex = g.graphicsFamily;
+            queues[queueCount].queueCount       = 1;
+            queues[queueCount].pQueuePriorities = priorities;
+            ++queueCount;
+            if (g.presentFamily != g.graphicsFamily)
+            {
+                queues[queueCount].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+                queues[queueCount].queueFamilyIndex = g.presentFamily;
+                queues[queueCount].queueCount       = 1;
+                queues[queueCount].pQueuePriorities = priorities;
+                ++queueCount;
+            }
+        }
+#else
         const float priority = 1.0f;
 
         VkDeviceQueueCreateInfo queues[2] = {};
@@ -57,10 +132,15 @@ namespace wxlvk::vk::context::detail
             queues[queueCount].pQueuePriorities = &priority;
             ++queueCount;
         }
+#endif
 
         // The swapchain, then what the optional capabilities add by name (Caps.cpp PlanCaps: the memory budget,
         // gl_Layer from the vertex stage, FP16 on a 1.1 device); WXL_HOST appends its interop extensions after them.
-        constexpr uint32_t kMaxBase = 6;
+#ifdef WOWDECOMP_DLSS
+        constexpr uint32_t kMaxBase = 16;  // HD 2026-11-02: room for NGX's device extensions after the capabilities'
+#else
+        constexpr uint32_t kMaxBase = 8;   // WOWDECOMP_FSR adds two names (Caps.cpp)
+#endif
         const char* extensions[kMaxBase] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
         uint32_t    extensionCount = 1;
         // Features: ask only for what the adapter reports, because asking for anything else fails
@@ -126,6 +206,12 @@ namespace wxlvk::vk::context::detail
         const VkPhysicalDeviceFeatures plainFeatures = features;
         CapsChain capsChain;
         PlanCaps(features, capsChain, nullptr, extensions, extensionCount, kMaxBase);
+#ifdef WOWDECOMP_DLSS
+        // HD 2026-11-02: NGX's device extensions, only those the adapter offers (no feature struct is chained, so the
+        // richer device keeps exactly its capabilities; the plain fallback below drops them and DLSS says unavailable).
+        HD::Dlss::AddDeviceExtensions(g.iapi.EnumerateDeviceExtensionProperties, g.instance, g.physical, extensions,
+                                      extensionCount, kMaxBase);
+#endif
         const bool richer = capsChain.head != nullptr || extensionCount > 1
                             || std::memcmp(&plainFeatures, &features, sizeof features) != 0;
 
@@ -133,6 +219,28 @@ namespace wxlvk::vk::context::detail
         // chained after the capabilities'; otherwise this is the swapchain extension (and the capabilities') alone.
         const wxlvk::host::DeviceExtensions enabled =
             wxlvk::host::ExtendDevice(g.iapi, g.instance, g.physical, extensions, extensionCount);
+#ifdef WOWDECOMP_FSR
+        // The host link chains its own timeline struct: the same sType twice in one chain is invalid usage, so the
+        // capabilities' copy leaves the chain (the feature stays enabled through the host's).
+        if (enabled.pNext && capsChain.timeline.sType)
+        {
+            bool hostHasTimeline = false;
+            for (auto* s = static_cast<const VkBaseInStructure*>(enabled.pNext); s; s = s->pNext)
+                if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES) hostHasTimeline = true;
+            if (hostHasTimeline)
+            {
+                if (capsChain.head == &capsChain.timeline) capsChain.head = capsChain.timeline.pNext;
+                else
+                    for (auto* s = static_cast<VkBaseOutStructure*>(capsChain.head); s; s = s->pNext)
+                        if (s->pNext == reinterpret_cast<VkBaseOutStructure*>(&capsChain.timeline))
+                        {
+                            s->pNext = static_cast<VkBaseOutStructure*>(capsChain.timeline.pNext);
+                            break;
+                        }
+                capsChain.timeline.pNext = nullptr;
+            }
+        }
+#endif
         if (enabled.pNext)
         {
             // The capabilities' chain ends on the host's struct (theirs were planned with a null tail).
@@ -186,6 +294,17 @@ namespace wxlvk::vk::context::detail
 
         g.dapi.GetDeviceQueue(g.device, g.graphicsFamily, 0, &g.graphicsQueue);
         g.dapi.GetDeviceQueue(g.device, g.presentFamily, 0, &g.presentQueue);
+#ifdef WOWDECOMP_FSR
+        for (QueueSlot* q : { &g.fgQueues.asyncCompute, &g.fgQueues.present, &g.fgQueues.imageAcquire })
+            if (q->family != UINT32_MAX) g.dapi.GetDeviceQueue(g.device, q->family, q->index, &q->queue);
+        wxl::ScriptMgr::Log(WXL_LOG_INFO,
+                            "vulkan: FSR frame generation queues: async compute %d.%u, present %d.%u, image acquire "
+                            "%d.%u (family.index; -1 = none)%s",
+                            static_cast<int>(g.fgQueues.asyncCompute.family), g.fgQueues.asyncCompute.index,
+                            static_cast<int>(g.fgQueues.present.family), g.fgQueues.present.index,
+                            static_cast<int>(g.fgQueues.imageAcquire.family), g.fgQueues.imageAcquire.index,
+                            g.fgQueues.complete() ? "" : "; incomplete, frame generation unavailable");
+#endif
 
         wxl::ScriptMgr::Log(WXL_LOG_DEBUG,
                             "vulkan: logical device created with %u queue(s): graphics family %u"

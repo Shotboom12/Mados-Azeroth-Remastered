@@ -186,6 +186,11 @@ namespace wxlvk::vk::pipelines::detail
         {
             const PipelineEntry& e = s.pipelines[i];
             if (e.pipeline == VK_NULL_HANDLE) continue;
+#ifdef WOWDECOMP_FSR
+            // The persisted key format distinguishes G-buffer, but NOT six vs seven attachments.
+            // M2 variants are built lazily after overlay verification; retain the ordinary driver VkPipelineCache.
+            if(e.key.bones&120u)continue;
+#endif
             const State::PassInfo* info = nullptr;
             for (uint32_t p = 0; p < s.passInfoCount; ++p)
                 if (s.passInfo[p].pass == e.pass) info = &s.passInfo[p];
@@ -272,6 +277,9 @@ namespace wxlvk::vk::pipelines::detail
         for (const PersistedKey& p : g_keys)
         {
             if (p.colour != colour || p.depth != depth || (p.gbuffer != 0) != gbuffer) continue;
+#ifdef WOWDECOMP_FSR
+            if(p.key.bones&120u)continue; // never cache a premature M2 fallback on an M1 pass
+#endif
             if (p.key.bones & 2u) continue;   // tree wind: built at its first draw, once its set 3 exists
             if (s.pipelineCount >= kMaxPipelines) break;
 

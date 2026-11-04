@@ -1,3 +1,6 @@
+#ifdef WOWDECOMP_FSR
+#include "../../../../hd/fsr/HdFsrRigid.h"
+#endif
 // Building one pipeline for a key against a render pass.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -15,6 +18,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "vulkan/pipelines/Internal.hpp"
+#ifdef WOWDECOMP_FSR
+#include "native/Present.hpp"
+#endif
 
 namespace wxlvk::vk::pipelines::detail
 {
@@ -194,6 +200,27 @@ namespace wxlvk::vk::pipelines::detail
         VariantPath(vertPath, sizeof vertPath,
                     vr ? (bones ? (windVar ? vr->windBones : vr->bones) : (windVar ? vr->wind : vr->spv)) : "", gbufVar);
         VariantPath(fragPath, sizeof fragPath, pr ? (windPix ? pr->wind : pr->spv) : "", gbufVar);
+#ifdef WOWDECOMP_FSR
+        uint32_t velocityMode=0;
+        // Separate cache key bit: M1 pipelines already cached on the SAME pass must not be reused for M2.
+        if((k.bones&16u)&&wxlvk::native::present::WorldObjectMotionPass(pass)&&fromModules&&pr&&k.depthWrite&&k.depthTest){ // FIX 2026-10-31: blended/colourless depth writers take the zero marker (attachment 6 never blends)
+            const bool moving=(k.bones&8u)&&k.blend<=1&&k.colorWrite&&gbufVar&&!windVar&&vr&&(bones?vr->velBones:vr->vel)&&(windPix?pr->velFragWind:pr->velFrag);
+            const bool zero=gbufVar?(windPix?pr->gbufWindVelZero:pr->gbufVelZero):(windPix?pr->velZeroWind:pr->velZero);
+            char optionalVert[160],optionalFrag[160];
+            const auto suffix=[](char*out,size_t cap,const char*in,const char*tail){const size_t n=std::strlen(in);if(n<4||n+std::strlen(tail)>=cap)return false;std::snprintf(out,cap,"%.*s%s",int(n-4),in,tail);return true;};
+            const bool skin=(k.bones&32u)&&k.blend<=1&&k.colorWrite&&bones&&gbufVar&&!windVar&&vr&&vr->skinBones&&pr->velFrag&&SkinLayoutFor(layoutIndex);
+            const bool m4=(k.bones&64u)&&k.blend<=1&&k.colorWrite&&gbufVar&&vr&&(windVar?(bones?vr->windBonesVelocity:vr->windVelocity):vr->grassVelocity)&&(windPix?pr->velFragWind:pr->velFrag)&&MotionWindLayoutFor(layoutIndex,bones);
+            if(m4&&suffix(optionalVert,sizeof optionalVert,vertPath,".m4vel.spv")&&suffix(optionalFrag,sizeof optionalFrag,fragPath,".vel.spv")&&shaders::GetPath(optionalVert)&&shaders::GetPath(optionalFrag)){
+                std::strcpy(vertPath,optionalVert);std::strcpy(fragPath,optionalFrag);velocityMode=4;
+            }else if(skin&&suffix(optionalVert,sizeof optionalVert,vertPath,".skinvel.spv")&&suffix(optionalFrag,sizeof optionalFrag,fragPath,".vel.spv")&&shaders::GetPath(optionalVert)&&shaders::GetPath(optionalFrag)){
+                std::strcpy(vertPath,optionalVert);std::strcpy(fragPath,optionalFrag);velocityMode=3;
+            }else if(moving&&suffix(optionalVert,sizeof optionalVert,vertPath,".vel.spv")&&suffix(optionalFrag,sizeof optionalFrag,fragPath,".vel.spv")&&shaders::GetPath(optionalVert)&&shaders::GetPath(optionalFrag)){
+                std::strcpy(vertPath,optionalVert);std::strcpy(fragPath,optionalFrag);velocityMode=2;
+            }else if(zero&&suffix(optionalFrag,sizeof optionalFrag,fragPath,".velzero.spv")&&shaders::GetPath(optionalFrag)){
+                std::strcpy(fragPath,optionalFrag);velocityMode=1;
+            }
+        }
+#endif
         const VkShaderModule vert = fromModules ? shaders::GetPath(vertPath)
                                   : shaders::Get(ffVertex ? kFfSemanticVertStem : row->vertSpv);
         const VkShaderModule frag = (fromModules || ffVertex) ? shaders::GetPath(fragPath) : shaders::Get(row->fragSpv);
@@ -346,7 +373,11 @@ namespace wxlvk::vk::pipelines::detail
                                 "which the consumers set aside by the depth tag",
                                 k.vs, k.ps, k.blend, k.colorWrite, reason);
         }
-        VkPipelineColorBlendAttachmentState blends[1 + 5] = { blend, {}, {}, {}, {}, {} };
+        VkPipelineColorBlendAttachmentState blends[1 + 5
+#ifdef WOWDECOMP_FSR
+            +1
+#endif
+        ] = { blend, {}, {}, {}, {}, {} };
         for (uint32_t i = 1; i < 6; ++i)
         {
             blends[i].blendEnable    = VK_FALSE;
@@ -367,6 +398,13 @@ namespace wxlvk::vk::pipelines::detail
         colorBlend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlend.logicOpEnable   = VK_FALSE;
         colorBlend.attachmentCount = gbufPass ? 6u : 1u;
+#ifdef WOWDECOMP_FSR
+        if(wxlvk::native::present::WorldObjectMotionPass(pass)){
+            colorBlend.attachmentCount=7;
+            // M1 has no velocity variants. Undefined fragment output is NEVER written to this attachment.
+            blends[6].blendEnable=VK_FALSE;blends[6].colorWriteMask=velocityMode?all:0;
+        }
+#endif
         colorBlend.pAttachments    = blends;
 
         // Two more, each only for the pipelines that read it: the depth bias (dynamic rather than
@@ -395,6 +433,10 @@ namespace wxlvk::vk::pipelines::detail
         info.pDynamicState       = &dynamic;
         info.layout              = bones ? (windVar ? s.layouts[layoutIndex].windBones : s.layouts[layoutIndex].bones)
                                  : (windVar ? s.layouts[layoutIndex].wind : s.layouts[layoutIndex].pipeline);
+#ifdef WOWDECOMP_FSR
+        if(velocityMode==3)info.layout=s.layouts[layoutIndex].skinBones;
+        if(velocityMode==4)info.layout=bones?s.layouts[layoutIndex].motionWindBones:s.layouts[layoutIndex].motionWind;
+#endif
         info.renderPass          = pass;
         info.subpass             = 0;
         info.basePipelineHandle  = VK_NULL_HANDLE;
@@ -413,6 +455,9 @@ namespace wxlvk::vk::pipelines::detail
             return false;
         }
 
+#ifdef WOWDECOMP_FSR
+        out.velocityMode=velocityMode;out.motionPass=wxlvk::native::present::WorldObjectMotionPass(pass);
+#endif
         out.pipeline   = pipeline;
         out.row        = row;
         out.layout     = layoutIndex;

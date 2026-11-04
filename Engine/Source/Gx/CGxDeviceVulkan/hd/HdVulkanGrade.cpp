@@ -1,3 +1,6 @@
+#ifndef HD_GRADE_STANDALONE
+#include "WoW/Source/WorldClient/HD/HdTime.h"
+#endif
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Isolated port of the existing client's HdGrade.cpp. No water or fog module dependency.
 #include "HdVulkanGrade.h"
@@ -27,6 +30,7 @@
 namespace HD::VulkanGrade {
 namespace {
 #include "shaders/grade/HdVulkanGrade.spv.h"
+#include "shaders/grade/HdVulkanGradeMix.spv.h"
 float Sat(float v) {return std::clamp(v,0.0f,1.0f);}
 }
 void LutWeights::Add(int32_t lut,float w) {
@@ -74,7 +78,8 @@ struct Effect::Impl {
     const WXL_VkRenderApi* api=nullptr;WXL_VkDeviceInfo device{};
     const char* error="";uint32_t width=0,height=0;uint64_t last=0;
     VkDescriptorSetLayout setLayout{};VkPipelineLayout layout{};VkPipeline pipeline{};VkDescriptorPool pool{};VkSampler linear{};
-    struct Slot {VkDescriptorSet set{};uint64_t serial=0;};std::array<Slot,8> slots{};
+    VkDescriptorSetLayout mixSetLayout{};VkPipelineLayout mixLayout{};VkPipeline mixPipeline{};
+    struct Slot {VkDescriptorSet set{},mixSet{};void* mixHandle=nullptr;WXL_VkImageInfo mixImage{};bool mixReadable=false;uint64_t serial=0;};std::array<Slot,8> slots{};
     struct Lut {void* handle=nullptr;WXL_VkImageInfo image{};void* staging=nullptr;WXL_VkBufferInfo buffer{};uint64_t serial=0;bool uploaded=false;};
     std::map<int32_t,Lut> luts;
 #define GRADE_FUNCTIONS(X) X(CreateDescriptorSetLayout) X(DestroyDescriptorSetLayout) X(CreatePipelineLayout) X(DestroyPipelineLayout) \
@@ -111,13 +116,30 @@ bool Effect::Init(const WXL_VkRenderApi* api) {
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};si.magFilter=si.minFilter=VK_FILTER_LINEAR;si.mipmapMode=VK_SAMPLER_MIPMAP_MODE_NEAREST;
     si.addressModeU=si.addressModeV=si.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     if(s->CreateSampler(s->device.device,&si,nullptr,&s->linear)!=VK_SUCCESS)return fail();
-    uint32_t n=s->device.frameSlots;VkDescriptorPoolSize sizes[2]={{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,n},{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,n*2}};
-    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};pi.maxSets=n;pi.poolSizeCount=2;pi.pPoolSizes=sizes;
+    // HD: sixteen statically indexed samplers avoid requiring dynamic sampled-array indexing.
+    VkDescriptorSetLayoutBinding mixBindings[2]={{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,16,VK_SHADER_STAGE_COMPUTE_BIT,nullptr},{1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}};
+    sl.bindingCount=2;sl.pBindings=mixBindings;
+    if(s->CreateDescriptorSetLayout(s->device.device,&sl,nullptr,&s->mixSetLayout)!=VK_SUCCESS)return fail();
+    VkPushConstantRange mixRange{VK_SHADER_STAGE_COMPUTE_BIT,0,16*sizeof(float)};
+    pl.pSetLayouts=&s->mixSetLayout;pl.pPushConstantRanges=&mixRange;
+    if(s->CreatePipelineLayout(s->device.device,&pl,nullptr,&s->mixLayout)!=VK_SUCCESS)return fail();
+    sm.codeSize=sizeof kHdVulkanGradeMix;sm.pCode=kHdVulkanGradeMix;module=VK_NULL_HANDLE;
+    if(s->CreateShaderModule(s->device.device,&sm,nullptr,&module)!=VK_SUCCESS)return fail();
+    cp.stage.module=module;cp.layout=s->mixLayout;
+    result=s->CreateComputePipelines(s->device.device,s->device.pipelineCache,1,&cp,nullptr,&s->mixPipeline);
+    s->DestroyShaderModule(s->device.device,module,nullptr);if(result!=VK_SUCCESS)return fail();
+    uint32_t n=s->device.frameSlots;VkDescriptorPoolSize sizes[2]={{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,n*2},{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,n*18}};
+    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};pi.maxSets=n*2;pi.poolSizeCount=2;pi.pPoolSizes=sizes;
     if(s->CreateDescriptorPool(s->device.device,&pi,nullptr,&s->pool)!=VK_SUCCESS)return fail();
     std::array<VkDescriptorSetLayout,8> layouts{};layouts.fill(s->setLayout);std::array<VkDescriptorSet,8> sets{};
     VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};ai.descriptorPool=s->pool;ai.descriptorSetCount=n;ai.pSetLayouts=layouts.data();
     if(s->AllocateDescriptorSets(s->device.device,&ai,sets.data())!=VK_SUCCESS)return fail();
-    for(uint32_t i=0;i<n;++i)s->slots[i].set=sets[i];return true;
+    for(uint32_t i=0;i<n;++i)s->slots[i].set=sets[i];
+    layouts.fill(s->mixSetLayout);
+    if(s->AllocateDescriptorSets(s->device.device,&ai,sets.data())!=VK_SUCCESS)return fail();
+    WXL_VkImageDesc mixDesc{VK_FORMAT_R16G16B16A16_SFLOAT,LutWidth,LutHeight,1,VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_COLOR_BIT};
+    for(uint32_t i=0;i<n;++i){auto& slot=s->slots[i];slot.mixSet=sets[i];slot.mixHandle=api->CreateImage(&mixDesc,&slot.mixImage);if(!slot.mixHandle)return fail();}
+    return true;
 }
 bool Effect::Resize(uint32_t w,uint32_t h) {if(!state_||!w||!h||w>16384||h>16384)return false;state_->width=w;state_->height=h;return true;}
 bool Effect::HasLut(int32_t id) const {return state_ && state_->luts.find(id)!=state_->luts.end();}
@@ -134,7 +156,7 @@ bool Effect::AddLut(int32_t id,const Texels& pixels) {
     try {s->luts.emplace(id,lut);}catch(...) {s->api->RetireBuffer(lut.staging,0);s->api->RetireImage(lut.handle,0);s->error="grade LUT CPU cache allocation failed";return false;}
     s->error="";return true;
 }
-bool Effect::Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Parameters& parameters) {
+bool Effect::Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Parameters& parameters,const LutWeights* completeWeights) {
     auto* s=state_;if(!s)return false;
     if(ctx.structSize<sizeof ctx || ctx.point!=Point || !ctx.cmd || !ctx.colorView || !ctx.serial || ctx.colorFormat!=VK_FORMAT_R8G8B8A8_UNORM ||
        ctx.colorLayout!=VK_IMAGE_LAYOUT_GENERAL || ctx.frameSlots!=s->device.frameSlots || ctx.frameSlot>=s->device.frameSlots || ctx.extent.width!=s->width || ctx.extent.height!=s->height) {s->error="grade frame/extent unavailable";return false;}
@@ -142,7 +164,19 @@ bool Effect::Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Para
     auto ia=s->luts.find(a),ib=s->luts.find(b);if(ia==s->luts.end()||ib==s->luts.end()){s->error="grade LUT not prepared";return false;}
     Parameters p=parameters;if(!std::isfinite(p.blend)||!std::isfinite(p.strength)||!std::isfinite(p.debug)){s->error="grade non-finite parameters";return false;}
     p.blend=Sat(p.blend);p.strength=std::clamp(p.strength,0.0f,2.0f);p.swapRB=ctx.swapRB;
-    for(auto* lut:{&ia->second,&ib->second}) {
+    // HD: all contributions are normalized together; never switch a third LUT in/out by rank.
+    Impl::Lut* prepared[16]{};float mixWeights[16]{};int32_t active=0;
+    if(completeWeights){
+        if(completeWeights->count<0||completeWeights->count>16){s->error="grade weight count";return false;}
+        double total=0;for(int32_t i=0;i<completeWeights->count;++i){const float w=completeWeights->weight[i];if(!std::isfinite(w)||w<0){s->error="grade invalid weight";return false;}if(w>0)total+=w;}
+        if(total>0)for(int32_t i=0;i<completeWeights->count;++i)if(completeWeights->weight[i]>0){
+            auto found=s->luts.find(completeWeights->id[i]);if(found==s->luts.end()){s->error="grade weighted LUT not prepared";return false;}
+            prepared[active]=&found->second;mixWeights[active]=float(completeWeights->weight[i]/total);++active;
+        }
+    }
+    const bool mixAll=active>2;
+    if(!mixAll){prepared[0]=&ia->second;prepared[1]=&ib->second;active=2;}
+    for(int32_t i=0;i<active;++i){auto* lut=prepared[i];
         if(!lut->uploaded) {
             VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;barrier.image=lut->image.image;barrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -155,7 +189,26 @@ bool Effect::Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Para
         }
         lut->serial=ctx.serial;
     }
-    VkDescriptorImageInfo images[3]={{VK_NULL_HANDLE,ctx.colorView,ctx.colorLayout},{s->linear,ia->second.image.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{s->linear,ib->second.image.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    VkImageView viewA=ia->second.image.view,viewB=ib->second.image.view;
+    if(mixAll){
+        VkDescriptorImageInfo inputs[16]{};for(int32_t i=0;i<16;++i)inputs[i]={s->linear,prepared[i<active?i:0]->image.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo output{VK_NULL_HANDLE,slot.mixImage.view,VK_IMAGE_LAYOUT_GENERAL};
+        VkWriteDescriptorSet updates[2]{};updates[0].sType=updates[1].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        updates[0].dstSet=updates[1].dstSet=slot.mixSet;updates[0].dstBinding=0;updates[1].dstBinding=1;
+        updates[0].descriptorCount=16;updates[1].descriptorCount=1;updates[0].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;updates[1].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        updates[0].pImageInfo=inputs;updates[1].pImageInfo=&output;s->UpdateDescriptorSets(s->device.device,2,updates,0,nullptr);
+        VkImageMemoryBarrier imageBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};imageBarrier.image=slot.mixImage.image;
+        imageBarrier.oldLayout=slot.mixReadable?VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED;imageBarrier.newLayout=VK_IMAGE_LAYOUT_GENERAL;
+        imageBarrier.srcQueueFamilyIndex=imageBarrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;imageBarrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        imageBarrier.srcAccessMask=slot.mixReadable?VK_ACCESS_SHADER_READ_BIT:0;imageBarrier.dstAccessMask=VK_ACCESS_SHADER_WRITE_BIT;
+        s->CmdPipelineBarrier(ctx.cmd,slot.mixReadable?VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT:VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,0,nullptr,1,&imageBarrier);
+        s->CmdBindPipeline(ctx.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,s->mixPipeline);s->CmdBindDescriptorSets(ctx.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,s->mixLayout,0,1,&slot.mixSet,0,nullptr);
+        s->CmdPushConstants(ctx.cmd,s->mixLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof mixWeights,mixWeights);s->CmdDispatch(ctx.cmd,(LutWidth+7)/8,(LutHeight+7)/8,1);
+        imageBarrier.oldLayout=VK_IMAGE_LAYOUT_GENERAL;imageBarrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;imageBarrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;imageBarrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+        s->CmdPipelineBarrier(ctx.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,0,nullptr,1,&imageBarrier);
+        slot.mixReadable=true;viewA=viewB=slot.mixImage.view;p.blend=0;
+    }
+    VkDescriptorImageInfo images[3]={{VK_NULL_HANDLE,ctx.colorView,ctx.colorLayout},{s->linear,viewA,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{s->linear,viewB,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     VkWriteDescriptorSet writes[3]{};for(uint32_t i=0;i<3;++i){auto& w=writes[i];w.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;w.dstSet=slot.set;w.dstBinding=i;w.descriptorCount=1;w.descriptorType=i?VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;w.pImageInfo=&images[i];}
     s->UpdateDescriptorSets(s->device.device,3,writes,0,nullptr);
     VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT;
@@ -169,6 +222,10 @@ bool Effect::Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Para
 bool Effect::Shutdown(uint64_t completed) {
     auto* s=state_;if(!s)return true;if(completed<s->last){s->error="grade shutdown pending serial";return false;}
     for(auto& entry:s->luts){auto& lut=entry.second;if(lut.staging)s->api->RetireBuffer(lut.staging,lut.serial);if(lut.handle)s->api->RetireImage(lut.handle,lut.serial);}
+    for(auto& slot:s->slots)if(slot.mixHandle)s->api->RetireImage(slot.mixHandle,slot.serial);
+    if(s->mixPipeline)s->DestroyPipeline(s->device.device,s->mixPipeline,nullptr);
+    if(s->mixLayout)s->DestroyPipelineLayout(s->device.device,s->mixLayout,nullptr);
+    if(s->mixSetLayout)s->DestroyDescriptorSetLayout(s->device.device,s->mixSetLayout,nullptr);
     if(s->pool)s->DestroyDescriptorPool(s->device.device,s->pool,nullptr);if(s->linear)s->DestroySampler(s->device.device,s->linear,nullptr);
     if(s->pipeline)s->DestroyPipeline(s->device.device,s->pipeline,nullptr);if(s->layout)s->DestroyPipelineLayout(s->device.device,s->layout,nullptr);
     if(s->setLayout)s->DestroyDescriptorSetLayout(s->device.device,s->setLayout,nullptr);delete s;state_=nullptr;return true;
@@ -178,14 +235,15 @@ const char* Effect::Error() const {return state_?state_->error:"grade not initia
 #ifndef HD_GRADE_STANDALONE
 namespace {
 Effect effect;const WXL_VkRenderApi* api=nullptr;void* stage=nullptr;
-CVar *enabled=nullptr,*strength=nullptr,*debug=nullptr,*forced=nullptr,*info=nullptr;
+CVar *enabled=nullptr,*strength=nullptr,*debug=nullptr,*forced=nullptr,*info=nullptr,*continuous=nullptr;
+LutWeights currentWeights;bool completeMix=false;
 bool wanted=false,sawRecord=false;Parameters current;Selection selected;char lastInfo[240]{};
 std::set<int32_t> missing;
 void Info(const char* value){if(info && std::strcmp(lastInfo,value)){std::snprintf(lastInfo,sizeof lastInfo,"%s",value);info->Set(lastInfo,true,false,false,false);}}
 CVar* Var(const char* name,const char* help,const char* value,uint32_t flags=1){if(auto* old=CVar::LookupRegistered(name))return old;return CVar::Register(name,help,flags,value,nullptr,CATEGORY_GRAPHICS,false,nullptr,false);}
 float Clamp(float v,float lo,float hi){return std::isfinite(v)?std::clamp(v,lo,hi):lo;}
     // One light's grading (clear weather blended to storm), as weights. No Forever grading = identity (0).
-    void AddLight(LutWeights& luts, const LightRec* light, int32_t time, float storm, float weight) {
+    void AddLight(LutWeights& luts, const LightRec* light, float time, float storm, float weight) {
         for (int32_t pass = 0; pass < 2; pass++) {
             float w = weight * (pass == 0 ? 1.0f - storm : storm);
             if (w <= 0.0f) continue;
@@ -206,7 +264,7 @@ float Clamp(float v,float lo,float hi){return std::isfinite(v)?std::clamp(v,lo,h
         const DayNight::DNInfo& info = DayNight::g_dnInfo;
         const TSGrowableArray<const LightRec*>& lights = DayNight::g_areaLights;
         if (!lights.m_count) return;
-        int32_t time = static_cast<int32_t>(info.m_dayProgression * 2880.0f);
+        float time = HD::DayNightBandTime(info.m_dayProgression * 2880.0f);
         float storm = Clamp(info.m_stormBlend, 0.0f, 1.0f);
         AddLight(luts, lights.m_data[0], time, storm, 1.0f);
 
@@ -273,12 +331,16 @@ void Prewarm() {
 int __cdecl Wanted(void*){return wanted?1:0;}
 void __cdecl Stage(void*,const WXL_VkStageContext* ctx) {
     if(!ctx)return;sawRecord=true;
-    if(!effect.Record(*ctx,selected.a,selected.b,current)){Info(effect.Error());return;}
-    char text[240];std::snprintf(text,sizeof text,"Vulkan grade: LUT %d (%.0f%%) + LUT %d (%.0f%%), strength %.2f%s",selected.a,(1-selected.blend)*100,selected.b,selected.blend*100,current.strength,current.debug>.5f?", split screen":"");Info(text);
+    if(!effect.Record(*ctx,selected.a,selected.b,current,completeMix?&currentWeights:nullptr)){Info(effect.Error());return;}
+    char text[240];
+    if(completeMix)std::snprintf(text,sizeof text,"Vulkan grade: continuous mixture, %d IDs, strength %.2f%s",currentWeights.count,current.strength,current.debug>.5f?", split screen":"");
+    else std::snprintf(text,sizeof text,"Vulkan grade: legacy top-two LUT %d + %d, strength %.2f",selected.a,selected.b,current.strength);
+    Info(text);
 }
 }
 bool Init() {
     if(stage)return true;
+    continuous=Var("hdGradeContinuous","HD: 1 mixes all contributing LUTs continuously; 0 old top-two diagnostic","1");
     enabled=Var("hdGrade","HD: colour grading, 0 off / 1 on","0");strength=Var("hdGradeStrength","HD: grading strength 0..2","1");
     debug=Var("hdGradeDebug","HD: left original / right graded","0",0);forced=Var("hdGradeLut","HD: positive LUT ID overrides zone choice","0");info=Var("hdGradeInfo","HD: grading status","off",0);
     api=wxl::ScriptMgr::GetInterface<const WXL_VkRenderApi>(WXL_VK_RENDER_API_NAME,WXL_VK_RENDER_API_VERSION);
@@ -293,8 +355,10 @@ void World() {
     if(!g_theGxDevicePtr || g_theGxDevicePtr->DeviceApi()!=GxApi_Vulkan){HD::GradeWorld();return;}
     wanted=false;if(!stage)return;if(!enabled || !enabled->m_intValue){Info("off");return;}
     LutWeights weights;if(forced && forced->m_intValue>0)weights.Add(forced->m_intValue,1);else CurrentLuts(weights);
+    currentWeights=weights;completeMix=continuous&&continuous->m_intValue!=0;
     selected=Select(weights);current={};current.blend=selected.blend;current.strength=Clamp(strength?strength->m_floatValue:1,0,2);current.debug=debug?float(debug->m_intValue):0;
     if(!selected.hasGrade && current.debug<=.5f){Info("Vulkan grade: no grading for this light");return;}
+    if(completeMix)for(int32_t i=0;i<weights.count;++i)if(weights.weight[i]>0&&!Cache(weights.id[i])){Info("Vulkan grade: contributing LUT missing; image unchanged");return;}
     if(!Cache(selected.a)||!Cache(selected.b)){Info("Vulkan grade: LUT missing, invalid or allocation failed; image unchanged");return;}
     wanted=true;sawRecord=false;wxlvk::stages::chain::Run(static_cast<wxlvk::stages::Point>(PrivatePoint));wanted=false;
     if(!sawRecord)Info("Vulkan grade skipped: exact boundary/backbuffer unavailable");

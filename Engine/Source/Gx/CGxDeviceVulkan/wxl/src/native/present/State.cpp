@@ -27,6 +27,9 @@ namespace wxlvk::native::present::detail
         if (ms > t.maxMs) t.maxMs = ms;
         t.sumMs += ms;
         ++t.frames;
+#ifdef WOWDECOMP_FRAME_QUANTILES
+        t.recent.Add(ms);
+#endif
         if (ms > kSlowFrameMs) ++t.slow;
         if (ms > kHitchFrameMs) ++t.hitches;
     }

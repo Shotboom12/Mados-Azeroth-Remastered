@@ -19,9 +19,15 @@ if (WOWDECOMP_VULKAN)
     file(GLOB_RECURSE GX_VULKAN_SOURCES CONFIGURE_DEPENDS
         "${GX_VULKAN_DIR}/*.cpp"
     )
+    if (NOT WOWDECOMP_LUMEN)
+        list(FILTER GX_VULKAN_SOURCES EXCLUDE REGEX "/hd/(lumen|seyris)/") # HD 2026-11-02: kit R1 lots L0 + G1
+    endif ()
     add_library(GxVulkan OBJECT
         ${GX_VULKAN_SOURCES}
     )
+    if (WOWDECOMP_LUMEN)
+        target_compile_definitions(GxVulkan PRIVATE WOWDECOMP_LUMEN=1)
+    endif ()
     target_compile_features(GxVulkan PRIVATE cxx_std_20)
     set_target_properties(GxVulkan PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     target_include_directories(GxVulkan

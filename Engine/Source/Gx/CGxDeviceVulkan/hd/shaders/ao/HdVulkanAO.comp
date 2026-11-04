@@ -94,7 +94,7 @@ void main(){
     vec4 edges=XeEdges(z,LoadZ(0,p+ivec2(-1,0)),LoadZ(0,p+ivec2(1,0)),LoadZ(0,p+ivec2(0,-1)),LoadZ(0,p+ivec2(0,1)));
     ivec2 fp=FullPixel(p);vec2 uv=FullUV(fp);vec3 center=Position(uv,z),normal=SurfaceNormal(fp,center);
     center*=.99999;vec3 viewVec=normalize(-center);
-    // HD (Claude): noise on the AO work grid like upstream; odd full-res pixels in half-res skewed the Hilbert/R2 pattern.
+    // HD: noise on the AO work grid like upstream; odd full-res pixels in half-res skewed the Hilbert/R2 pattern.
     vec2 noise=XeNoise(p,uint(c.blur.x));
     const int slices=AO_QUALITY==0?1:AO_QUALITY==1?2:AO_QUALITY==2?3:9;
     const int steps=AO_QUALITY<2?2:3;
@@ -121,7 +121,9 @@ void main(){
                 float distanceWorld=length(delta);if(distanceWorld<1e-8)continue;
                 // HD: samples outside the normal hemisphere, including the same tangent plane,
                 // cannot occlude it. A 0.2%-radius surface tolerance rejects D32/rounding self-noise.
-                if(dot(normal,delta)<=max(c.params.x*.002,z*.00002))continue;
+                // HD O1: plus three D32 steps at this depth (forward Z: 3.2e-7*z*z yd); past ~80 yd a step
+                // exceeded the old tolerance and a bare plane occluded itself in bands that followed the camera.
+                if(dot(normal,delta)<=max(max(c.params.x*.002,z*.00002),3*z*z/c.depth.y*5.9604645e-8*c.screen.z))continue;
                 float weight=sat(distanceWorld*falloffMul+falloffAdd),h=dot(delta/distanceWorld,viewVec);
                 horizon[side]=max(horizon[side],mix(low[side],h,weight));}
         }
@@ -133,7 +135,7 @@ void main(){
         float open0=-XeACos(low.y),open1=XeACos(low.x);
         unoccluded+=len*((cosNorm+2*open0*sin(n)-cos(2*open0-n))+(cosNorm+2*open1*sin(n)-cos(2*open1-n)))*.25;
     }
-    // HD (Claude): upstream adds the small-radius fade after averaging slices: fade/sliceCount + mean.
+    // HD: upstream adds the small-radius fade after averaging slices: fade/sliceCount + mean.
     visibility=fade/float(slices)+visibility/max(unoccluded,1e-7);
     visibility=max(.03,pow(max(visibility,0),c.params.z));
     imageStore(Output,p,vec4(sat(visibility/1.5),XePackEdges(edges),0,1));
@@ -153,7 +155,7 @@ void main(){ivec2 p=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(p,Wo
     float ao=sum/max(total,1e-8);if(c.flags.x!=0u)ao=sat(ao*1.5);
     imageStore(Output,p,vec4(ao,center.g,0,center.a));}
 #elif AO_PASS == 5
-// HD (Claude): temporal accumulation. XeGTAO's noise is made to be averaged over frames (upstream relies on TAA).
+// HD: temporal accumulation. XeGTAO's noise is made to be averaged over frames (upstream relies on TAA).
 // screen/depth/params hold view position -> previous work pixel * w and w (previous view depth); blur = max frames,
 // history usable, clamp margin, relative depth tolerance. History: r AO, g view depth, b frames, a valid.
 vec4 Cur(ivec2 q){return texelFetch(AOTex,clamp(q,ivec2(0),WorkSize()-1),0);}

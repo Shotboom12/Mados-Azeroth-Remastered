@@ -160,6 +160,12 @@ namespace wxlvk::vk::context
         CreateSwapchain(win);
     }
 
+#ifdef WOWDECOMP_FSR
+    ValidationStatus ReadValidationStatus(){
+        ValidationStatus out;out.layer=g.validation;out.messenger=g.messenger!=VK_NULL_HANDLE;out.syncConfigured=g.validation&&g.v1SyncConfigured;
+        AcquireSRWLockShared(&g_validation.lock);out.errors=g_validation.errors;out.warnings=g_validation.warnings;ReleaseSRWLockShared(&g_validation.lock);return out;
+    }
+#endif
     void LogValidationSummary()
     {
         AcquireSRWLockShared(&g_validation.lock);
@@ -204,6 +210,9 @@ namespace wxlvk::vk::context
             g.graphicsQueue = nullptr;
             g.presentQueue  = nullptr;
             g.physical      = nullptr;
+#ifdef WOWDECOMP_FSR
+            g.fgQueues      = FrameGenQueues();
+#endif
         }
         else
         {
@@ -274,4 +283,29 @@ namespace wxlvk::vk::context
     }
 
     uint32_t SwapchainGeneration() { return g.swapGen; }
+
+#ifdef WOWDECOMP_FSR
+    const FrameGenQueues& FgQueues() { return g.fgQueues; }
+
+    void SetSwapchainReplacer(SwapchainReplace replace, SwapchainRelease release, SwapchainDrain drain)
+    {
+        g.replace = replace;
+        g.release = release;
+        g.drain   = drain;
+    }
+
+    void DrainSwapchain()
+    {
+        if (!g.replaced || !g.device) return;
+        if (g.drain) g.drain();
+        if (g.dapi.DeviceWaitIdle) g.dapi.DeviceWaitIdle(g.device);
+    }
+
+    bool SwapchainReplaced() { return g.replaced; }
+
+    void DropSwapchainNow()
+    {
+        if (g.device) DropSwapchainObject();
+    }
+#endif
 }

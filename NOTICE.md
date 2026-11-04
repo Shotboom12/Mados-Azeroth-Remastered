@@ -12,3 +12,16 @@ built on the wowdecomp x64 decompilation of the World of Warcraft 3.3.5a (12340)
 - Third-party code under `ThirdParty/` and `Engine/Source/` keeps its own licenses in its own folders.
 - No game data, executables, MPQs or release zips are included. A 3.3.5a (12340) client is required.
 - The original repository has no license file. Reuse beyond this copy should be cleared with Mado.
+
+## Update of 2026-11-03
+
+Updated to Mado's source drop of 2026-11-03 ("Azeroth Remastered-source-2026-11-03"): lamps, native Lumenveil logic (hd/lumen), FSR 3.1 and DLSS support
+(hd/fsr, hd/dlss), the WaystoneHD menu pages (FSR, Lumen, hours, button) and the related renderer and wxl changes. 325 files were added or changed, copied
+unmodified from that drop (files that only differed by line endings were left as they were). Credit for all of it stays with Madominator1.
+
+Left out of this repository on purpose:
+- `Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/data/lampdata.bin` (data table; ask Mado)
+- `ThirdParty/DLSS/` (NVIDIA's DLSS SDK headers, import library and nvngx_dlss.dll): NVIDIA's license does not allow redistributing the SDK itself. Get it from
+  https://github.com/NVIDIA/DLSS (tag v310.9.16 is the version this code was written against) and place it in `ThirdParty/DLSS` (the CMake option WOWDECOMP_DLSS expects
+  include/ and lib/Windows_x86_64/ there).
+- The FidelityFX files under `ThirdParty/FidelityFX/` are AMD's and keep AMD's license (`ThirdParty/FidelityFX/license.md`).

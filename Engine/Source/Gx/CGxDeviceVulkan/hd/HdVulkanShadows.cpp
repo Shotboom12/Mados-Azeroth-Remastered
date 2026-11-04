@@ -4,6 +4,8 @@
 #include <cstring>
 #include <new>
 #include <cstdio>
+#include <chrono>
+#include <cmath>
 #include <fstream>
 #include <string>
 
@@ -195,6 +197,7 @@ bool BuildConstants(const WXL_VkStageContext& ctx,const Settings& settings,const
  c.contact[0]=clamp(settings.contactThickness,.08f,.005f,.3f);c.contact[1]=clamp(settings.contactStart,.035f,.005f,.2f);c.contact[2]=clamp(settings.contactStrength,1,0,1);c.contact[3]=clamp(settings.grassShade,1,0,1);c.jitter[3]=4; // grass: shade in the ground's shadow, up to 4 yd in front of it
  c.jitter[0]=settings.extraJitterX;c.jitter[1]=settings.extraJitterY;c.jitter[2]=ctx.swapRB?1.0f:0.0f;
  std::memcpy(c.rows,maps.rows,sizeof c.rows);std::memcpy(c.maps,maps.meta,sizeof c.maps);
+ c.extra[0]=clamp(settings.pixelScale,1,.25f,1);c.extra[1]=settings.farFix?1.0f:0.0f;c.extra[2]=clamp(settings.farBias,.25f,0,1); // HD O1: 1 = no FSR, the blur exactly as before
  const float* f=reinterpret_cast<const float*>(&c);for(size_t i=0;i<sizeof c/sizeof(float);++i)if(!std::isfinite(f[i]))return false;
  float l=c.sun[0]*c.sun[0]+c.sun[1]*c.sun[1]+c.sun[2]*c.sun[2];if(l<.01f)return false;
  out=c;return true;
@@ -251,8 +254,9 @@ namespace {
 Effect effect;Settings config;NativeMaps nativeMaps;
 const WXL_VkRenderApi* renderApi=nullptr;void* registration=nullptr;bool requested=false,active=false,receiverReady=false;
 EShadowMode oldMode=SHADOW_LOWEST;bool oldPcf=false,pcfReload=false;
-CVar *enabled=nullptr,*contact=nullptr,*quality=nullptr,*debug=nullptr,*strength=nullptr,*angle=nullptr,*penumbra=nullptr,*bias=nullptr,*length=nullptr,*thickness=nullptr,*contactStrength=nullptr,*tagTolerance=nullptr,*grassShade=nullptr,*info=nullptr;
+CVar *enabled=nullptr,*contact=nullptr,*quality=nullptr,*debug=nullptr,*strength=nullptr,*angle=nullptr,*penumbra=nullptr,*bias=nullptr,*length=nullptr,*thickness=nullptr,*contactStrength=nullptr,*tagTolerance=nullptr,*grassShade=nullptr,*info=nullptr,*farFix=nullptr,*farBias=nullptr;
 char lastInfo[256]{};
+int diagFrames=0,diagFail=0,diagGbFail=0,diagUncaptured=0;char diagErr[96]{}; // HD diagnostic: frames since the last hdSunDiag line
 void Info(const char*s){if(info&&std::strcmp(s,lastInfo)){std::snprintf(lastInfo,sizeof lastInfo,"%s",s);info->Set(lastInfo,true,false,false,false);}}
 CVar* Var(const char*n,const char*h,const char*v,uint32_t flags=1){if(auto*c=CVar::LookupRegistered(n))return c;return CVar::Register(n,h,flags,v,nullptr,CATEGORY_GRAPHICS,false,nullptr,false);}
 int __cdecl Wanted(void*){return config.enabled?1:0;}void __cdecl Stage(void*,const WXL_VkStageContext*c){if(c)Record(*c);}
@@ -275,6 +279,7 @@ void CaptureNativeMaps(){
  for(int i=0;i<3;++i){auto&b=CShadowCache::s_extShadowBands[i];textures[i+1]=b.m_textures[b.m_current];}
  std::memcpy(nativeMaps.rows,&CShadowCache::s_shadowMatrices[0].x,12*4*sizeof(float));
  std::memcpy(nativeMaps.rows[12],&CShadowCache::s_shadowMatrices[0].x,3*4*sizeof(float));
+ std::memcpy(Bridge::diagRows,nativeMaps.rows,sizeof Bridge::diagRows); // HD diagnostic
  for(int i=0;i<3;++i)nativeMaps.towardLight[i]=-(&CShadowCache::s_sunDirViewSpace.x)[i];
  for(int i=0;i<5;++i){if(!textures[i])continue;const wxlvk::vk::texture::Image* image=nullptr;
   auto* gx=TextureGetGxTex(textures[i],1,nullptr);if(!gx||!wxlvk::native::impl::ResolveTexture(gx,image)||!image||image->format!=VK_FORMAT_R32_SFLOAT)continue;
@@ -291,7 +296,9 @@ bool Init(){
  enabled=Var("hdSunShadows","HD Vulkan: PCSS sun + contact shadows","0");contact=Var("hdSunContact","HD Vulkan: contact shadow supplement","1");quality=Var("hdSunQuality","HD Vulkan: 0 8/16 taps, 1 12/24 taps","1");
  debug=Var("hdSunDebug","0 normal, 1 sun, 2 contact, 3 combined, 4 coverage, 5 shaded colour, 6 sunlit colour, 7 engine colour","0",0);strength=Var("hdSunStrength","HD Vulkan shadow replacement strength 0..1","1");
  angle=Var("hdSunAngle","HD Vulkan sun angular radius (radians)","0.00465");penumbra=Var("hdSunPenumbra","HD Vulkan maximum penumbra radius (yards)","1.5");bias=Var("hdSunNormalBias","HD Vulkan receiver normal bias (yards)","0.015");
- length=Var("hdSunContactLength","HD Vulkan contact ray length (yards)","1.5");thickness=Var("hdSunContactThickness","HD Vulkan contact thickness (yards)","0.08");contactStrength=Var("hdSunContactStrength","HD Vulkan contact shadow darkness 0..1 (thin grass blades lets light through: lower = lighter)","1");tagTolerance=Var("hdSunTagTolerance","HD Vulkan: how far (log2 depth units) a G-buffer record may be from the pixel and still be its own; 1 = old loose test (grass took the terrain's shading)","0.03");grassShade=Var("hdSunGrassShade","HD Vulkan: grass brightness in the sun's shadow 0..1 (1 = grass left to its own shader)","1");info=Var("hdSunInfo","HD Vulkan shadow status","off",0);
+ length=Var("hdSunContactLength","HD Vulkan contact ray length (yards)","2.5");thickness=Var("hdSunContactThickness","HD Vulkan contact thickness (yards)","0.08");contactStrength=Var("hdSunContactStrength","HD Vulkan contact shadow darkness 0..1 (thin grass blades lets light through: lower = lighter)","1");tagTolerance=Var("hdSunTagTolerance","HD Vulkan: how far (log2 depth units) a G-buffer record may be from the pixel and still be its own; 1 = old loose test (grass took the terrain's shading)","0.03");grassShade=Var("hdSunGrassShade","HD Vulkan: grass brightness in the sun's shadow 0..1 (1 = grass left to its own shader)","1");info=Var("hdSunInfo","HD Vulkan shadow status","off",0);
+ farBias=Var("hdSunFarBias","HD Vulkan (O1): far shadow self-shadowing margin in texels, 0 = keep every small shadow (waves may return), 0.71 = no waves at all","0.25");
+ farFix=Var("hdSunFarFix","HD Vulkan (O1): 1 far shadows without self-shadowing + FSR-independent blur / 0 as before (A/B)","1");
  renderApi=wxl::ScriptMgr::GetInterface<const WXL_VkRenderApi>(WXL_VK_RENDER_API_NAME,WXL_VK_RENDER_API_VERSION);
  if(!renderApi||renderApi->structSize<offsetof(WXL_VkRenderApi,GetGBuffer)+sizeof(renderApi->GetGBuffer)||!renderApi->RegisterStage||!renderApi->RequestGBuffer||!renderApi->GetGBuffer||!effect.Init(renderApi)){Info("shadow Init failed");return false;}
  WXL_VkStageDesc desc{};desc.structSize=sizeof desc;desc.point=WXL_VK_POINT_AFTER_OPAQUE_WORLD;desc.order=50;desc.flags=WXL_VK_STAGE_NEEDS_DEPTH|WXL_VK_STAGE_WRITES_COLOR;desc.Wanted=Wanted;desc.Run=Stage;
@@ -305,7 +312,12 @@ void Resize(){
  config.enabled=enabled&&enabled->m_intValue!=0&&receiverReady;config.contact=contact&&contact->m_intValue!=0;config.quality=quality?quality->m_intValue:1;config.debug=debug?std::clamp(debug->m_intValue,0,7):0;
  config.strength=strength?strength->m_floatValue:1;config.sunAngle=angle?angle->m_floatValue:.00465f;config.maxPenumbra=penumbra?penumbra->m_floatValue:1.5f;config.normalBias=bias?bias->m_floatValue:.015f;
  config.contactLength=length?length->m_floatValue:1.5f;config.contactThickness=thickness?thickness->m_floatValue:.08f;config.contactStrength=contactStrength?contactStrength->m_floatValue:1.0f;config.tagTolerance=tagTolerance?tagTolerance->m_floatValue:.03f;config.grassShade=grassShade?grassShade->m_floatValue:1.0f;
+ config.farFix=!farFix||farFix->m_intValue!=0;config.farBias=farBias?farBias->m_floatValue:.25f;
  Mode(config.enabled);
+ config.pixelScale=1.0f;
+#ifdef WOWDECOMP_FSR
+ {float sx=1,sy=1;if(wxlvk::native::present::WorldTargetScale(sx,sy))config.pixelScale=std::min(sx,sy);} // HD O1: FSR render/display
+#endif
  if(config.enabled!=requested){renderApi->RequestGBuffer(config.enabled?1:0);requested=config.enabled;}
  if(!config.enabled){Info(enabled&&enabled->m_intValue&&!receiverReady?"receiver shaders missing: run generation + restart":"off");return;}VkFormat format{};VkExtent2D extent{};
  if(!wxlvk::native::present::BackBufferInfo(format,extent)||!effect.Resize(extent.width,extent.height))Info("shadow Resize failed");
@@ -314,11 +326,26 @@ void Record(const WXL_VkStageContext&ctx){WXL_VkGBuffer gb{};gb.structSize=sizeo
  // HD: layouts as they are now, after the opaque world sampled the maps. A map still not readable is left out of PCSS only.
  for(int i=0;i<5;++i)if(nativeMaps.images[i]){auto* image=static_cast<const wxlvk::vk::texture::Image*>(nativeMaps.images[i]);nativeMaps.layouts[i]=image->layout;
   if(image->layout!=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL&&image->layout!=VK_IMAGE_LAYOUT_GENERAL)nativeMaps.meta[i][2]=0;}
- if(!renderApi->GetGBuffer(&gb)){Info("shadow G-buffer unavailable (request/MRT/format)");return;}
- if(!effect.Record(ctx,config,nativeMaps,gb)){Info(effect.Error());return;}
+ ++diagFrames;if(!nativeMaps.captured)++diagUncaptured;
+ if(!renderApi->GetGBuffer(&gb)){++diagGbFail;Info("shadow G-buffer unavailable (request/MRT/format)");return;}
+ if(!effect.Record(ctx,config,nativeMaps,gb)){++diagFail;std::snprintf(diagErr,sizeof diagErr,"%s",effect.Error());Info(effect.Error());return;}
  char text[128];std::snprintf(text,sizeof text,"Vulkan sun shadows: %s, maps %u%u%u%u%u late %u%u%u%u%u",config.debug?"debug":"PCSS + contact",
   nativeMaps.captured&1,nativeMaps.captured>>1&1,nativeMaps.captured>>2&1,nativeMaps.captured>>3&1,nativeMaps.captured>>4&1,
-  nativeMaps.late&1,nativeMaps.late>>1&1,nativeMaps.late>>2&1,nativeMaps.late>>3&1,nativeMaps.late>>4&1);Info(text);}
+  nativeMaps.late&1,nativeMaps.late>>1&1,nativeMaps.late>>2&1,nativeMaps.late>>3&1,nativeMaps.late>>4&1);
+ // HD diagnostic: the terrain draws since the last run (slot bits 5..8 as 4 digits: s5 s6 s7 s8)
+ namespace B=Bridge;auto bits=[](uint32_t m,char* o){for(int k=0;k<4;++k)o[k]=(m>>(5+k)&1)?'1':'0';o[4]=0;};
+ char bOr[5],bAnd[5],bBound[5],bUnk[5];bits(B::diagOr,bOr);bits(B::diagDraws?B::diagAnd:0,bAnd);bits(B::diagBound,bBound);bits(B::diagUnknown,bUnk);
+ const C3Vector& sun=CShadowCache::s_sunDir;float elev=-sun.z;elev=elev>1?1:elev<-1?-1:elev;elev=std::asin(elev)*57.2957795f;
+ auto& b0=CShadowCache::s_extShadowBands[0];auto& b1=CShadowCache::s_extShadowBands[1];auto& b2=CShadowCache::s_extShadowBands[2];
+ char full[1200];std::snprintf(full,sizeof full,"%s | mode %d, cull 0:%d 1:%d, wmo %d | rendus %d: %d/%d %d/%d %d/%d %d/%d %d/%d | arbres b0 %d n%d f%d t%d ok%d, b1 %d n%d f%d t%d ok%d, b2 %d n%d f%d t%d ok%d | soleil %.1f deg (%.3f %.3f %.3f) | sol %u draws, nan %d, plus proche dyn %.2f b0 %.2f b1 %.2f b2 %.2f | z dyn %.3f..%.3f b0 %.3f..%.3f b1 %.3f..%.3f b2 %.3f..%.3f | c49z %.2f..%.2f c50x %.2f..%.2f | camera %.0f %.0f %.0f | centres b0 %.0f %.0f %.0f r%.0f, b1 %.0f %.0f %.0f r%.0f, b2 %.0f %.0f %.0f r%.0f | ecart %.3g, gbuffer %u/%u/%u | eblouissement %.2f..%.2f, applique %.2f",
+  text,(int)CShadowCache::s_shadowMode,HDShadowDiag::cullOff,HDShadowDiag::cullOn,HDShadowDiag::inWmo,HDShadowDiag::calls,HDShadowDiag::groups[0],HDShadowDiag::m2[0],HDShadowDiag::groups[1],HDShadowDiag::m2[1],HDShadowDiag::groups[2],HDShadowDiag::m2[2],HDShadowDiag::groups[3],HDShadowDiag::m2[3],HDShadowDiag::groups[4],HDShadowDiag::m2[4],HDShadowDiag::tq[0][0],HDShadowDiag::tq[0][1],HDShadowDiag::tq[0][2],HDShadowDiag::tq[0][3],HDShadowDiag::tq[0][5],HDShadowDiag::tq[1][0],HDShadowDiag::tq[1][1],HDShadowDiag::tq[1][2],HDShadowDiag::tq[1][3],HDShadowDiag::tq[1][5],HDShadowDiag::tq[2][0],HDShadowDiag::tq[2][1],HDShadowDiag::tq[2][2],HDShadowDiag::tq[2][3],HDShadowDiag::tq[2][5],elev,sun.x,sun.y,sun.z,B::diagDraws,B::diagNan,B::diagNear[0],B::diagNear[1],B::diagNear[2],B::diagNear[3],B::diagZ[0][0],B::diagZ[0][1],B::diagZ[1][0],B::diagZ[1][1],B::diagZ[2][0],B::diagZ[2][1],B::diagZ[3][0],B::diagZ[3][1],B::diagC49[0],B::diagC49[1],B::diagC50[0],B::diagC50[1],B::diagCam[0],B::diagCam[1],B::diagCam[2],
+  b0.m_lastPos.x,b0.m_lastPos.y,b0.m_lastPos.z,b0.m_radius,b1.m_lastPos.x,b1.m_lastPos.y,b1.m_lastPos.z,b1.m_radius,b2.m_lastPos.x,b2.m_lastPos.y,b2.m_lastPos.z,b2.m_radius,
+  B::diagMaxDiff,B::diagRecGbuf,B::diagRecNull,B::diagRecPlain,HDShadowDiag::glareMin<1e29f?HDShadowDiag::glareMin:0.0f,HDShadowDiag::glareMax,HDShadowDiag::glareUsed);
+ // HD diagnostic: the same line into Logs\hdSunDiag.txt twice a second (new file each session, 4000 lines at most)
+ {static std::chrono::steady_clock::time_point start=std::chrono::steady_clock::now(),last{};static int lines=0;auto now=std::chrono::steady_clock::now();
+  if(lines<4000&&(lines==0||now-last>=std::chrono::milliseconds(500))){last=now;
+   if(FILE*f=std::fopen("Logs\\hdSunDiag.txt",lines?"a":"w")){std::fprintf(f,"%.1f s  [images %d, echecs %d (%s), gbuffer %d, sans cartes %d] %s\n",std::chrono::duration<double>(now-start).count(),diagFrames,diagFail,diagErr,diagGbFail,diagUncaptured,full);std::fclose(f);++lines;}diagFrames=diagFail=diagGbFail=diagUncaptured=0;diagErr[0]=0;HDShadowDiag::glareMin=1e30f;HDShadowDiag::glareMax=HDShadowDiag::glareUsed=0.0f;}}
+ B::DiagReset();HDShadowDiag::cullOff=HDShadowDiag::cullOn=HDShadowDiag::inWmo=HDShadowDiag::calls=0;for(auto&r:HDShadowDiag::tq)for(int&k:r)k=0;Info(full);}
 void SetSubpixelOffset(float x,float y){config.extraJitterX=x;config.extraJitterY=y;}
 bool Shutdown(){
  if(!renderApi&&!registration)return true;if(registration){renderApi->UnregisterStage(registration);registration=nullptr;}if(requested){renderApi->RequestGBuffer(0);requested=false;}Mode(false);

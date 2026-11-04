@@ -26,9 +26,24 @@ namespace wxlvk::native::present::detail
         // images were not refused, and the engine is between its world scene pass's start and
         // AfterOpaqueWorld. Before the world (the engine's clear), after the point (the transparents,
         // the consumers' own draws, the interface): the plain class, whose pipelines name one attachment.
-        return s.gbufRequests > 0 && !s.gbufFailed && s.worldOpen && !s.opaqueDone && wxlvk::settings::GBufferAllowed();
+        return
+#ifdef WOWDECOMP_FSR
+            (s.gbufRequests>0||WorldObjectMotionActive())
+#else
+            s.gbufRequests > 0
+#endif
+            && !s.gbufFailed && s.worldOpen && !s.opaqueDone && wxlvk::settings::GBufferAllowed();
     }
 
+#ifdef WOWDECOMP_FSR
+    static bool EnsureOptionalMotionGBuffer(){
+        const bool optional=s.gbufRequests==0&&WorldObjectMotionActive();
+        const bool failed=s.gbufFailed;
+        if(EnsureGBufferImages())return true;
+        if(optional){s.gbufFailed=failed;WorldObjectMotionRefuse();}
+        return false;
+    }
+#endif
     void EndPass()
     {
         if (!s.passOpen) return;
@@ -134,11 +149,26 @@ namespace wxlvk::native::present::detail
 
         // The G-buffer class for the opaque world's pass on the back buffer, while a consumer asks and the
         // images can be had (docs/architecture.md "The G-buffer").
-        const bool gbuffer = c.back && hasDepth && d.back && GBufferWanted() && EnsureGBufferImages();
+        const bool gbuffer = c.back && hasDepth && d.back && GBufferWanted() &&
+#ifdef WOWDECOMP_FSR
+            EnsureOptionalMotionGBuffer();
+#else
+            EnsureGBufferImages();
+#endif
+#ifdef WOWDECOMP_FSR
+        VkRenderPass pass=ClassPass(c.format,hasDepth?d.format:VK_FORMAT_UNDEFINED,gbuffer);
+        if(!pass&&WorldObjectMotionActive()){WorldObjectMotionRefuse();pass=ClassPass(c.format,hasDepth?d.format:VK_FORMAT_UNDEFINED,gbuffer);}
+        if(!pass)return nullptr;
+        const bool hadMotion=WorldObjectMotionPass(pass);
+        VkFramebuffer fb=FramebufferFor(pass,c.view,hasDepth?d.view:VK_NULL_HANDLE,area);
+        if(!fb&&hadMotion){WorldObjectMotionRefuse();pass=ClassPass(c.format,hasDepth?d.format:VK_FORMAT_UNDEFINED,gbuffer);if(pass)fb=FramebufferFor(pass,c.view,hasDepth?d.view:VK_NULL_HANDLE,area);}
+        if(!fb)return nullptr;
+#else
         const VkRenderPass pass = ClassPass(c.format, hasDepth ? d.format : VK_FORMAT_UNDEFINED, gbuffer);
         if (pass == VK_NULL_HANDLE) return nullptr;
         const VkFramebuffer fb = FramebufferFor(pass, c.view, hasDepth ? d.view : VK_NULL_HANDLE, area);
         if (fb == VK_NULL_HANDLE) return nullptr;
+#endif
 
         Barriers in;
         if (gbuffer && (s.gbufLayout == VK_IMAGE_LAYOUT_UNDEFINED || s.gbufFresh))
@@ -175,8 +205,16 @@ namespace wxlvk::native::present::detail
         // The clear values follow the class's attachment order: the colour, a G-buffer class's three
         // (zero: class 0, no normal), the depth. The G-buffer is cleared by the frame's first pass of
         // its class and kept by the later ones.
-        const uint32_t depthAt = gbuffer ? 1 + kGBufferAttachments : 1;
-        VkClearValue values[2 + kGBufferAttachments] = {};
+        const uint32_t depthAt = (gbuffer ? 1 + kGBufferAttachments : 1)
+#ifdef WOWDECOMP_FSR
+            +(WorldObjectMotionPass(pass)?1u:0u)
+#endif
+        ;
+        VkClearValue values[2 + kGBufferAttachments
+#ifdef WOWDECOMP_FSR
+            +1
+#endif
+        ] = {};
         values[0].color.float32[3]         = 1.0f;
         values[depthAt].depthStencil.depth = 1.0f;
         bool clearColour  = c.clear;

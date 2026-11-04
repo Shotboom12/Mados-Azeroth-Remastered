@@ -15,6 +15,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "vulkan/context/Internal.hpp"
+#ifdef WOWDECOMP_DLSS
+#include "../../../../hd/dlss/HdDlssVk.h"
+#endif
 
 namespace wxlvk::vk::context::detail
 {
@@ -63,6 +66,9 @@ namespace wxlvk::vk::context::detail
         extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
         extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
         wxlvk::host::ExtendInstance(available, extensions);   // WXL_HOST only: the interop capabilities
+#ifdef WOWDECOMP_DLSS
+        HD::Dlss::AddInstanceExtensions(available, extensions);   // HD 2026-11-02: what NGX asks for, only if offered
+#endif
 
         std::vector<const char*> layers;
         if (settings::ValidationWanted())
@@ -125,6 +131,21 @@ namespace wxlvk::vk::context::detail
         info.pApplicationInfo        = &app;
         info.enabledLayerCount       = static_cast<uint32_t>(layers.size());
         info.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
+#ifdef WOWDECOMP_FSR
+        // V1 is opt-in at process startup. Set only validate_sync; do not weaken default core/lifetime checks.
+        VkBool32 v1True=VK_TRUE;
+        VkLayerSettingEXT v1Setting{"VK_LAYER_KHRONOS_validation","validate_sync",VK_LAYER_SETTING_TYPE_BOOL32_EXT,1,&v1True};
+        VkLayerSettingsCreateInfoEXT v1Settings{VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT};
+        char v1Env[8]{};const bool v1Requested=GetEnvironmentVariableA("WAYSTONE_FSR_V1",v1Env,sizeof v1Env)==1&&v1Env[0]=='1';
+        g.v1SyncConfigured=false;bool v1Chained=false;
+        if(v1Requested&&g.validation){
+            uint32_t n=0;std::vector<VkExtensionProperties> layerExtensions;
+            if(api.EnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation",&n,nullptr)==VK_SUCCESS){layerExtensions.resize(n);if(n&&api.EnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation",&n,layerExtensions.data())!=VK_SUCCESS)layerExtensions.clear();}
+            if(HasExtension(layerExtensions,VK_EXT_LAYER_SETTINGS_EXTENSION_NAME)){
+                extensions.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);v1Settings.pNext=info.pNext;v1Settings.settingCount=1;v1Settings.pSettings=&v1Setting;info.pNext=&v1Settings;v1Chained=true;
+            }else wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: V1 synchronization settings unsupported by this layer; validation receipt must stay blocked");
+        }
+#endif
         info.enabledExtensionCount   = static_cast<uint32_t>(extensions.size());
         info.ppEnabledExtensionNames = extensions.data();
 
@@ -150,6 +171,9 @@ namespace wxlvk::vk::context::detail
                                 "Retrying without layers; validation will be off.",
                                 static_cast<unsigned>(layers.size()), ResultName(r));
 
+#ifdef WOWDECOMP_FSR
+            if(v1Chained){info.pNext=v1Settings.pNext;extensions.pop_back();info.enabledExtensionCount=static_cast<uint32_t>(extensions.size());info.ppEnabledExtensionNames=extensions.data();v1Chained=false;}
+#endif
             info.enabledLayerCount   = 0;
             info.ppEnabledLayerNames = nullptr;
             g.instance               = nullptr;
@@ -165,6 +189,9 @@ namespace wxlvk::vk::context::detail
             return false;
         }
 
+#ifdef WOWDECOMP_FSR
+        g.v1SyncConfigured=g.validation&&v1Chained;
+#endif
         if (!loader::LoadInstance(g.instance, g.debugUtils, g.iapi))
         {
             // The instance exists but is unusable. Destroy it here rather than leaving it to

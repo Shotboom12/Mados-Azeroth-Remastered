@@ -84,6 +84,11 @@ namespace wxlvk::native::present::detail
     {
         if (!s.dapi || !s.device) return;
         const loader::Device& d = *s.dapi;
+#ifdef WOWDECOMP_FSR
+        // The FSR swapchain's own threads may still read the HUD-less images: its presents are drained first.
+        context::DrainSwapchain();
+        WorldTargetDestroyNow();   // first: swaps the back buffer back in if the world set held its place
+#endif
         for (uint32_t i = 0; i < kMaxImages; ++i)
         {
             DropFramebuffersNaming(s.views[i], 0, true);

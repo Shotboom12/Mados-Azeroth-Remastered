@@ -15,7 +15,7 @@ struct alignas(16) Parameters {
     uint32_t swapRB=0,pad[3]{};
 };
 static_assert(sizeof(Parameters)==32,"GLSL push constant layout");
-// Exact reference weights: 16 IDs, strongest two, stable tie order.
+// HD: existing bounded weight set. Select remains the legacy top-two diagnostic/reference path.
 struct LutWeights {
     int32_t id[16]{};float weight[16]{};int32_t count=0;
     void Add(int32_t lut,float w);
@@ -34,7 +34,7 @@ public:
     // New ID only, immutable after addition. CPU allocations/GPU creation happen HERE, never in Record.
     bool AddLut(int32_t id,const Texels& pixels);
     bool HasLut(int32_t id) const;
-    bool Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Parameters& parameters);
+    bool Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Parameters& parameters,const LutWeights* completeWeights=nullptr);
     bool Shutdown(uint64_t completedSerial);
     uint64_t LastUsed() const;
     const char* Error() const;

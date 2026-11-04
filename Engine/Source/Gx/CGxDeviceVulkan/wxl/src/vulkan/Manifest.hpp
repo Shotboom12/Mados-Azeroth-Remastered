@@ -162,6 +162,12 @@ namespace wxlvk::vk::manifest
         bool     gbufBones;
         bool     gbufWind;
         bool     gbufWindBones;
+#ifdef WOWDECOMP_FSR
+        bool windVelocity=false,windBonesVelocity=false,grassVelocity=false;
+        bool skinBones=false;
+        bool vel=false,velBones=false,velFrag=false,velFragWind=false;
+        bool velZero=false,velZeroWind=false,gbufVelZero=false,gbufWindVelZero=false;
+#endif
     };
 
     /// The bone-palette variant's storage buffer: b[i] is vertex register c(kBoneBase + i), for
@@ -192,6 +198,11 @@ namespace wxlvk::vk::manifest
 
     /// Whether Load() found a manifest with at least one record.
     bool Loaded();
+#ifdef WOWDECOMP_FSR
+    bool EnableWindVelocity();
+    bool EnableSkinVelocity();
+    bool EnableVelocity(); // lazy, transactional SHA256-verified separate manifest-m2.txt
+#endif
 
     /**
      * The record with this content hash.

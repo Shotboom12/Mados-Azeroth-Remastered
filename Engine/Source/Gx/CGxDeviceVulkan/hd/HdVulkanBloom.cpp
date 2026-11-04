@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // HdBloom.cpp formulas and HDR intermediate formats, isolated from water/fog/grade modules.
 #include "HdVulkanBloom.h"
+#if defined(WOWDECOMP_LUMEN) && !defined(HD_BLOOM_STANDALONE)
+#include "lumen/LvClient.h" // HD 2026-11-02 kit R1 lot L1: R2 boundary (point 7)
+namespace {bool LumenComposedShafts(uint64_t s){return HD::Lumen::Client::ComposedShafts(s);}bool LumenNeedsAfterSpells(){return HD::Lumen::Client::NeedsAfterSpells();}}
+#else
+namespace {bool LumenComposedShafts(uint64_t){return false;}bool LumenNeedsAfterSpells(){return false;}} // WOWDECOMP_LUMEN OFF: exactly the old bloom
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -159,10 +165,10 @@ void Info(const char* value){if(info && std::strcmp(lastInfo,value)){std::snprin
 CVar* Var(const char*name,const char*help,const char*value,uint32_t flags=1){if(auto*old=CVar::LookupRegistered(name))return old;return CVar::Register(name,help,flags,value,nullptr,CATEGORY_GRAPHICS,false,nullptr,false);}
 float Value(CVar*v,float fallback,float hi){float x=v?v->m_floatValue:fallback;return std::isfinite(x)?std::clamp(x,0.0f,hi):fallback;}
 int __cdecl Wanted(void*){return wanted?1:0;}
-void __cdecl Stage(void*,const WXL_VkStageContext* source){if(!source)return;sawRecord=true;auto ctx=*source;
+void __cdecl Stage(void*,const WXL_VkStageContext* source){if(!source)return;sawRecord=true;auto ctx=*source;auto live=config;if(LumenComposedShafts(ctx.serial))live.rays=false;
     // Optional depth through the OWNER, at this exact outside-pass point; the halo never requires it.
-    if(config.rays){ctx.depthView=VK_NULL_HANDLE;if(wxlvk::native::present::SceneDepth(ctx.cmd,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,ctx.depthView,ctx.depthFormat))ctx.depthLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;else ctx.depthView=VK_NULL_HANDLE;}
-    effect.Record(ctx,config);Info(effect.Error());
+    if(live.rays){ctx.depthView=VK_NULL_HANDLE;if(wxlvk::native::present::SceneDepth(ctx.cmd,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,ctx.depthView,ctx.depthFormat))ctx.depthLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;else ctx.depthView=VK_NULL_HANDLE;}
+    effect.Record(ctx,live);Info(effect.Error());
 }
 }
 bool Init(){
@@ -175,11 +181,11 @@ bool Init(){
 void Resize(){if(!stage || !((bloom&&bloom->m_intValue)||(rays&&rays->m_intValue)))return;VkFormat format{};VkExtent2D extent{};if(wxlvk::native::present::BackBufferInfo(format,extent) && !effect.Resize(extent.width,extent.height))Info(effect.Error());}
 void World(){
     if(!g_theGxDevicePtr || g_theGxDevicePtr->DeviceApi()!=GxApi_Vulkan){HD::BloomWorld();return;}
-    wanted=false;if(!stage)return;config={};config.bloom=bloom&&bloom->m_intValue;config.rays=rays&&rays->m_intValue;if(!config.bloom && !config.rays){Info("off");return;}
+    wanted=false;if(!stage)return;config={};config.bloom=bloom&&bloom->m_intValue;config.rays=rays&&rays->m_intValue;if(!config.bloom && !config.rays&&!LumenNeedsAfterSpells()){Info("off");return;}
     config.strength=Value(strength,1,5);config.threshold=Value(threshold,.7f,1);config.rayStrength=Value(rayStrength,1,5);config.debug=debug?std::clamp(debug->m_intValue,0,3):0;
     auto&dn=DayNight::g_dnInfo;auto sun=DayNight::g_planets.m_sun.m_position-dn.m_cameraPos;config.sunDirection[0]=sun.x;config.sunDirection[1]=sun.y;config.sunDirection[2]=sun.z;
     config.cameraForward[0]=dn.m_cameraDir.x;config.cameraForward[1]=dn.m_cameraDir.y;config.cameraForward[2]=dn.m_cameraDir.z;config.farClip=dn.m_farClip>50?dn.m_farClip:1000;config.extraJitterX=extraX;config.extraJitterY=extraY;
-    wanted=true;sawRecord=false;wxlvk::stages::chain::Run(static_cast<wxlvk::stages::Point>(PrivatePoint));wanted=false;if(!sawRecord)Info("Vulkan bloom skipped: exact boundary/backbuffer unavailable");
+    wanted=config.bloom||config.rays;sawRecord=false;wxlvk::stages::chain::Run(static_cast<wxlvk::stages::Point>(PrivatePoint));wanted=false;if((config.bloom||config.rays)&&!sawRecord)Info("Vulkan bloom skipped: exact boundary/backbuffer unavailable");
 }
 void SetSubpixelOffset(float x,float y){extraX=x;extraY=y;}
 bool Shutdown(){if(!api && !stage)return true;wanted=false;if(stage){api->UnregisterStage(stage);stage=nullptr;}

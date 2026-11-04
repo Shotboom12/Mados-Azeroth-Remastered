@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#version 450
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x=8,local_size_y=8)in;
+layout(set=0,binding=0)uniform sampler2D sceneDepth;
+layout(set=0,binding=1)uniform sampler2D shadowAtlas;
+layout(set=0,binding=2)uniform usampler2D isolatedDelta;
+layout(set=0,binding=5)uniform sampler2D sunVisibility;
+layout(set=0,binding=3,rgba8)uniform image2D frame;
+layout(set=0,binding=4,std140)uniform Params {
+    mat4 worldFromView,matrices[6];vec4 screen,view,depth,light,atlas;uvec4 flags;
+} p;
+#include "../local-shadow/HdLocalShadowLookup.glsl"
+#include "HdLocalLampDelta.glsl"
+void main(){
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(frame);if(any(greaterThanEqual(pixel,size)))return;
+    uvec4 data=texelFetch(isolatedDelta,pixel,0);vec4 original=imageLoad(frame,pixel);
+    vec3 actual=(vec3(data.rgb&uvec3(1023))-511)/511;
+    vec3 low=(vec3((data.rgb>>10)&uvec3(1023))-511)/511,high=(vec3((data.rgb>>20)&uvec3(1023))-511)/511;
+    float strength=uintBitsToFloat(p.flags.w);vec3 difference=actual;
+    if((data.a&0x80000000u)!=0u&&strength>=0){vec2 sun=texelFetch(sunVisibility,pixel,0).rg;difference=actual+strength*(mix(low,high,min(sun.r,sun.g))-actual);}
+    vec4 delta=vec4(difference,uintBitsToFloat(data.a&0x7fffffffu));
+    float tagRaw=texelFetch(sceneDepth,pixel,0).r;
+    float tagDepth=(tagRaw-p.depth.x)/max(p.depth.y-p.depth.x,1e-6);
+    float tagZ=-p.depth.w/max(p.depth.z-tagDepth,1e-7);
+    float expectedTag=.505+.49*clamp((log2(max(tagZ,.0625))+4)/16,0,1);
+    bool depthMatches=(tagDepth>=0&&tagDepth<.99999&&abs(delta.a-expectedTag)<.0015);
+    bool valid=depthMatches&&delta.a>=.5 && !any(isnan(delta)) && !any(isinf(delta)) && !any(greaterThan(abs(delta.rgb),vec3(1)));
+    if(p.flags.x==2u||p.flags.x==3u){
+        vec3 rgb=p.flags.x==2u?(valid?vec3(.5)+.5*delta.rgb:vec3(.5)):vec3(valid?1:0);
+        if(p.flags.y!=0u)rgb=rgb.bgr;imageStore(frame,pixel,vec4(rgb,original.a));return;
+    }
+    if(!valid||all(equal(delta.rgb,vec3(0))))return;
+    vec2 uv=(vec2(pixel)+.5)*p.screen.xy,local=(uv-p.view.xy)*p.view.zw;
+    if(any(lessThan(local,vec2(0)))||any(greaterThan(local,vec2(1))))return;
+    float raw=texelFetch(sceneDepth,pixel,0).r,z01=(raw-p.depth.x)/max(p.depth.y-p.depth.x,1e-6);
+    if(isnan(raw)||isinf(raw)||z01<0||z01>=.99999)return;
+    float z=-p.depth.w/max(p.depth.z-z01,1e-7);
+    vec3 v=vec3((local*vec2(p.screen.z,p.screen.w)+p.atlas.xy)*z,z);
+    vec4 world=p.worldFromView*vec4(v,1);if(any(isnan(world))||any(isinf(world))||abs(world.w)<1e-8)return;
+    float visibility=HdLocalShadowVisibility(shadowAtlas,p.matrices,p.light,world.xyz/world.w,p.atlas.z,int(p.atlas.w));
+    if(visibility>=1)return; // preserve fully visible pixels byte-for-byte
+    vec3 rgb=p.flags.y!=0u?original.bgr:original.rgb;
+    rgb=HdLocalShadowApplyIsolatedDelta(rgb,delta.rgb,visibility);
+    if(p.flags.y!=0u)rgb=rgb.bgr;imageStore(frame,pixel,vec4(rgb,original.a));
+}

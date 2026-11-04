@@ -2,7 +2,9 @@
 #include "WoW/Source/WorldClient/HD/HdCataRenderPerf.h"
 #include "WoW/Source/WorldClient/HD/HdDetailDoodad.h" // HD: hdGrassBuffers
 #include "World.h"
+#include "Engine/Source/Model2/HdExtraLamps.h" // HD: hdExtraLampsObjects
 #include "WoW/Source/WorldClient/HD/HdCataViewDistance.h" // HD: Cata view policy
+#include "WoW/Source/WorldClient/HD/HdTime.h" // HD: hdSunGlareDim
 #include <cstdlib>
 #include <new>
 #include <algorithm>
@@ -1074,6 +1076,7 @@ uint64_t World::QueryObjectParentParam64(CMapBaseObj* object) {
 CMapEntity* CMap::ObjectCreate(CM2Model* model, MAP_OBJECT_FUNC func, void* funcParam, uint64_t param64, uintptr_t param32, uint32_t flags) {
     CMapEntity* entity = CMap::AllocEntity((flags >> 3) & 0x1);
     entity->m_model = model;
+    HD::ExtraLamps::SetObjectModel(model, true); // HD: world object
     entity->m_funcParam64 = param64;
     entity->m_funcParam32 = param32;
     entity->m_position = C3Vector(10000000.0f, 10000000.0f, 10000000.0f);
@@ -1125,6 +1128,7 @@ void World::ObjectSetModel(CMapEntity* entity, CM2Model* model) {
 
     entity->m_staticFlags &= ~0x4000;
     entity->m_model = model;
+    HD::ExtraLamps::SetObjectModel(model, true); // HD: world object
 
     if (!model) {
         return;
@@ -1452,6 +1456,15 @@ void DayNight::Update(int32_t reset, const C3Vector* cameraPos) {
         if (glare == 0.0f) {
             DayNight::ClearLightFlag(1);
         }
+
+        // HD diagnostic: the sun glare's darkening over the hdSunDiag window (before hdSunGlareDim)
+        if (glare < HDShadowDiag::glareMin) HDShadowDiag::glareMin = glare;
+        if (glare > HDShadowDiag::glareMax) HDShadowDiag::glareMax = glare;
+        // HD: hdSunGlareDim (default 0): looking at the sun no longer darkens the world. The glare follows an
+        // occlusion query of the sun; with hdSunPath 1 the sun is low, often behind swaying leaves, and the
+        // up to 35% darkening of all the light flickered over the whole screen.
+        glare *= HD::SunGlareDim();
+        if (glare > HDShadowDiag::glareUsed) HDShadowDiag::glareUsed = glare;
     }
 
     DayNight::UpdateLighting();
@@ -4851,6 +4864,7 @@ CMapEntity* CMap::ObjectCreateStatic(CM2Model* model, const C44Matrix& matrix, M
     entity->m_m2AmbientColor = color;
     entity->m_funcParam32 = param32;
     entity->m_model = model;
+    HD::ExtraLamps::SetObjectModel(model, true); // HD: world object
     entity->m_sphere.c.x = matrix.d0;
     entity->m_sphere.c.y = matrix.d1;
     entity->m_diffuseLightScale = 1.0f;
@@ -4908,6 +4922,7 @@ CMapEntity* CMap::ObjectCreateStaticEx(CM2Model* model, const C44Matrix& matrix,
     entity->m_funcParam32 = param32;
     entity->m_funcParam64 = param64;
     entity->m_model = model;
+    HD::ExtraLamps::SetObjectModel(model, true); // HD: world object
     entity->m_sphere.c.x = matrix.d0;
     entity->m_sphere.c.y = matrix.d1;
     entity->m_diffuseLightScale = 1.0f;

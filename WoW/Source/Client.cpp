@@ -112,6 +112,7 @@
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 #include "WoW/Source/WowSvcs/WowSvcsClient/FriendList.h"
 #include "WoW/Source/WowSysMessageOutput.h"
+#include "WoW/Source/WorldClient/HD/HdCataRenderPerf.h" // HD: hdCataRenderPerf
 
 namespace {
 
@@ -442,6 +443,7 @@ static void MovementInit() {
 // VERIFY: abdc92c0 auto
 // OFFSET: 0x00401FD0
 static int32_t PollNet(const void* data, void* param) {
+    HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::PollNet); // HD: hdCataRenderPerf
     RealmConnection::PollNet(nullptr, nullptr);
     WardenClient_Process();
     return 1;

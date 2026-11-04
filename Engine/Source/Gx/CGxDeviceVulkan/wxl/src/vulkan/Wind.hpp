@@ -73,6 +73,11 @@ namespace wxlvk::vk::wind
      */
     bool MoverDraw(const wxlvk::draw::Cmd& c);
 
+#ifdef WOWDECOMP_FSR
+    struct MotionResources{VkBuffer block{},data{};VkDeviceSize dataBytes=0;uint64_t revision=0;};
+    bool MotionResourcesFor(uint32_t frameSlot,MotionResources&);
+    const WXL_VkWindParams* MotionSnapshot(uint32_t frameSlot,uint64_t&revision);
+#endif
     /// The frame's start (pipelines::BeginFrame): the slot's wind block from the last SetWind, and the
     /// GPU resources the first time after WatchTextures.
     void BeginFrame(uint32_t frameSlot);

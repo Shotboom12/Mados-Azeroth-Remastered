@@ -4,6 +4,8 @@
 // (namespace wxlvk::native::impl), which keep the 32-bit extension's (device, edx, ...) signatures; the
 // D3D-free half of CGxDeviceD3d and the window code are copied from Engine/Source/Gx/CGxDeviceD3d.
 
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/lamp/HdLampHooks.h"
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/lamp/HdLampOwner.h"
 #include "Engine/Source/Gx/CGxDeviceVulkan/CGxDeviceVulkan.h"
 #include <cmath>
 #include <cstring>
@@ -20,11 +22,47 @@
 #include "host/Host.hpp"
 #include "hd/CataWaterService.h" // HD: Cata water
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanShadows.h" // HD: step 4 sun shadows (hdSunShadows)
+#ifdef WOWDECOMP_FSR
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrSettings.h"
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRuntime.h"
+#endif
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanAO.h" // HD: hdAO
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanModelLights.h" // HD: hdModelLightTest
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanFog.h" // HD: hdFog
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanBloom.h" // HD: hdBloom / hdRays
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanGrade.h" // HD: hdGrade
+#ifdef WOWDECOMP_LUMEN
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvClient.h" // HD 2026-11-02: kit R1 lot L0 (Lumenveil R2)
+#include "wxl/Script.hpp"
+#include "native/Present.hpp"
+#include <cstdio>
+namespace {
+bool g_lumenStarted = false;
+// Lot L0: start the single R2 owner once the device exists. Catalogue next to the exe (Vulkan\lumen), regional profiles off.
+void LumenStartup() {
+    const WXL_VkRenderApi* api = wxl::ScriptMgr::GetInterface<const WXL_VkRenderApi>(WXL_VK_RENDER_API_NAME, WXL_VK_RENDER_API_VERSION);
+    bool ok = api && HD::Lumen::Client::Startup(api, "Vulkan\\lumen\\lampdata.bin", "");
+    g_lumenStarted = ok;
+    char line[512];
+    std::snprintf(line, sizeof line, "HD Lumen R2 (lot L0): startup %s, status: %s", ok ? "ok" : "FAILED", HD::Lumen::Client::Status());
+    CGxDevice::Log("%s", static_cast<const char*>(line)); // const char*: a char* would pick the va_list overload and crash
+}
+// Same rule as the fog: its serial must finish before the device goes. Nothing at all once shut down (the destructor
+// calls it again after DeviceDestroy, when the device's serials must not be touched).
+bool LumenShutdown() {
+    if (!g_lumenStarted) return true;
+    HD::Lumen::Client::Stop();
+    uint64_t last = HD::Lumen::Client::LastUsed();
+    if (last > wxlvk::native::present::Completed()) {
+        if (wxlvk::native::present::FrameOpen() && !wxlvk::native::present::FlushAndWait()) return false;
+        if (!wxlvk::native::present::WaitSerial(last)) return false;
+    }
+    if (!HD::Lumen::Client::Shutdown(wxlvk::native::present::Completed())) return false;
+    g_lumenStarted = false;
+    return true;
+}
+}
+#endif
 #include "wxlcompat/Seams.hpp"
 
 namespace {
@@ -91,10 +129,13 @@ CGxDeviceVulkan::CGxDeviceVulkan() {
 CGxDeviceVulkan::~CGxDeviceVulkan() {
     HD::VulkanShadows::Shutdown(); // HD step 4: idempotent after DeviceDestroy
     HD::VulkanAO::Shutdown(); // HD: idempotent after DeviceDestroy
+#ifdef WOWDECOMP_LUMEN
+    LumenShutdown(); // HD 2026-11-02 kit R1 lot L0: idempotent after DeviceDestroy
+#endif
     HD::VulkanFog::Shutdown(); // HD: idempotent
     HD::VulkanBloom::Shutdown(); // HD: idempotent
     HD::VulkanGrade::Shutdown(); // HD: idempotent
-    HD::VulkanModelLights::Shutdown(); // HD: idempotent
+    HD::VulkanModelLights::Shutdown(); HD::Lamp::Owner::Shutdown(); HD::Lamp::Native::Shutdown(); // HD: idempotent
     HD::CataWater::Service::Shutdown(); // HD: a no-op once DeviceDestroy ran
     wxlcompat::SeamsEnable(false);
 }
@@ -454,10 +495,13 @@ int32_t CGxDeviceVulkan::DeviceCreate(GxWindowProc windowProc, const CGxFormat& 
     int32_t created = impl::DeviceCreate(this, nullptr, reinterpret_cast<WNDPROC>(windowProc), W<const wd::CGxFormat>(&format));   // Device.cpp
     wxlcompat::SeamsEnable(created != 0);
     if (created) HD::CataWater::Service::Startup(); // HD: Cata water, step A (hd/CataWaterService.h)
-    if (created) HD::VulkanModelLights::Init(); // HD: hdModelLightTest diagnostic (hd/HdVulkanModelLights.h)
+    if (created) { HD::VulkanModelLights::Init(); HD::Lamp::Native::Init(); HD::Lamp::Owner::Init(); } // HD: hdModelLightTest diagnostic (hd/HdVulkanModelLights.h)
     if (created && !HD::VulkanShadows::Init()) { // HD step 4: hdSunShadows (hd/HdVulkanShadows.h)
         CGxDevice::Log("HD Vulkan sun shadows: initialization failed");
     }
+#ifdef WOWDECOMP_FSR
+    if (created) { HD::Fsr::Settings::Register(); HD::Fsr::Runtime::Startup(); HD::Fsr::Runtime::Frame(); } // both FSR requests default OFF; step A only: runtime, providers, device checks, statuses
+#endif
     if (created && !HD::VulkanAO::Init()) { // HD: hdAO under Vulkan (hd/HdVulkanAO.h)
         CGxDevice::Log("HD Vulkan AO: initialization failed; AO stays unavailable");
     }
@@ -470,6 +514,9 @@ int32_t CGxDeviceVulkan::DeviceCreate(GxWindowProc windowProc, const CGxFormat& 
     if (created && !HD::VulkanGrade::Init()) { // HD: hdGrade under Vulkan (hd/HdVulkanGrade.h)
         CGxDevice::Log("HD Vulkan grade: initialization failed; grade unavailable");
     }
+#ifdef WOWDECOMP_LUMEN
+    if (created) LumenStartup(); // HD 2026-11-02 kit R1 lot L0: R2 owner, every hdLv* case OFF, no Prepare yet
+#endif
     return created;
 }
 
@@ -482,6 +529,12 @@ void CGxDeviceVulkan::DeviceDestroy() {
         CGxDevice::Log("HD Vulkan AO: shutdown could not finish its serial; retry before device destruction");
         return;
     }
+#ifdef WOWDECOMP_LUMEN
+    if (!LumenShutdown()) { // HD 2026-11-02 kit R1 lot L0: R2 stages go before the native fog/bloom
+        CGxDevice::Log("HD Lumen R2: outstanding serial; retry before device destruction");
+        return;
+    }
+#endif
     if (!HD::VulkanFog::Shutdown()) { // HD
         CGxDevice::Log("HD Vulkan fog: outstanding serial; retry before device destruction");
         return;
@@ -494,8 +547,11 @@ void CGxDeviceVulkan::DeviceDestroy() {
         CGxDevice::Log("HD Vulkan grade: outstanding serial; retry before device destruction");
         return;
     }
-    HD::VulkanModelLights::Shutdown(); // HD
+    HD::VulkanModelLights::Shutdown(); HD::Lamp::Owner::Shutdown(); HD::Lamp::Native::Shutdown(); // HD
     HD::CataWater::Service::Shutdown(); // HD: its stages and images go before the device
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Runtime::Shutdown(); // HD: FSR runtime unloaded before the device goes
+#endif
     wxlcompat::SeamsEnable(false);
     impl::DeviceDestroy(this, nullptr);                                          // Device.cpp
 }
@@ -550,7 +606,7 @@ void CGxDeviceVulkan::DeviceCopyTex(CGxTex* source, uint32_t sourcePlane, CGxTex
 }
 
 void CGxDeviceVulkan::ScenePresent() {
-    HD::VulkanModelLights::Tick(); // HD: hdModelLightInfo status, no rendering
+    HD::VulkanModelLights::Tick(); HD::Lamp::Native::Tick(); // HD: hdModelLightInfo status, no rendering
     impl::ScenePresent(this, nullptr);                                           // Scene.cpp
 }
 
@@ -642,10 +698,13 @@ int32_t CGxDeviceVulkan::DeviceCreate(void* window, const CGxFormat& format) {
     int32_t created = impl::DeviceCreateOnWindow(this, nullptr, static_cast<HWND>(window), W<const wd::CGxFormat>(&format));
     wxlcompat::SeamsEnable(created != 0);
     if (created) HD::CataWater::Service::Startup(); // HD: Cata water, step A (hd/CataWaterService.h)
-    if (created) HD::VulkanModelLights::Init(); // HD: hdModelLightTest diagnostic (hd/HdVulkanModelLights.h)
+    if (created) { HD::VulkanModelLights::Init(); HD::Lamp::Native::Init(); HD::Lamp::Owner::Init(); } // HD: hdModelLightTest diagnostic (hd/HdVulkanModelLights.h)
     if (created && !HD::VulkanShadows::Init()) { // HD step 4: hdSunShadows (hd/HdVulkanShadows.h)
         CGxDevice::Log("HD Vulkan sun shadows: initialization failed");
     }
+#ifdef WOWDECOMP_FSR
+    if (created) { HD::Fsr::Settings::Register(); HD::Fsr::Runtime::Startup(); HD::Fsr::Runtime::Frame(); } // both FSR requests default OFF; step A only: runtime, providers, device checks, statuses
+#endif
     if (created && !HD::VulkanAO::Init()) { // HD: hdAO under Vulkan (hd/HdVulkanAO.h)
         CGxDevice::Log("HD Vulkan AO: initialization failed; AO stays unavailable");
     }
@@ -658,6 +717,9 @@ int32_t CGxDeviceVulkan::DeviceCreate(void* window, const CGxFormat& format) {
     if (created && !HD::VulkanGrade::Init()) { // HD: hdGrade under Vulkan (hd/HdVulkanGrade.h)
         CGxDevice::Log("HD Vulkan grade: initialization failed; grade unavailable");
     }
+#ifdef WOWDECOMP_LUMEN
+    if (created) LumenStartup(); // HD 2026-11-02 kit R1 lot L0: R2 owner, every hdLv* case OFF, no Prepare yet
+#endif
     return created;
 }
 

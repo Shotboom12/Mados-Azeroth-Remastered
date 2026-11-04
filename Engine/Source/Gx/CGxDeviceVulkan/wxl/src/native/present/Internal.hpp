@@ -177,6 +177,9 @@ namespace wxlvk::native::present::detail
     {
         VkFormat     colour = VK_FORMAT_UNDEFINED;
         VkFormat     depth  = VK_FORMAT_UNDEFINED;
+#ifdef WOWDECOMP_FSR
+        bool         objectMotion = false; // M1: distinct compatibility class, never part of the persistent pipeline key.
+#endif
         bool         gbuffer = false;           ///< with the G-buffer's three attachments after the colour
         VkRenderPass pass   = VK_NULL_HANDLE;   ///< LOAD / LOAD: what pipelines and framebuffers are made against
         /// The same pass with CLEAR load ops, by the bits of what is cleared: 1 the colour, 2 the depth,
@@ -191,6 +194,9 @@ namespace wxlvk::native::present::detail
         VkImageView   colour = VK_NULL_HANDLE;
         VkImageView   depth  = VK_NULL_HANDLE;
         VkExtent2D    extent = { 0, 0 };
+#ifdef WOWDECOMP_FSR
+        VkImageView objectMotion = VK_NULL_HANDLE; // M1: retires every framebuffer referencing the optional view.
+#endif
         VkFramebuffer fb     = VK_NULL_HANDLE;
         uint64_t      lastUsed = 0;
     };
@@ -212,6 +218,58 @@ namespace wxlvk::native::present::detail
         bool               clear   = false;    ///< and are cleared after the pass begins
         bool               back    = false;    ///< the back buffer or the back depth
     };
+
+#ifdef WOWDECOMP_FSR
+    /// One image of the FSR world set (WorldTarget.cpp): made by MakeRaw, its create description kept for the SDK.
+    struct WorldImage
+    {
+        VkImage           image  = VK_NULL_HANDLE;
+        VkImageView       view   = VK_NULL_HANDLE;
+        memory::Block     block;
+        VkFormat          format = VK_FORMAT_UNDEFINED;
+        VkExtent2D        extent = { 0, 0 };
+        VkImageUsageFlags usage  = 0;
+        VkImageLayout     layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    };
+
+    /**
+     * The world at the FSR render size (WorldTarget.cpp). While `active` its colour, depth, extent and G-buffer are
+     * SWAPPED with the back buffer's in State, so every existing path (PlaceD3d, the jitter, SceneDepth, the G-buffer,
+     * the stages, the HD effects' Resize) draws the world at the render size without knowing it; the interface is
+     * drawn after the swap back, on the native back buffer. Outside `active` these fields hold the world set's own
+     * images; inside they hold the back buffer's.
+     */
+    struct WorldSet
+    {
+        bool          active = false;
+        uint64_t      serial = 0;          ///< the frame that last began the world set
+        VkExtent2D    extent = { 0, 0 };   ///< the render size (swapped with State::extent while active)
+        VkImage       colour = VK_NULL_HANDLE;
+        VkImageView   colourView = VK_NULL_HANDLE;
+        memory::Block colourBlock;
+        VkImageLayout colourLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImage       depth = VK_NULL_HANDLE;
+        VkImageView   depthView = VK_NULL_HANDLE;
+        memory::Block depthBlock;
+        VkImageLayout depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImage       gbufImage[kGBufferAttachments] = {};
+        VkImageView   gbufView[kGBufferAttachments]  = {};
+        memory::Block gbufBlock[kGBufferAttachments];
+        VkImageLayout gbufLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bool          gbufDrawn  = false;
+        uint64_t      gbufSerial = 0;
+        // Never swapped: what the FSR pass reads and writes.
+        WorldImage    fsrDepth;    ///< R32_SFLOAT, render size: the depth normalized to 0..1 (clip z / w)
+        WorldImage    objectMotion; // M1: RGBA16F, UV delta xy; z exactly 1 = valid, 0 = camera fallback; w reserved.
+        bool          motionReady=false,motionRefused=false;
+        WorldImage    motion;      ///< R16G16_SFLOAT, render size: previous UV - current UV
+        WorldImage    output;      ///< R8G8B8A8_UNORM, native size: the upscaler's output, blitted onto the back buffer
+        /// The back buffer's world without the interface, for frame generation (WorldTargetHudless): two, since the
+        /// SDK reads one at the present while the next frame fills the other. Not part of the world set's size: kept
+        /// across render-size changes, destroyed only once the generation's presents are drained.
+        WorldImage    hudless[2];
+    };
+#endif
 
     struct State
     {
@@ -351,6 +409,9 @@ namespace wxlvk::native::present::detail
         bool                  gamma     = false;           ///< the LUT is applied at present
 
         wxlvk::native::present::Stats stats = {};
+#ifdef WOWDECOMP_FSR
+        WorldSet world;
+#endif
     };
     extern State s;
 
@@ -449,7 +510,11 @@ namespace wxlvk::native::present::detail
     // Passes.cpp
     VkFormat PickDepth(const context::Handles& h);
     void EnsureDepthFormat();
-    VkRenderPass MakePass(VkFormat colour, VkFormat depth, bool clearColour = false, bool clearDepth = false, bool gbuffer = false, bool clearGBuffer = false);
+    VkRenderPass MakePass(VkFormat colour, VkFormat depth, bool clearColour = false, bool clearDepth = false, bool gbuffer = false, bool clearGBuffer = false
+#ifdef WOWDECOMP_FSR
+        , bool objectMotion = false
+#endif
+    );
     VkRenderPass ClassPass(VkFormat colour, VkFormat depth, bool gbuffer);
     bool IsGBufferPass(VkRenderPass pass);
     VkRenderPass ClearingPass(VkRenderPass base, uint32_t which, bool& clearing);
@@ -493,6 +558,14 @@ namespace wxlvk::native::present::detail
     void FrameGpuPrePass(VkCommandBuffer pre, uint32_t slot);
     /// After the frame's last pass, before the present copy: the frame's last timestamp.
     void FrameGpuEnd(VkCommandBuffer main, uint32_t slot);
+
+#ifdef WOWDECOMP_FSR
+    // WorldTarget.cpp
+    /// Swaps the world set back if a frame ends with it still active (nothing is upscaled that frame).
+    void WorldTargetAbortInternal();
+    /// Destroys the world set at once. The caller has waited for the device (DropImageObjects).
+    void WorldTargetDestroyNow();
+#endif
 
     // PresentPass.cpp
     bool PresentFail(const char* what, VkResult r);

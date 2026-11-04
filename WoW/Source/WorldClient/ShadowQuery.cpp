@@ -108,6 +108,8 @@ static void GetViewerPosition(C3Vector* position) {
 void CShadowQuery::Update() {
     C3Vector direction = CMap::s_mapLight->m_light.m_dir;
     int32_t useCullFrustum = CWorldScene::frustumPortalView.m_maxViewDepth >= 0.0f || CWorldScene::s_hasPendingExteriorGroups;
+    ++(useCullFrustum ? HDShadowDiag::cullOn : HDShadowDiag::cullOff); // HD diagnostic (temporary)
+    if (CWorldScene::s_viewerMapObjDef) ++HDShadowDiag::inWmo;
     float z = direction.z * HD::ShadowHeightScale(); // HD: hdShadowSun 1 = real sun height (original: x 5)
 
     if (z < -1.2f) {
@@ -118,6 +120,20 @@ void CShadowQuery::Update() {
     direction.x = direction.x * inv;
     direction.y = direction.y * inv;
     direction.z = z * inv;
+    // HD: hdShadowSunMin, with the real sun height (hdShadowSun 1): no lower than this above the horizon
+    float minElevation = HD::ShadowHeightScale() == 1.0f ? HD::ShadowMinElevation() : 0.0f;
+    if (minElevation > 0.0f) {
+        float lowest = std::sin(minElevation * 0.0174532925f);
+        if (-direction.z < lowest) {
+            float flat = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+            float keep = flat > 1e-6f ? std::sqrt(1.0f - lowest * lowest) / flat : 0.0f;
+            direction.x = direction.x * keep;
+            direction.y = direction.y * keep;
+            direction.z = -lowest;
+        }
+    }
+    CShadowCache::ConfigureSunCache(HD::ShadowHeightScale()==1.0f && HD::ShadowSunCacheFix(), HD::ShadowSunRefreshDegrees()); // HD
+    CShadowCache::ConfigureTexelSnap(HD::ShadowTexelSnap()); // HD: hdShadowTexelSnap
     CShadowCache::PreUpdate(direction);
     C3Vector viewer(0.0f, 0.0f, 0.0f);
     GetViewerPosition(&viewer);
@@ -134,7 +150,7 @@ void CShadowQuery::Update() {
 
 // VERIFY: 7421bb67 manual
 // OFFSET: 0x007BAC10
-void CShadowQuery::MatrixCallback(C3Vector& center, float radius, C44Matrix& matrix, C3Vector& direction, int32_t band) {
+void CShadowQuery::MatrixCallback(C3Vector& center, float radius, C44Matrix& matrix, C3Vector& direction, int32_t band, const C3Vector& sun) {
     if (radius <= 0.0f) {
         return;
     }
@@ -148,9 +164,9 @@ void CShadowQuery::MatrixCallback(C3Vector& center, float radius, C44Matrix& mat
     C3Vector camera(0.0f, 0.0f, 0.0f);
     CGWorldFrame::GetCameraPosition(&camera);
 
-    eye.x = center.x - CShadowCache::s_sunDir.x * 2000.0f - camera.x;
-    eye.y = center.y - CShadowCache::s_sunDir.y * 2000.0f - camera.y;
-    eye.z = center.z - 2000.0f * CShadowCache::s_sunDir.z - camera.z;
+    eye.x = center.x - sun.x * 2000.0f - camera.x;
+    eye.y = center.y - sun.y * 2000.0f - camera.y;
+    eye.z = center.z - 2000.0f * sun.z - camera.z;
     target.x = center.x - camera.x;
     target.y = center.y - camera.y;
     target.z = center.z - camera.z;
@@ -192,13 +208,13 @@ void CShadowQuery::MatrixCallback(C3Vector& center, float radius, C44Matrix& mat
 
 // VERIFY: de87a831 manual
 // OFFSET: 0x007BAFD0
-void CShadowQuery::FrustumCallback(CFrustum& frustum, C44Matrix& matrix, const C3Vector& direction, CShadowCacheQueryData& data, int32_t band) {
+void CShadowQuery::FrustumCallback(CFrustum& frustum, C44Matrix& matrix, const C3Vector& direction, CShadowCacheQueryData& data, int32_t band, const C3Vector& sun) {
     C3Vector& pos = data.m_pos[band];
     float* bounds = data.m_bounds[band];
     C3Vector eye;
-    eye.x = pos.x - CShadowCache::s_sunDir.x * 2000.0f;
-    eye.y = pos.y - CShadowCache::s_sunDir.y * 2000.0f;
-    eye.z = pos.z - 2000.0f * CShadowCache::s_sunDir.z;
+    eye.x = pos.x - sun.x * 2000.0f;
+    eye.y = pos.y - sun.y * 2000.0f;
+    eye.z = pos.z - 2000.0f * sun.z;
 
     GxuXformCreateOrtho(bounds[0], bounds[1], bounds[2], bounds[3], 1.0f, 4000.0f, matrix);
 
@@ -227,6 +243,13 @@ void CShadowQuery::FrustumCallback(CFrustum& frustum, C44Matrix& matrix, const C
     if (data.m_queryFlags[band] == 8 || !g_shadowCull->m_intValue) {
         return;
     }
+#ifdef WOWDECOMP_VULKAN
+    // HD: full band with the Vulkan shadows: the camera's view no longer narrows which casters a band takes (the
+    // narrowed band changed with every camera move and the shadows on screen flickered with it)
+    if (HD::VulkanShadows::FullCasters()) {
+        return;
+    }
+#endif
 
     CFrustum clip = CWorldScene::s_clipFrustum;
     clip.Transform(view * matrix);
@@ -442,7 +465,7 @@ namespace {
     }
 
     // Rewrites the billboard bones (and the bones hanging under them) of the models about to cast; RestoreBillboards undoes it.
-    void HdShadowBillboards(const ShadowQueryBuffers& buffers, const C44Matrix& inverseView, int32_t mode) {
+    void HdShadowBillboards(const ShadowQueryBuffers& buffers, const C44Matrix& inverseView, int32_t mode, const C3Vector& sun) {
         s_hdSavedBones.clear();
         s_hdBillboardModels.clear();
 
@@ -458,7 +481,7 @@ namespace {
         }
 
         // A camera at the sun, built like the game camera (GxuXformCreateLookAtSgCompat), world up when it can.
-        C3Vector sunDir = CShadowCache::s_sunDir;
+        C3Vector sunDir = sun; // HD: the same frozen direction as this tile
         C3Vector up(0.0f, 0.0f, 1.0f);
 
         if (sunDir.SquaredMag() < 0.0001f) {
@@ -540,8 +563,12 @@ namespace {
 
 // VERIFY: 2abab737 manual
 // OFFSET: 0x007BBC50
-int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, CGxTex* target, CGxTex* colorTarget, C3Vector& direction) {
+int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, CGxTex* target, CGxTex* colorTarget, C3Vector& direction, const C3Vector& sun) {
     ShadowQueryBuffers& buffers = CShadowQuery::s_bandBuffers[band];
+    if (HDShadowDiag::calls < 8) { // HD diagnostic (temporary): casters per render call this frame
+        HDShadowDiag::groups[HDShadowDiag::calls] = buffers.m_groupCount;
+        HDShadowDiag::m2[HDShadowDiag::calls++] = buffers.m_untextured.m_count + buffers.m_textured.m_count;
+    }
 
     if (!buffers.m_groupCount && !buffers.m_untextured.m_count && !buffers.m_textured.m_count) {
         CShadowQuery::Clear(target, colorTarget, data.m_texBounds[band]);
@@ -570,9 +597,9 @@ int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, 
     CShaderEffect* effect = CShaderEffectManager::GetEffect("ShadowMapRenderSL");
     CGWorldFrame::GetCameraPosition(&camera);
     C3Vector& pos = data.m_pos[band];
-    eye.x = pos.x - CShadowCache::s_sunDir.x * 2000.0f - camera.x;
-    eye.y = pos.y - CShadowCache::s_sunDir.y * 2000.0f - camera.y;
-    eye.z = pos.z - 2000.0f * CShadowCache::s_sunDir.z - camera.z;
+    eye.x = pos.x - sun.x * 2000.0f - camera.x;
+    eye.y = pos.y - sun.y * 2000.0f - camera.y;
+    eye.z = pos.z - 2000.0f * sun.z - camera.z;
     center.x = pos.x - camera.x;
     center.y = pos.y - camera.y;
     center.z = pos.z - camera.z;
@@ -647,7 +674,7 @@ int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, 
             s_maxTexturedBatches = buffers.m_textured.m_count;
         }
 
-        HdShadowBillboards(buffers, inverseView, HD::ShadowBillboardMode()); // HD: tree cards face the sun, not the camera
+        HdShadowBillboards(buffers, inverseView, HD::ShadowBillboardMode(), sun); // HD: tree cards face the sun, not the camera
         CM2Model::RenderModelBatchesShadowMap(buffers.m_untextured, buffers.m_textured);
         HdRestoreBillboards(); // HD: camera-facing bones back for the normal render
     }
@@ -809,6 +836,36 @@ bool CWorldScene::IsBeyondFadeDistance(const C3Vector& position, uint32_t fadeLe
     return dx * dx + (dy * dy + dz * dz) > CWorldScene::s_fadeDistMinSqr[fadeLevel];
 }
 
+// HD: which doodads a shadow band takes must not depend on the camera. The engine measured the fade distance from
+// the camera (s_activeWorldView): a camera a few yards away (collision, zoom, a turn) dropped a third of the trees
+// from the shadow maps, and every shadow on screen changed at once (flicker with a still view). With the Vulkan
+// shadows (full casters) the distance is taken from the band's own centre, which only moves with the player.
+static bool ShadowBeyondFade(const CShadowCacheQueryData& data, int32_t band, const C3Vector& position, uint32_t fadeLevel) {
+#ifdef WOWDECOMP_VULKAN
+    if (HD::VulkanShadows::FullCasters()) {
+        const C3Vector& centre = data.m_pos[band];
+        float dx = position.x - centre.x;
+        float dy = position.y - centre.y;
+        float dz = position.z - centre.z;
+        float limit = CWorldScene::s_fadeDistMinSqr[fadeLevel];
+        // HD: hdShadowCasterFade. The fade distance (25 yd for small doodads, 90 for trees) measured from the band's
+        // centre, which follows the player in 2..16 yd steps: a bush or a tree near that distance left the shadow map
+        // and came back at each step, so its shadow blinked at precise places as the player moved (where it fell
+        // depended on the sun). Band 0 now keeps every caster in its box; band 1 keeps them 40 yd past the fade
+        // distance, beyond band 0 where its own shadows show.
+        if (HD::ShadowCasterFade()) {
+            if (band == 0) return false;
+            if (band == 1) {
+                float reach = sqrtf(limit) + 40.0f;
+                limit = reach * reach;
+            }
+        }
+        return dx * dx + dy * dy + dz * dz > limit;
+    }
+#endif
+    return CWorldScene::IsBeyondFadeDistance(position, fadeLevel);
+}
+
 // VERIFY: 18313b4e auto
 // OFFSET: 0x007BB460
 static void GetChunkRect(const CAaBox& box, CiRect& rect) {
@@ -932,7 +989,7 @@ void CShadowQuery::QueryMapObjDefsBand(CShadowCacheQueryData& data, int32_t band
                 doodad->m_shadowStamps[band] = CShadowQuery::s_stamp;
                 CM2Model* model = doodad->m_model;
 
-                if (!model || !(doodad->m_flags & 0x80) || CWorldScene::IsBeyondFadeDistance(doodad->m_sphere.c, doodad->m_fadeLevel) || maxDoodadSize < doodad->m_sphere.r) {
+                if (!model || !(doodad->m_flags & 0x80) || ShadowBeyondFade(data, band, doodad->m_sphere.c, doodad->m_fadeLevel) || maxDoodadSize < doodad->m_sphere.r) {
                     continue;
                 }
 
@@ -1062,13 +1119,21 @@ void CShadowQuery::QueryTerrainBand(CShadowCacheQueryData& data, int32_t band) {
                 doodad->m_shadowStamps[band] = CShadowQuery::s_stamp;
                 CM2Model* model = doodad->m_model;
 
-                if (!model || !(doodad->m_flags & 0x80) || CWorldScene::IsBeyondFadeDistance(doodad->m_sphere.c, doodad->m_fadeLevel) || maxSize < doodad->m_sphere.r) {
+                // HD diagnostic (temporary): why terrain doodads are left out of this band
+                int* hdTq = HDShadowDiag::tq[band < 3 ? band : 2];
+                ++hdTq[0];
+                if (model && !(doodad->m_flags & 0x80)) ++hdTq[1];
+                else if (model && ShadowBeyondFade(data, band, doodad->m_sphere.c, doodad->m_fadeLevel)) ++hdTq[2];
+                else if (model && maxSize < doodad->m_sphere.r) ++hdTq[3];
+
+                if (!model || !(doodad->m_flags & 0x80) || ShadowBeyondFade(data, band, doodad->m_sphere.c, doodad->m_fadeLevel) || maxSize < doodad->m_sphere.r) {
                     continue;
                 }
 
                 int32_t wanted = model->GetBillboardBoneCount() ? (data.m_queryFlags[band] & 0x4) : (data.m_queryFlags[band] & 0x8);
 
                 if (wanted && extents.Intersects(doodad->m_bbox) && data.m_bandFrustums[band].Cull(doodad->m_bbox) && (!data.m_useCullFrustum[band] || data.m_cullFrustums[band].CullInv(doodad->m_bbox) != 3)) {
+                    ++hdTq[5];
                     model->GatherModelBatchesShadowMap(CShadowQuery::s_bandBuffers[band].m_untextured, CShadowQuery::s_bandBuffers[band].m_textured);
                 }
             }

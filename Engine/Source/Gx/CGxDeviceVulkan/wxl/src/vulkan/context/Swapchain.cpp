@@ -260,6 +260,31 @@ namespace wxlvk::vk::context::detail
         info.clipped          = VK_TRUE;
         info.oldSwapchain     = VK_NULL_HANDLE;
 
+#ifdef WOWDECOMP_FSR
+        // FSR frame generation (hd/fsr/HdFsrRuntime.cpp): AMD's runtime makes the swapchain itself when generation is
+        // asked for, and the device table drives it through its entry points until DropSwapchainObject. Declined (or
+        // failed, which it logs), the plain swapchain below is made exactly as without it.
+        g.replaced = false;
+        if (g.replace)
+        {
+            SwapchainFunctions fns;
+            VkSwapchainKHR     made = VK_NULL_HANDLE;
+            if (g.replace(info, &made, fns) && made != VK_NULL_HANDLE && fns.getImages && fns.acquire && fns.present)
+            {
+                g.original.getImages = g.dapi.GetSwapchainImagesKHR;
+                g.original.acquire   = g.dapi.AcquireNextImageKHR;
+                g.original.present   = g.dapi.QueuePresentKHR;
+                g.dapi.GetSwapchainImagesKHR = fns.getImages;
+                g.dapi.AcquireNextImageKHR   = fns.acquire;
+                g.dapi.QueuePresentKHR       = fns.present;
+                g.swapchain = made;
+                g.replaced  = true;
+            }
+        }
+        if (g.replaced)
+            r = VK_SUCCESS;
+        else
+#endif
         r = g.dapi.CreateSwapchainKHR(g.device, &info, nullptr, &g.swapchain);
         if (r != VK_SUCCESS)
         {
@@ -290,6 +315,12 @@ namespace wxlvk::vk::context::detail
                             g.imageCount, imageCount, caps.minImageCount, caps.maxImageCount,
                             concurrent ? "CONCURRENT" : "EXCLUSIVE", extentFrom, win.curWidth,
                             win.curHeight, formatWhy, modeWhy);
+#ifdef WOWDECOMP_FSR
+        if (g.replaced)
+            wxl::ScriptMgr::Log(WXL_LOG_INFO, "vulkan: swapchain %ux%u (%s, %u image(s)) made by the FSR frame generation "
+                                "runtime; present, acquire and image queries go through its entry points",
+                                extent.width, extent.height, PresentModeName(presentMode), g.imageCount);
+#endif
         return true;
     }
 
@@ -301,6 +332,20 @@ namespace wxlvk::vk::context::detail
         // The spec requires that no work still references the swapchain's images.
         if (g.dapi.DeviceWaitIdle) g.dapi.DeviceWaitIdle(g.device);
 
+#ifdef WOWDECOMP_FSR
+        if (g.replaced)
+        {
+            // Made by the FSR runtime: destroyed by it (its presents drained first), then the device's own entry
+            // points go back for the next, plain or replaced, swapchain.
+            if (g.release) g.release(g.swapchain);
+            g.dapi.GetSwapchainImagesKHR = g.original.getImages;
+            g.dapi.AcquireNextImageKHR   = g.original.acquire;
+            g.dapi.QueuePresentKHR       = g.original.present;
+            g.original = SwapchainFunctions();
+            g.replaced = false;
+        }
+        else
+#endif
         g.dapi.DestroySwapchainKHR(g.device, g.swapchain, nullptr);
         g.swapchain = VK_NULL_HANDLE;
         g.extent    = VkExtent2D{ 0, 0 };

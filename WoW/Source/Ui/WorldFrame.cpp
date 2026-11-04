@@ -1,4 +1,7 @@
 #include "WorldFrame.h"
+#ifdef WOWDECOMP_FSR
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrPass.h"
+#endif
 #include "WoW/Source/WorldClient/HD/HdCataRenderPerf.h" // HD: hdCataRenderPerf
 #include "Engine/Source/Base/ConvertUTF.h"
 #include <cstring>
@@ -1371,6 +1374,7 @@ void CGWorldFrame::SetScreenEffect(int32_t effect) {
 // VERIFY: 01c7ec1b manual
 // OFFSET: 0x004F8730
 int32_t CGWorldFrame::Update(const void* data, void* param) {
+    HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::IdleWorld); // HD: hdCataRenderPerf
     CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
 
     if (player) {
@@ -1790,6 +1794,9 @@ void CGWorldFrame::OnWorldRender() {
         HD::GIRenderOpaque(); // HD: hdGI (one colour bounce on the opaque world, before water and transparent models)
     }
 
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Pass::MaskBoundary(0);
+#endif
     if (World::SceneCamLiquidStatus(nullptr)) {
         CWorldScene::RenderBarriers(this->m_elapsedSec);
         { HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::M2Alpha); scene->Draw(M2PASS_1); }
@@ -1808,12 +1815,18 @@ void CGWorldFrame::OnWorldRender() {
         DrawSpellCursorShadow(0x20000);
     }
 
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Pass::MaskBoundary(1);
+#endif
 #ifdef WOWDECOMP_VULKAN
     { HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::PostFx); HD::VulkanFog::EndWorld(); } // HD: hdFog (D3D9: FogEndWorld; Vulkan: AfterWorldBeforeSpells point)
 #else
     HD::FogEndWorld(); // HD: hdFog cvar (fog pass over the finished world)
 #endif
 
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Pass::MaskBoundary(2);
+#endif
     {
         HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::Spells);
         SpellVisualsTick();
@@ -1829,6 +1842,9 @@ void CGWorldFrame::OnWorldRender() {
     }
     DayNight::RenderGlares();
     PlayerNameUpdateLate();
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Pass::MaskBoundary(3);
+#endif
 #ifdef WOWDECOMP_VULKAN
     { HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::PostFx); HD::VulkanBloom::World(); } // HD: hdBloom / hdRays (D3D9: BloomWorld; Vulkan: AfterWorldBloom point)
     { HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::PostFx); HD::VulkanGrade::World(); } // HD: hdGrade (D3D9: GradeWorld; Vulkan: AfterWorldGrade point)

@@ -295,7 +295,7 @@ namespace wxlvk::settings
             char* end = nullptr;
             const double n = std::strtod(value, &end);
             if (end == value) return -0.3f;
-            return static_cast<float>(n < -1.0 ? -1.0 : (n > 1.0 ? 1.0 : n));
+            return static_cast<float>(n < -2.0 ? -2.0 : (n > 1.0 ? 1.0 : n));   // HD 2026-11-01 (Q1): -2 for FSR (AMD log2(render/display)-1); maxSamplerLodBias >= 2 on every device
         }();
         return wanted;
     }

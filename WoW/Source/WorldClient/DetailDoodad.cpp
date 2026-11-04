@@ -1,3 +1,6 @@
+#ifdef WOWDECOMP_FSR
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRigid.h"
+#endif
 #include "DetailDoodad.h"
 #include <algorithm>
 #include <cstdlib>
@@ -1116,6 +1119,9 @@ int32_t CDetailDoodad::LoadModel(uint32_t id) {
 // VERIFY: f62a81be manual
 // OFFSET: 0x007B3560
 void CDetailDoodadInst::Free() {
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Rigid::Forget(this);
+#endif
     if (this->m_chunk) {
         this->m_chunk->m_detailDoodadInst = nullptr;
         this->m_chunk = nullptr;
@@ -1129,6 +1135,9 @@ void CDetailDoodadInst::Free() {
 // VERIFY: 104e29d5 auto
 // OFFSET: 0x007B36B0
 void CDetailDoodadInst::DrawBatches() {
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Rigid::Scope fsrGrass(this,this->m_chunk,false,false,0,nullptr,true);
+#endif
     for (uint32_t i = 0; i < 4; i++) {
         if (this->m_batches[i].m_texture) {
             this->m_batches[i].Draw();
@@ -1148,6 +1157,9 @@ CDetailDoodadInstBatch::CDetailDoodadInstBatch() {
 // VERIFY: 9e2e57b8 manual
 // OFFSET: 0x007B36E0
 CDetailDoodadInst::CDetailDoodadInst() {
+#ifdef WOWDECOMP_FSR
+    HD::Fsr::Rigid::Forget(this);
+#endif
     this->m_age = 0;
     this->m_chunk = nullptr;
 }

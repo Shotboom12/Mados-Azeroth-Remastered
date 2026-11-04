@@ -122,6 +122,11 @@ namespace wxlvk::vk::pipelines::detail
         for (uint32_t i = 0; i < s.layoutCount; ++i)
         {
             LayoutEntry& l = s.layouts[i];
+#ifdef WOWDECOMP_FSR
+            if(l.skinBones)d.DestroyPipelineLayout(device,l.skinBones,nullptr);
+            if(l.motionWind)d.DestroyPipelineLayout(device,l.motionWind,nullptr);
+            if(l.motionWindBones)d.DestroyPipelineLayout(device,l.motionWindBones,nullptr);
+#endif
             if (l.bones != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.bones, nullptr);
             if (l.wind != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.wind, nullptr);
             if (l.windBones != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.windBones, nullptr);

@@ -23,7 +23,7 @@ namespace {
 #include "shaders/ao/HdAOApply.spv.h"
 #include "shaders/ao/HdAOTemporal.spv.h"
 constexpr uint32_t MaxSlots = 8, PassCount = 11, PipelineCount = 9;
-// HD (Claude): row-vector 4x4 helpers in double; world positions are large, the products are not.
+// HD: row-vector 4x4 helpers in double; world positions are large, the products are not.
 bool Invert(const double* m,double* out) {
     double a[4][8];
     for(int r=0;r<4;++r)for(int k=0;k<8;++k)a[r][k]=k<4?m[r*4+k]:(k-4==r?1:0);
@@ -216,7 +216,7 @@ bool Effect::Record(const WXL_VkStageContext&ctx,const Settings&settings){
         WXL_VkGBuffer g{};g.structSize=sizeof g;if(s->api->GetGBuffer(&g)&&g.valid&&g.serial==ctx.serial&&g.normalView&&g.extent.width==ctx.extent.width&&g.extent.height==ctx.extent.height&&
         (g.layout==VK_IMAGE_LAYOUT_GENERAL||g.layout==VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)&&(g.normalFormat==VK_FORMAT_R16G16B16A16_SFLOAT||g.normalFormat==VK_FORMAT_R32G32B32A32_SFLOAT)){
             normal=g.normalView;normalLayout=g.layout;c.flags[2]=1;}}
-    // HD (Claude): passes 0-4 depth mips, 5 GTAO, 6-8 denoise, 9 temporal (optional), 10 apply.
+    // HD: passes 0-4 depth mips, 5 GTAO, 6-8 denoise, 9 temporal (optional), 10 apply.
     const bool temporal=settings.temporal;const uint32_t previous=s->historyIndex,current=previous^1u;
     float reprojection[12]{};
     const bool reuse=temporal&&s->historySerial&&ctx.serial==s->historySerial+1&&s->Reprojection(ctx,settings.halfResolution,reprojection);

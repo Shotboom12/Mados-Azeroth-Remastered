@@ -39,6 +39,11 @@ namespace wxlvk::native::render::jitter
     /// A consumer asks for the jitter (`wanted`) or stops asking. Counted; it applies from the next
     /// world pass.
     void Request(bool wanted);
+#ifdef WOWDECOMP_FSR
+    // Sole jitter owner for FSR. Call before BeginWorld; disables only the FSR override.
+    // x/y are the actual viewport displacement in render pixels, not an extra projection jitter.
+    bool SetFsrSample(bool enabled, float x, float y);
+#endif
 
     /// The world scene pass begins: the next jitter sample, while any consumer asks for it.
     void BeginWorld();

@@ -1,251 +1,811 @@
--- Waystone HD: one panel to play with the HD graphics settings live (/hd).
--- Every control just sets the console variable, so the result is the same as typing the command.
+-- Waystone HD : menu unique (/hd), redessine le 2 nov 2026.
+-- Colonne de gauche = les sujets ; a droite quelques listes simples, et des sections + pour les reglages fins. Pour chaque effet qui existe en plusieurs versions
+-- (For Ever, Lumenveil, Seyris), une liste deroulante permet de passer de l'une a l'autre et de les melanger.
+-- Chaque controle ecrit simplement une variable de la console (comme taper /console nom valeur).
+-- Une variable absente de cette version du jeu grise son controle au lieu de provoquer une erreur.
 
-local ADDON = "WaystoneHD"
+local function Read(name) local ok, v = pcall(GetCVar, name); if ok then return v end end
+local function Num(name, fallback) return tonumber(Read(name) or "") or fallback end
+local function Set(name, value) pcall(SetCVar, name, tostring(value)) end
+local function Has(name) return Read(name) ~= nil end
+local function On(name) return Num(name, 0) ~= 0 end
+local function SetMany(t) for i = 1, #t, 2 do if Has(t[i]) then Set(t[i], t[i + 1]) end end end
 
--- on/off switches
-local TOGGLES = {
-    { cvar = "hdForever", label = "Lumieres Forever" },
-    { cvar = "hdFog", label = "Brouillard Forever" },
-    { cvar = "hdBloom", label = "Halo (bloom)" },
-    { cvar = "hdRays", label = "Rayons du soleil" },
-    { cvar = "hdGrade", label = "Etalonnage Forever" },
-    { cvar = "hdSunPath", label = "Soleil comme Forever" },
-    { cvar = "hdFogShadow", label = "Rayons dans la brume" },
-    { cvar = "hdShadowSun", label = "Ombres longues" },
-    { cvar = "hdWater", label = "Eau Forever" },              -- HD: 1 = Forever PBR water, 0 = Blizzard
-    { cvar = "hdWmoLight", label = "Batiments Forever" },     -- HD: 1 = Forever lighting in buildings, 0 = Blizzard
-    { cvar = "hdGrassLight", label = "Herbe Forever" },       -- HD: 1 = Forever lighting on the grass, 0 = Blizzard
-    { cvar = "hdWaterReflect", label = "Reflets de l'eau" },  -- HD: 1 = the world mirrored on the water, 0 = sky only
-}
+local COLUMN, ROWSLIDER, ROWCHECK = 285, 46, 26
+local panel, pages, current, counter, updating = nil, {}, nil, 0, false
+local openList = nil
 
--- sliders: default = Forever's value (the "Forever" button puts these back)
-local SLIDERS = {
-    { cvar = "hdTime", label = "Heure (-1 = heure reelle)", min = -1, max = 24, step = 0.05, default = -1 },
-    { cvar = "hdForeverLight", label = "Lumiere Forever sur le decor (1 Forever, 0 WotLK)", min = 0, max = 1, step = 0.05, default = 1 },
-    { cvar = "hdTerrainLight", label = "Sol (1 Forever, 0 WotLK, 2 test, 3 soleil seul)", min = 0, max = 3, step = 1, default = 1 },
-    { cvar = "hdLightAmbient", label = "Sol : force de l'ambiance (ombres)", min = 0, max = 1.5, step = 0.05, default = 1 },
-    { cvar = "hdFogDensity", label = "Brouillard : densite", min = 0, max = 3, step = 0.05, default = 1 },
-    { cvar = "hdFogSun", label = "Brouillard : couleur du soleil", min = 0, max = 3, step = 0.05, default = 1 },
-    { cvar = "hdFogAmbient", label = "Brouillard : couleur de base", min = 0, max = 5, step = 0.05, default = 1 },
-    { cvar = "hdBloomStrength", label = "Halo : force", min = 0, max = 3, step = 0.05, default = 1 },
-    { cvar = "hdBloomThreshold", label = "Halo : seuil", min = 0, max = 1, step = 0.01, default = 0.7 },
-    { cvar = "hdRaysStrength", label = "Rayons : force", min = 0, max = 3, step = 0.05, default = 1 },
-    { cvar = "hdGradeStrength", label = "Etalonnage : force", min = 0, max = 2, step = 0.05, default = 1 },
-    { cvar = "hdWaterBody", label = "Eau : couleur propre (1 Forever)", min = 0, max = 3, step = 0.05, default = 1 },
-    { cvar = "hdWaterDebug", label = "Eau : vue test (0 normal, 1 prof., 3 reflets, 4 ecume, 7 fond)", min = 0, max = 7, step = 1, default = 0 }, -- HD: views 6, 7
-    { cvar = "hdFogDebug", label = "Vue test (0 normal, 3 brume seule, 4 ombres)", min = 0, max = 4, step = 1, default = 0 },
-}
+local function Gold(fs) fs:SetTextColor(1, 0.82, 0) end
+local function Grey(fs) fs:SetTextColor(0.5, 0.5, 0.5) end
 
--- HD: distance and grass. Applied when the mouse lets go of the slider (a grass change rebuilds the grass
--- buffers, so it is not sent at every step of the drag). The "Forever" button leaves these alone.
-local WORLD = {
-    { cvar = "farclip", label = "Distance de vue", min = 200, max = 2500, step = 25, default = 1277 },
-    { cvar = "groundEffectDist", label = "Herbe : distance (140 WotLK, jusqu'a 280)", min = 0, max = 280, step = 10, default = 140 },
-    { cvar = "groundEffectDensity", label = "Herbe : densite (64 avant, 128 conseille)", min = 16, max = 256, step = 8, default = 128 },
-    { cvar = "hdGrassBuffers", label = "Herbe : tampons (0 = WotLK)", min = 0, max = 4096, step = 128, default = 1536 },
-    { cvar = "hdGrassPack", label = "Herbe : tampons a la bonne taille (0 non, 1 oui)", min = 0, max = 1, step = 1, default = 1 },
-    { cvar = "hdGrassFillBudget", label = "Herbe : remplissages par image (0 = sans limite)", min = 0, max = 200, step = 5, default = 60 },
-    { cvar = "hdGrassKeep", label = "Herbe : garder hors ecran (images, 0 = WotLK)", min = 0, max = 2000, step = 20, default = 600 },
-}
 
-local WIDTH = 680          -- HD: wide panel, two columns of sliders, four of switches
-local COLUMN = 330         -- distance between the two slider columns
-local ROW = 44             -- height of one slider row
-
-local panel, controls, updating = nil, {}, false
-
-local function Num(cvar, fallback)
-    return tonumber(GetCVar(cvar) or "") or fallback
-end
-
-local function Round(v, step)
-    return math.floor(v / step + 0.5) * step
-end
-
--- a console variable this client does not have (an older build) is left alone instead of raising an error
-local function Set(cvar, value)
-    pcall(SetCVar, cvar, value)
-end
-
-local function ShowValue(s)
-    local v = s.slider:GetValue()
-    if s.def.cvar == "hdTime" and v < 0 then
-        s.value:SetText("reelle")
-    elseif s.def.cvar == "hdTime" then
-        local h = math.floor(v)
-        s.value:SetText(string.format("%d:%02d", h, math.floor((v - h) * 60 + 0.5)))
-    elseif s.def.step >= 1 then
-        s.value:SetText(string.format("%d", v))
-    else
-        s.value:SetText(string.format("%.2f", v))
+-- ===================================================================== constructeur de page
+-- Une page = des sections empilees. La premiere (sans titre) est toujours visible ;
+-- les suivantes ont un titre cliquable (+ / -) qui les ouvre ou les ferme.
+local function NewPage(key, title, parent, build)
+    local page = { key = key, title = title, items = {}, sections = {}, y = 0, col = 0, rowH = 0, built = false }
+    page.build = build
+    page.Layout = function(self)
+        local off = 0
+        for _, s in ipairs(self.sections) do
+            if s.header then s.header:SetPoint("TOPLEFT", self.root, "TOPLEFT", 4, -off); off = off + 30 end
+            if s.open then
+                s.body:ClearAllPoints()
+                s.body:SetPoint("TOPLEFT", self.root, "TOPLEFT", 0, -off)
+                s.body:Show(); off = off + s.height + 6
+            else s.body:Hide() end
+        end
+        self.root:SetHeight(off + 16)
     end
-end
-
--- read every console variable back into the controls (after a reset, or if a command changed one)
-local function Refresh()
-    updating = true
-    for _, c in ipairs(controls) do
-        if c.check then
-            c.check:SetChecked(Num(c.def.cvar, 0) ~= 0)
+    page.Flush = function(self)
+        if self.col ~= 0 then self.y = self.y - self.rowH; self.col = 0; self.rowH = 0 end
+    end
+    -- ferme la section en cours et en ouvre une autre. open = visible au depart
+    page.Section = function(self, text, open)
+        if self.cur then self:Flush(); self.cur.height = -self.y end
+        counter = counter + 1
+        local sec = { open = open and true or false, height = 0 }
+        sec.body = CreateFrame("Frame", nil, self.root)
+        sec.body:SetWidth(570); sec.body:SetHeight(10)
+        if text then
+            local b = CreateFrame("Button", "WaystoneHDSec" .. counter, self.root, "UIPanelButtonTemplate")
+            b:SetWidth(556); b:SetHeight(24)
+            local function Label() b:SetText((sec.open and "-  " or "+  ") .. text) end
+            Label()
+            b:SetScript("OnClick", function()
+                sec.open = not sec.open; Label(); self:Layout()
+                if self.scroll.UpdateScrollChildRect then self.scroll:UpdateScrollChildRect() end
+            end)
+            sec.header = b
+        end
+        table.insert(self.sections, sec)
+        self.cur, self.content, self.y, self.col, self.rowH = sec, sec.body, 0, 0, 0
+    end
+    page.Build = function(self)
+        counter = counter + 1
+        local scroll = CreateFrame("ScrollFrame", "WaystoneHDScroll" .. counter, parent, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 172, -48)
+        scroll:SetPoint("BOTTOMRIGHT", -34, 16)
+        local root = CreateFrame("Frame", nil, scroll)
+        root:SetWidth(570); root:SetHeight(10)
+        scroll:SetScrollChild(root)
+        self.scroll, self.root = scroll, root
+        self.built = true
+        self:Section(nil, true)
+        self.build(self)
+        self:Flush(); self.cur.height = -self.y
+        self:Layout()
+        scroll:Hide()
+    end
+    -- half = place dans une des deux colonnes ; sinon pleine largeur
+    page.Place = function(self, frame, h, half, dy)
+        local x
+        if half then
+            x = self.col * COLUMN
+            if h > self.rowH then self.rowH = h end
+            frame:SetPoint("TOPLEFT", self.content, "TOPLEFT", x + 4, self.y - (dy or 0))
+            self.col = self.col + 1
+            if self.col == 2 then self.y = self.y - self.rowH; self.col = 0; self.rowH = 0 end
         else
-            c.slider:SetValue(Num(c.def.cvar, c.def.default))
-            ShowValue(c)
+            self:Flush()
+            frame:SetPoint("TOPLEFT", self.content, "TOPLEFT", 4, self.y - (dy or 0))
+            self.y = self.y - h
         end
     end
-    panel.force:SetText(tostring(Num("hdForeverForce", 0)))
-    updating = false
+    page.Header = function(self, text)
+        self:Flush(); self.y = self.y - 8
+        local fs = self.content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        fs:SetText(text)
+        fs:SetPoint("TOPLEFT", self.content, "TOPLEFT", 4, self.y)
+        self.y = self.y - 26
+    end
+    page.Note = function(self, text)
+        self:Flush()
+        local fs = self.content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        fs:SetWidth(556); fs:SetJustifyH("LEFT"); fs:SetText(text)
+        fs:SetPoint("TOPLEFT", self.content, "TOPLEFT", 6, self.y)
+        local lines = math.max(1, math.ceil(string.len(text) / 105))
+        self.y = self.y - (lines * 13 + 6)
+    end
+    page.Space = function(self, h) self:Flush(); self.y = self.y - (h or 10) end
+
+    -- case a cocher. def = { cvar, label, tip, get (opt), on (opt) }
+    page.Check = function(self, def)
+        counter = counter + 1
+        local name = "WaystoneHDCheck" .. counter
+        local c = CreateFrame("CheckButton", name, self.content, "UICheckButtonTemplate")
+        c:SetWidth(24); c:SetHeight(24)
+        local label = _G[name .. "Text"]
+        label:SetText(def.label)
+        c:SetScript("OnClick", function(btn)
+            if updating then return end
+            if def.on then def.on(btn:GetChecked() and true or false) else Set(def.cvar, btn:GetChecked() and 1 or 0) end
+        end)
+        if def.tip then
+            c:SetScript("OnEnter", function(btn) GameTooltip:SetOwner(btn, "ANCHOR_RIGHT"); GameTooltip:SetText(def.tip, 1, 1, 1, 1, true); GameTooltip:Show() end)
+            c:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+        self:Place(c, ROWCHECK, true)
+        table.insert(self.items, { refresh = function()
+            local available = def.get and true or Has(def.cvar)
+            local checked = def.get and def.get() or (not def.get and On(def.cvar))
+            c:SetChecked(checked and true or false)
+            if available then c:Enable(); Gold(label) else c:Disable(); Grey(label) end
+        end })
+    end
+
+    -- curseur. def = { cvar, label, min, max, step, default, release, forever }
+    page.Slider = function(self, def)
+        counter = counter + 1
+        local name = "WaystoneHDSlider" .. counter
+        local s = CreateFrame("Slider", name, self.content, "OptionsSliderTemplate")
+        s:SetWidth(210)
+        s:SetMinMaxValues(def.min, def.max); s:SetValueStep(def.step)
+        _G[name .. "Text"]:SetText(def.label)
+        _G[name .. "Low"]:SetText(def.min); _G[name .. "High"]:SetText(def.max)
+        local value = self.content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        value:SetPoint("LEFT", s, "RIGHT", 8, 0)
+        local function Show()
+            local v = s:GetValue()
+            if def.cvar == "hdTime" and v < 0 then value:SetText("reelle")
+            elseif def.cvar == "hdTime" then local h = math.floor(v); value:SetText(string.format("%d:%02d", h, math.floor((v - h) * 60 + 0.5)))
+            elseif def.step >= 1 then value:SetText(string.format("%d", v))
+            else value:SetText(string.format("%.2f", v)) end
+        end
+        local function Send()
+            local v = math.floor(s:GetValue() / def.step + 0.5) * def.step
+            if def.cvar == "hdTime" and v < 0 then v = -1 end
+            Set(def.cvar, v)
+        end
+        s.dragging = false
+        s:SetScript("OnValueChanged", function() Show(); if not updating and not def.release and Has(def.cvar) then Send() end end)
+        s:SetScript("OnMouseDown", function() s.dragging = true end)
+        s:SetScript("OnMouseUp", function() s.dragging = false; if not updating and def.release and Has(def.cvar) then Send() end end)
+        self:Place(s, ROWSLIDER, true, 16)
+        local item = { def = def, refresh = function()
+            if s.dragging then return end
+            local available = Has(def.cvar)
+            s:SetValue(Num(def.cvar, def.default or def.min)); Show()
+            if available then s:Enable(); Gold(_G[name .. "Text"]) else s:Disable(); Grey(_G[name .. "Text"]) end
+        end }
+        table.insert(self.items, item)
+        if def.forever then pages.foreverSliders = pages.foreverSliders or {}; table.insert(pages.foreverSliders, def) end
+    end
+
+    -- case de saisie numerique
+    page.Input = function(self, def)
+        counter = counter + 1
+        local label = self.content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        label:SetText(def.label)
+        local box = CreateFrame("EditBox", "WaystoneHDInput" .. counter, self.content, "InputBoxTemplate")
+        box:SetWidth(70); box:SetHeight(20); box:SetAutoFocus(false); box:SetNumeric(true)
+        box:SetScript("OnEnterPressed", function(b) Set(def.cvar, tostring(tonumber(b:GetText()) or 0)); b:ClearFocus() end)
+        box:SetScript("OnEscapePressed", function(b) b:ClearFocus() end)
+        self:Flush()
+        label:SetPoint("TOPLEFT", self.content, "TOPLEFT", 6, self.y)
+        box:SetPoint("TOPLEFT", self.content, "TOPLEFT", 12, self.y - 16)
+        self.y = self.y - 44
+        table.insert(self.items, { refresh = function()
+            if not box:HasFocus() then box:SetText(tostring(Num(def.cvar, 0))) end
+        end })
+    end
+
+    page.Button = function(self, text, width, onClick)
+        counter = counter + 1
+        local b = CreateFrame("Button", "WaystoneHDButton" .. counter, self.content, "UIPanelButtonTemplate")
+        b:SetWidth(width or 260); b:SetHeight(24); b:SetText(text)
+        b:SetScript("OnClick", function() onClick(); if current then current:Refresh() end end)
+        self:Place(b, 30, false)
+    end
+
+    -- texte d'etat mis a jour en direct. fn() renvoie une chaine
+    page.Info = function(self, fn, lines)
+        local fs = self.content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        fs:SetWidth(556); fs:SetJustifyH("LEFT")
+        self:Flush()
+        fs:SetPoint("TOPLEFT", self.content, "TOPLEFT", 6, self.y)
+        self.y = self.y - ((lines or 2) * 13 + 8)
+        table.insert(self.items, { refresh = function() fs:SetText(fn()) end })
+    end
+
+    -- liste deroulante. def = { label, options = { {text, apply, avail} }, current = function() -> index (0 = melange) }
+    page.Drop = function(self, def)
+        counter = counter + 1
+        local label = self.content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        label:SetText(def.label)
+        self:Flush()
+        label:SetPoint("TOPLEFT", self.content, "TOPLEFT", 6, self.y)
+        local button = CreateFrame("Button", "WaystoneHDDrop" .. counter, self.content, "UIPanelButtonTemplate")
+        button:SetWidth(400); button:SetHeight(24)
+        button:SetPoint("TOPLEFT", self.content, "TOPLEFT", 12, self.y - 18)
+        self.y = self.y - 52
+        local item = {}
+        item.refresh = function()
+            local i = def.current()
+            if i and i > 0 and def.options[i] then button:SetText(def.options[i].text .. "   v")
+            else button:SetText((def.unknown or "Personnalise (reglages melanges)") .. "   v") end
+        end
+        button:SetScript("OnClick", function()
+            if openList and openList.owner == button then openList:Hide(); return end
+            if openList then openList:Hide() end
+            counter = counter + 1
+            local list = CreateFrame("Frame", "WaystoneHDList" .. counter, UIParent)
+            list.owner = button
+            list:SetFrameStrata("TOOLTIP")
+            list:SetWidth(404); list:SetHeight(#def.options * 24 + 10)
+            list:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 14,
+                insets = { left = 4, right = 4, top = 4, bottom = 4 } })
+            list:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, 0)
+            for i, o in ipairs(def.options) do
+                local b = CreateFrame("Button", nil, list, "UIPanelButtonTemplate")
+                b:SetWidth(392); b:SetHeight(22); b:SetPoint("TOPLEFT", 6, -5 - (i - 1) * 24)
+                local ok = (not o.avail) or o.avail()
+                b:SetText(ok and o.text or (o.text .. "  (indisponible)"))
+                if not ok then b:Disable() end
+                b:SetScript("OnClick", function() o.apply(); list:Hide(); openList = nil; if current then current:Refresh() end end)
+            end
+            list:SetScript("OnHide", function(l) if openList == l then openList = nil end end)
+            openList = list
+            list:Show()
+        end)
+        table.insert(self.items, item)
+    end
+
+    -- bouton qui remet la page a zero : tous ses curseurs a leur valeur de depart + les reglages listes (cvar, valeur, ...)
+    page.Reset = function(self, extra)
+        self:Button("Remettre cette page a zero", 260, function()
+            for _, it in ipairs(self.items) do
+                if it.def and it.def.default ~= nil and Has(it.def.cvar) then Set(it.def.cvar, it.def.default) end
+            end
+            SetMany(extra)
+        end)
+    end
+
+    page.Refresh = function(self)
+        updating = true
+        for _, it in ipairs(self.items) do it.refresh() end
+        updating = false
+    end
+    return page
 end
 
--- one slider at column col (0 or 1), top at y; onRelease = send the value only when the mouse lets go
-local function AddSlider(index, def, col, y, onRelease)
-    local name = "WaystoneHDSlider" .. index
-    local slider = CreateFrame("Slider", name, panel, "OptionsSliderTemplate")
-    slider:SetWidth(250)
-    slider:SetPoint("TOPLEFT", 24 + col * COLUMN, y)
-    slider:SetMinMaxValues(def.min, def.max)
-    slider:SetValueStep(def.step)
-    _G[name .. "Text"]:SetText(def.label)
-    _G[name .. "Low"]:SetText(def.min)
-    _G[name .. "High"]:SetText(def.max)
-    local value = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    value:SetPoint("LEFT", slider, "RIGHT", 8, 0)
-    local s = { def = def, slider = slider, value = value }
-    local function Send()
-        local v = Round(slider:GetValue(), def.step)
-        if def.cvar == "hdTime" and v < 0 then v = -1 end
-        Set(def.cvar, tostring(v))
+-- ===================================================================== les pages
+local ADVANCED = {
+ {"hdLvCfg_Banks","Banks",0,2,1,1},
+ {"hdLvCfg_Density","Density",0,10,0.05,1},
+ {"hdLvCfg_FogCeiling","FogCeiling",0,300,0.1,40},
+ {"hdLvCfg_Haze","Haze",0,10,0.05,1},
+ {"hdLvCfg_GroundFog","GroundFog",0,10,0.05,0.600000024},
+ {"hdLvCfg_FarFog","FarFog",0,10,0.05,1},
+ {"hdLvCfg_FarFogStretch","FarFogStretch",0,1,0.005,1},
+ {"hdLvCfg_AerialPerspective","AerialPerspective",0,1,0.005,1},
+ {"hdLvCfg_SunScatter","SunScatter",0,10,0.05,1},
+ {"hdLvCfg_Ambient","Ambient",0,10,0.05,1},
+ {"hdLvCfg_HazeFromSky","HazeFromSky",0,1,0.005,1},
+ {"hdLvCfg_HazeSkyLevel","HazeSkyLevel",0.25,1.5,0.00625,0.850000024},
+ {"hdLvCfg_Shafts","Shafts",0,4,0.02,1},
+ {"hdLvCfg_LowSunShafts","LowSunShafts",0,3,0.015,1},
+ {"hdLvCfg_ShaftGlare","ShaftGlare",0.0199999996,4,0.019900000002,0.150000006},
+ {"hdLvCfg_ShaftFocus","ShaftFocus",0,0.949999988,0.00474999994,0.699999988},
+ {"hdLvCfg_MoonShafts","MoonShafts",0,8,0.04,2},
+ {"hdLvCfg_MoonShaftFocus","MoonShaftFocus",0,0.949999988,0.00474999994,0.5},
+ {"hdLvCfg_ShaftHaze","ShaftHaze",0,10,0.05,1},
+ {"hdLvCfg_ShaftRange","ShaftRange",30,600,0.1,200},
+ {"hdLvCfg_ShaftLength","ShaftLength",10,300,0.1,250},
+ {"hdLvCfg_ShaftDepth","ShaftDepth",0.100000001,4,0.019499999995,1.5},
+ {"hdLvCfg_Drift","Drift",0,2,0.01,0.600000024},
+ {"hdLvCfg_DriftSize","DriftSize",10,300,0.1,60},
+ {"hdLvCfg_DriftDetail","DriftDetail",0,1,0.005,0.649999976},
+ {"hdLvCfg_DriftSwirl","DriftSwirl",0,3,0.015,1},
+ {"hdLvCfg_BankCover","BankCover",0,1,0.005,0.550000012},
+ {"hdLvCfg_BankHeight","BankHeight",5,300,0.1,60},
+ {"hdLvCfg_BankPool","BankPool",0,3,0.015,1},
+ {"hdLvCfg_BankShadow","BankShadow",0,3,0.015,1},
+ {"hdLvCfg_WindSpeed","WindSpeed",0,10,0.05,2},
+ {"hdLvCfg_StormWind","StormWind",0,20,0.1,7},
+ {"hdLvCfg_WindDirection","WindDirection",0,360,0.1,60},
+ {"hdLvCfg_MorningMist","MorningMist",0,8,0.04,2},
+ {"hdLvCfg_MistHeight","MistHeight",2,60,0.1,12},
+ {"hdLvCfg_EveningHaze","EveningHaze",0,2,0.01,0.400000006},
+ {"hdLvCfg_WeatherFog","WeatherFog",0,4,0.02,1},
+ {"hdLvCfg_WeatherShafts","WeatherShafts",0,1,0.005,0.349999994},
+ {"hdLvCfg_Twilight","Twilight",0,2,0.01,1},
+ {"hdLvCfg_DustHaze","DustHaze",0,3,0.015,1},
+ {"hdLvCfg_HumidHaze","HumidHaze",0,3,0.015,1},
+ {"hdLvCfg_HorizonFog","HorizonFog",0,1,0.005,1},
+ {"hdLvCfg_CloudShadows","CloudShadows",0,1,0.005,0.600000024},
+ {"hdLvCfg_CloudCover","CloudCover",0,2,0.01,1},
+ {"hdLvCfg_CloudSize","CloudSize",100,2000,0.1,400},
+ {"hdLvCfg_FarLights","FarLights",0,4,0.02,1},
+ {"hdLvCfg_LampFog","LampFog",0,4,0.02,1},
+ {"hdLvCfg_LampFlicker","LampFlicker",0,2,0.01,1},
+ {"hdLvCfg_FireStrength","FireStrength",0,2,0.01,1},
+ {"hdLvCfg_LampIndoors","LampIndoors",0,2,0.01,1},
+ {"hdLvCfg_LampLight","LampLight",0,4,0.02,2},
+ {"hdLvCfg_LampDayLight","LampDayLight",0,1,0.005,0.349999994},
+ {"hdLvCfg_LampShadows","LampShadows",0,1,0.005,1},
+ {"hdLvCfg_WindowLight","WindowLight",0,4,0.02,2},
+ {"hdLvCfg_EffectLight","EffectLight",0,4,0.02,1},
+ {"hdLvCfg_LanternLight","LanternLight",0,4,0.02,1},
+ {"hdLvCfg_LanternHalo","LanternHalo",0,2,0.01,0.300000012},
+ {"hdLvCfg_LanternSwing","LanternSwing",0,2,0.01,1},
+}
+
+
+local function FogMode()
+    local fe, lv = On("hdFog"), Has("hdLvFog") and On("hdLvFog")
+    if not fe and not lv then return 1 elseif fe and not lv then return 2 elseif lv and not fe then return 3 end
+    return 4
+end
+
+local function LampMode()
+    local lights, classes = Num("hdLights", 1), Num("hdLvLampClasses", 4)
+    if not (Has("hdLvLamps") and On("hdLvLamps")) then
+        if lights == 0 then return 1 elseif lights == 1 then return 2 end
+        return 0
     end
-    slider:SetScript("OnValueChanged", function(self, v)
-        ShowValue(s)
-        if not updating and not onRelease then Send() end
+    local forever = Num("hdLvLampForever", 1) ~= 0
+    if lights == 0 and classes == 30 then return 3 end
+    if lights == 1 and classes == 4 and forever then return 4 end
+    if lights == 1 and classes == 28 and not forever then return 5 end
+    return 0
+end
+
+local function ClassBit(bit)
+    return math.floor(Num("hdLvLampClasses", 4) / bit) % 2 == 1
+end
+local function SetClassBit(bit, on)
+    local v = Num("hdLvLampClasses", 4)
+    local has = math.floor(v / bit) % 2 == 1
+    if on and not has then v = v + bit elseif not on and has then v = v - bit end
+    Set("hdLvLampClasses", v)
+end
+
+local function UpscalerMode()
+    if Has("hdDLSS") and On("hdDLSS") then return 3 end
+    if On("hdFSR") then return 2 end
+    if not On("hdFSR") and not (Has("hdDLSS") and On("hdDLSS")) then return 1 end
+    return 0
+end
+
+local function ApplyFsrMode()
+    if Has("hdFSRWindMotion") and On("hdFSRWindMotion") then Set("hdFSRWindMotion", 0) end
+    local want = (On("hdFSR") or On("hdFSRFrameGeneration") or (Has("hdDLSS") and On("hdDLSS"))) and 2 or 0
+    if Has("hdFSRTest") and Num("hdFSRTest", 0) ~= want then Set("hdFSRTest", want) end
+    -- 3 nov 2026 : FSR, DLSS ou generation d'images allume = les mouvements contre les trainees vont avec.
+    if want == 2 then
+        for _, name in ipairs({ "hdFSRObjectMotion", "hdFSRRigidMotion", "hdFSRSkeletalMotion", "hdFSRReactiveMasks" }) do
+            if Has(name) and not On(name) then Set(name, 1) end
+        end
+    end
+end
+
+local function Line(label, cvar) return label .. " : " .. (Read(cvar) or "indisponible dans cette version") end
+
+local function Gm(text) if SendChatMessage then pcall(SendChatMessage, text, "SAY") end end
+local function LanternMode() return math.min(2, math.max(0, math.floor(Num("hdLvLantern", 0)))) + 1 end
+local function QualityMode() return math.min(3, math.max(0, math.floor(Num("hdFSRQuality", 1)))) + 1 end
+local function FourWay(fe, lv)
+    return function()
+        local a, b = On(fe), Has(lv) and On(lv)
+        if not a and not b then return 1 elseif a and not b then return 2 elseif b and not a then return 3 end
+        return 4
+    end
+end
+
+
+-- ===================================================================== "Mes reglages" (3 nov 2026)
+-- Un preset personnel : le bouton "Mes reglages" remet tout ce qui est dans la liste ci-dessous ; le bouton
+-- "Sauver" relit les valeurs du jeu et les garde dans WaystoneHDMine (WTF\...\SavedVariables\WaystoneHD.lua),
+-- donc elles survivent au redemarrage. Tant que rien n'est sauve, c'est MINE_DEFAUT (les reglages recommandes du 3 nov).
+-- hdTime n'y est pas : c'est l'heure du jeu, pas un reglage d'image.
+local MINE_DEFAUT = {
+    "farclip", "2500",
+    "specular", "1",
+    "groundEffectDensity", "128",
+    "projectedTextures", "1",
+    "textureFilteringMode", "5",
+    "componentTextureLevel", "9",
+    "shadowLevel", "0",
+    "environmentDetail", "1.5",
+    "extShadowQuality", "5",
+    "weatherDensity", "3",
+    "groundEffectDist", "280",
+    "particleDensity", "1",
+    "shadowMode", "3",
+    "shadowTextureSize", "2048",
+    "ambientOcclusion", "1",
+    "postBloom", "1",
+    "aerialFog", "1",
+    "hdForever", "1",
+    "hdFogGround", "2",
+    "hdFogHorizon", "1",
+    "hdFogTest", "7",
+    "hdSunPath", "1",
+    "hdGrade", "1",
+    "hdLightHorizon", "0.75",
+    "hdLightGround", "0.8",
+    "hdWater", "1",
+    "hdWaterWaves", "0",
+    "hdGI", "1",
+    "hdContactShadow", "1",
+    "hdCataWater", "1",
+    "hdAONormals", "1",
+    "hdCataViewDistance", "1",
+    "hdCataViewQuality", "2",
+    "hdSunShadows", "1",
+    "hdRays", "1",
+    "hdCataHorizonVerify", "0",
+    "hdCataRenderPerf", "0",
+    "hdLvLampForever", "0",
+    "hdAO", "1",
+    "hdLvSpellGround", "1",
+    "hdLvLampScan", "0",
+    "hdLvSpellGain", "4",
+    "hdLvLamps", "1",
+    "hdLvFog", "1",
+    "hdLvHalos", "1",
+    "hdLvSpells", "1",
+    "hdLvTerrain", "1",
+    "hdLvLampClasses", "28",
+    "hdLvCfg_FarLights", "0.3",
+    "hdLvHaloGain", "0.6",
+    "hdBloom", "1",
+    "hdGrassBuffers", "4096",
+    "hdLvCfg_ShaftGlare", "0.05",
+    "hdLvTemporal", "0.85",
+    "hdBloomStrength", "0",
+    "hdBloomThreshold", "1",
+    "hdLvShaftGain", "0.35",
+    "hdFog", "0",
+    -- 3 nov 2026 20:18 : valeurs recommandees
+    "hdLvCfg_SunScatter", "1",
+    "hdLvCfg_ViewLight", "1",
+    "hdLvCfg_AntiGlare", "1",
+    "hdLvFogLog", "0",
+}
+
+local function MineList()
+    if type(WaystoneHDMine) == "table" and #WaystoneHDMine >= 2 then return WaystoneHDMine, true end
+    return MINE_DEFAUT, false
+end
+local function MineApply()
+    local list = MineList()
+    SetMany(list)
+end
+-- reglages ajoutes plus tard (L14, L15) : "Sauver" les garde aussi, meme s'ils ne sont pas dans la liste de depart
+local MINE_SUIVIS = { "hdLvCfg_ViewLight", "hdLvCfg_SunScatter", "hdLvCfg_AntiGlare", "hdLvCfg_ScatterDawn",
+    "hdLvCfg_ScatterDay", "hdLvCfg_ScatterDusk", "hdLvCfg_ScatterNight", "hdLvSpellSource", "hdLvMissileLight",
+    "hdLvMissileReach", "hdLvMissileImpact", "hdLvShafts" }
+local function MineSave()
+    local list = MineList()
+    local out, n, seen = {}, 0, {}
+    local function keep(name)
+        if seen[name] then return end
+        seen[name] = true
+        local v = Read(name)
+        if v ~= nil then out[#out + 1] = name; out[#out + 1] = v; n = n + 1 end
+    end
+    for i = 1, #list, 2 do keep(list[i]) end
+    for i = 1, #MINE_DEFAUT, 2 do keep(MINE_DEFAUT[i]) end
+    for _, name in ipairs(MINE_SUIVIS) do keep(name) end
+    WaystoneHDMine = out
+    return n
+end
+local function MineCount()
+    local list, saved = MineList()
+    return math.floor(#list / 2), saved
+end
+
+local PAGEDEFS = {
+{ "accueil", "Accueil", function(p)
+    p:Header("Waystone HD")
+    p:Note("Un sujet par onglet. Les listes deroulantes te laissent choisir la version For Ever, Lumenveil ou Seyris. Les sections marquees + s'ouvrent pour les reglages fins.")
+    p:Header("Deux rendus complets")
+    p:Button("Tout For Ever (mes graphismes)", 340, function()
+        SetMany({ "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0, "hdLvHalos", 0, "hdLvTerrain", 0, "hdLvLamps", 0,
+                  "hdLvSpells", 0, "hdLvLantern", 0, "hdLvAmbiance", 0, "hdSxWind", 0, "hdLvLampClasses", 4,
+                  "hdFog", 1, "hdRays", 1, "hdBloom", 1, "hdShadowSun", 1, "hdLights", 1, "hdGrassWind", 1 })
     end)
-    if onRelease then
-        slider:SetScript("OnMouseUp", function() if not updating then Send() end end)
+    p:Button("Tout Lumenveil (For Ever coupe)", 340, function()
+        SetMany({ "hdFog", 0, "hdRays", 0, "hdBloom", 0, "hdShadowSun", 0, "hdLights", 0,
+                  "hdLvFog", 1, "hdLvShafts", 1, "hdLvMemory", 1, "hdLvHalos", 1, "hdLvTerrain", 1, "hdLvLamps", 1,
+                  "hdLvLampClasses", 30, "hdLvSpells", 1, "hdLvLantern", 1, "hdSxWind", 1, "hdGrassWind", 1 })
+    end)
+    p:Note("Ne change ni le FSR/DLSS, ni l'eau, ni la distance de vue.")
+    p:Header("Retour aux valeurs d'origine")
+    p:Button("Valeurs For Ever (curseurs et interrupteurs d'origine)", 340, function()
+        for _, def in ipairs(pages.foreverSliders or {}) do if Has(def.cvar) then Set(def.cvar, def.default) end end
+        SetMany({ "hdForeverForce", 0, "hdGradeDebug", 0, "hdBloomDebug", 0, "hdWmoLight", 1, "hdWater", 1, "hdGrassLight", 1, "hdWaterReflect", 1 })
+    end)
+    p:Header("Mes reglages")
+    p:Button("Mes reglages (tout remettre comme je les aime)", 340, function() MineApply() end)
+    p:Button("Sauver les reglages actuels dans ce bouton", 340, function()
+        local n = MineSave()
+        if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffd200Waystone HD|r : " .. n .. " reglages gardes dans \"Mes reglages\".") end
+    end)
+    p:Info(function()
+        local n, saved = MineCount()
+        return (saved and "Tes reglages sauves : " or "Reglages de depart (3 nov) : ") .. n .. " valeurs. L'heure du jeu (hdTime) n'en fait pas partie."
+    end, 2)
+    p:Section("Etat en direct", false)
+    p:Info(function()
+        return Line("Brouillard", "hdFogInfo") .. "\n" .. Line("Sol", "hdTerrainInfo") .. "\n" .. Line("Eau", "hdWaterInfo")
+            .. "\n" .. Line("Lumenveil", "hdLvInfo") .. "\n" .. Line("Lampes Lumenveil", "hdLvLampInfo")
+            .. "\n" .. Line("Herbe Seyris", "hdSxInfo")
+            .. "\n" .. Line("Mise a l'echelle", (Has("hdDLSS") and On("hdDLSS")) and "hdDLSSInfo" or "hdFSRInfo")
+            .. "\n" .. Line("Images generees", "hdFSRFrameGenerationInfo")
+    end, 8)
+end },
+
+{ "ambiance", "Ambiance", function(p)
+    p:Header("Ambiance")
+    p:Slider({ cvar = "hdTime", label = "Heure de la journee (-1 = heure reelle)", min = -1, max = 24, step = 0.05, default = -1, forever = true })
+    p:Drop({ label = "Brouillard", current = FogMode, options = {
+        { text = "WotLK d'origine (aucun brouillard HD)", apply = function() SetMany({ "hdFog", 0, "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0 }) end },
+        { text = "For Ever seul", apply = function() SetMany({ "hdFog", 1, "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0 }) end },
+        { text = "Lumenveil seul", apply = function() SetMany({ "hdFog", 0, "hdLvFog", 1 }) end, avail = function() return Has("hdLvFog") end },
+        { text = "For Ever + Lumenveil ensemble", apply = function() SetMany({ "hdFog", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvFog") end },
+    } })
+    p:Drop({ label = "Rayons du soleil", current = FourWay("hdRays", "hdLvShafts"), options = {
+        { text = "Aucun", apply = function() SetMany({ "hdRays", 0, "hdLvShafts", 0 }) end },
+        { text = "For Ever seul", apply = function() SetMany({ "hdRays", 1, "hdLvShafts", 0 }) end },
+        { text = "Lumenveil seul (allume son brouillard)", apply = function() SetMany({ "hdRays", 0, "hdLvShafts", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvShafts") end },
+        { text = "Les deux ensemble", apply = function() SetMany({ "hdRays", 1, "hdLvShafts", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvShafts") end },
+    } })
+    p:Drop({ label = "Halo (bloom)", current = FourWay("hdBloom", "hdLvHalos"), options = {
+        { text = "Aucun", apply = function() SetMany({ "hdBloom", 0, "hdLvHalos", 0 }) end },
+        { text = "For Ever seul", apply = function() SetMany({ "hdBloom", 1, "hdLvHalos", 0 }) end },
+        { text = "Lumenveil seul (allume son brouillard)", apply = function() SetMany({ "hdBloom", 0, "hdLvHalos", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvHalos") end },
+        { text = "Les deux ensemble", apply = function() SetMany({ "hdBloom", 1, "hdLvHalos", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvHalos") end },
+    } })
+    p:Drop({ label = "Ombres lointaines", current = FourWay("hdShadowSun", "hdLvTerrain"), options = {
+        { text = "Aucune", apply = function() SetMany({ "hdShadowSun", 0, "hdLvTerrain", 0 }) end },
+        { text = "For Ever seules", apply = function() SetMany({ "hdShadowSun", 1, "hdLvTerrain", 0 }) end },
+        { text = "Lumenveil seul (allume son brouillard)", apply = function() SetMany({ "hdShadowSun", 0, "hdLvTerrain", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvTerrain") end },
+        { text = "Les deux ensemble", apply = function() SetMany({ "hdShadowSun", 1, "hdLvTerrain", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvTerrain") end },
+    } })
+    p:Drop({ label = "Meteo (commande GM envoyee au serveur)", unknown = "Choisir une meteo...", current = function() return 0 end, options = {
+        { text = "Beau temps", apply = function() Gm(".wchange 1 0") end },
+        { text = "Pluie legere", apply = function() Gm(".wchange 1 0.3") end },
+        { text = "Pluie", apply = function() Gm(".wchange 1 0.6") end },
+        { text = "Forte pluie", apply = function() Gm(".wchange 1 1") end },
+        { text = "Neige", apply = function() Gm(".wchange 2 0.6") end },
+        { text = "Tempete de sable", apply = function() Gm(".wchange 3 0.6") end },
+    } })
+    p:Reset({ "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0, "hdLvHalos", 0, "hdLvTerrain", 0, "hdLvTerrainWmo", 1, "hdForeverForce", 0, "hdWmoLight", 1 })
+
+    p:Section("Reglages du brouillard", false)
+    p:Slider({ cvar = "hdFogDensity", label = "For Ever : densite", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdFogSun", label = "For Ever : couleur du soleil", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdFogAmbient", label = "For Ever : couleur de base", min = 0, max = 5, step = 0.05, default = 1, forever = true })
+    p:Check({ cvar = "hdFogShadow", label = "For Ever : rayons dans la brume" })
+    p:Slider({ cvar = "hdLvDensity", label = "Lumenveil : densite", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdLvQuality", label = "Lumenveil : qualite (1 haute, 3 rapide)", min = 1, max = 3, step = 1, default = 2 })
+    p:Slider({ cvar = "hdLvTemporal", label = "Lumenveil : stabilisation", min = 0, max = 0.95, step = 0.01, default = 0.85 })
+    p:Check({ cvar = "hdLvMemory", label = "Lumenveil : memoire des obstacles", tip = "Demande le brouillard et les rayons Lumenveil." })
+
+    p:Section("Reglages des rayons, du halo et des ombres", false)
+    p:Slider({ cvar = "hdRaysStrength", label = "Rayons For Ever : force", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdLvShaftGain", label = "Rayons Lumenveil : force", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdBloomStrength", label = "Halo For Ever : force", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdBloomThreshold", label = "Halo For Ever : seuil", min = 0, max = 1, step = 0.01, default = 0.7, forever = true })
+    p:Slider({ cvar = "hdLvHaloGain", label = "Halo Lumenveil : force dans la brume", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdLvCfg_LampFog", label = "Halo Lumenveil : lumiere des lampes dans la brume", min = 0, max = 4, step = 0.02, default = 1 })
+    p:Slider({ cvar = "hdLvCfg_FarLights", label = "Halo Lumenveil : lampes lointaines", min = 0, max = 4, step = 0.02, default = 1 })
+    p:Check({ cvar = "hdLvTerrainWmo", label = "Ombres du relief : batiments inclus", tip = "Decoche : le sol seul." })
+
+    p:Section("Lumiere et couleurs For Ever", false)
+    p:Check({ cvar = "hdForever", label = "Lumieres For Ever" })
+    p:Check({ cvar = "hdGrade", label = "Etalonnage For Ever" })
+    p:Check({ cvar = "hdSunPath", label = "Soleil comme For Ever" })
+    p:Check({ cvar = "hdWmoLight", label = "Batiments For Ever" })
+    p:Slider({ cvar = "hdForeverLight", label = "Decor (1 For Ever, 0 WotLK)", min = 0, max = 1, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdTerrainLight", label = "Sol (1 For Ever, 0 WotLK, 2 test, 3 soleil)", min = 0, max = 3, step = 1, default = 1, forever = true })
+    p:Slider({ cvar = "hdLightAmbient", label = "Sol : force de l'ambiance", min = 0, max = 1.5, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdGradeStrength", label = "Etalonnage : force", min = 0, max = 2, step = 0.05, default = 1, forever = true })
+    p:Input({ cvar = "hdForeverForce", label = "For Ever force partout (0 = selon l'endroit, ex. 7624)" })
+
+    p:Section("Vue test et etat", false)
+    p:Slider({ cvar = "hdFogDebug", label = "Vue test (0 normal, 3 brume, 4 ombres)", min = 0, max = 4, step = 1, default = 0, forever = true })
+    p:Info(function() return Line("For Ever", "hdFogInfo") .. "\n" .. Line("Lumenveil", "hdLvInfo") end, 2)
+end },
+
+{ "lampes", "Lampes", function(p)
+    p:Header("Lampes")
+    p:Drop({ label = "Qui eclaire autour des lampes", current = LampMode, options = {
+        { text = "WotLK d'origine", apply = function() SetMany({ "hdLights", 0, "hdLvLamps", 0 }) end },
+        { text = "For Ever seul", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 0 }) end },
+        { text = "Lumenveil seul", apply = function() SetMany({ "hdLights", 0, "hdLvLamps", 1, "hdLvLampClasses", 30 }) end, avail = function() return Has("hdLvLamps") end },
+        { text = "For Ever + Lumenveil (murs des batiments)", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 1, "hdLvLampClasses", 4, "hdLvLampForever", 1 }) end, avail = function() return Has("hdLvLamps") end },
+        { text = "Sol For Ever + vraie lumiere Lumenveil", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 1, "hdLvLampClasses", 28, "hdLvLampForever", 0 }) end, avail = function() return Has("hdLvLampForever") end },
+    } })
+    p:Drop({ label = "Lanterne du joueur", current = LanternMode, options = {
+        { text = "Eteinte", apply = function() SetMany({ "hdLvLantern", 0 }) end },
+        { text = "Automatique (la nuit)", apply = function() SetMany({ "hdLvLantern", 1 }) end, avail = function() return Has("hdLvLantern") end },
+        { text = "Toujours allumee", apply = function() SetMany({ "hdLvLantern", 2 }) end, avail = function() return Has("hdLvLantern") end },
+    } })
+    p:Drop({ label = "Lumieres des sorts (couleur du sort)", current = function()
+        if not On("hdLvSpells") then return 1 end
+        return (Has("hdLvSpellGround") and On("hdLvSpellGround")) and 3 or 2
+    end, options = {
+        { text = "Aucune", apply = function() SetMany({ "hdLvSpells", 0, "hdLvSpellGround", 0 }) end },
+        { text = "Lumenveil (selon les reglages des lampes)", apply = function() SetMany({ "hdLvSpells", 1, "hdLvSpellGround", 0 }) end, avail = function() return Has("hdLvSpells") end },
+        { text = "Lumenveil partout, sol compris", apply = function() SetMany({ "hdLvSpells", 1, "hdLvSpellGround", 1 }) end, avail = function() return Has("hdLvSpellGround") end },
+    } })
+
+    p:Check({ cvar = "hdLvLampForever", label = "Lumenveil prend les couleurs For Ever", tip = "Decoche : les lampes Lumenveil gardent leurs propres couleurs, meme avec les lampes For Ever allumees." })
+    p:Reset({ "hdLvSpellGround", 0, "hdLvLampForever", 1, "hdLvLamps", 0, "hdLvLampClasses", 4, "hdLvSpells", 0, "hdLvLantern", 0, "hdLights", 1 })
+
+    p:Section("Reglages des lampes", false)
+    p:Slider({ cvar = "hdLights", label = "Lampes du sol (1 For Ever, 0 WotLK)", min = 0, max = 3, step = 1, default = 1 })
+    p:Slider({ cvar = "hdLvLampCount", label = "Lumenveil : nombre de lampes", min = 0, max = 128, step = 1, default = 32 })
+    p:Slider({ cvar = "hdLvLampGain", label = "Lumenveil : intensite", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdLvSpellGain", label = "Sorts : intensite", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Header("Ce que Lumenveil eclaire")
+    p:Check({ label = "Murs des batiments", get = function() return ClassBit(4) end, on = function(c) SetClassBit(4, c) end })
+    p:Check({ label = "Sol (deja eclaire)", get = function() return ClassBit(2) end, on = function(c) SetClassBit(2, c) end })
+    p:Check({ label = "Interieurs", get = function() return ClassBit(8) end, on = function(c) SetClassBit(8, c) end })
+    p:Check({ label = "Modeles (deja eclaires)", get = function() return ClassBit(16) end, on = function(c) SetClassBit(16, c) end })
+
+    p:Section("Couleur de la lanterne", false)
+    p:Slider({ cvar = "hdLvLanternR", label = "Rouge", min = 0, max = 4, step = 0.01, default = 1 })
+    p:Slider({ cvar = "hdLvLanternG", label = "Vert", min = 0, max = 4, step = 0.01, default = 0.55 })
+    p:Slider({ cvar = "hdLvLanternB", label = "Bleu", min = 0, max = 4, step = 0.01, default = 0.2 })
+
+    p:Section("Etat", false)
+    p:Info(function() return Line("Lampes", "hdLvLampInfo") .. "\n" .. Line("Lumenveil", "hdLvInfo") .. "\n" .. Line("Lampes du sol", "hdLightsInfo") .. "\n" .. Line("Sorts", "hdLvSpellInfo") end, 5)
+end },
+
+{ "nature", "Eau et herbe", function(p)
+    p:Header("Eau et herbe")
+    p:Drop({ label = "Vent de l'herbe", current = function()
+        local wind, sx = On("hdGrassWind"), Has("hdSxWind") and On("hdSxWind")
+        if not wind then return 1 elseif not sx then return 2 else return 3 end
+    end, options = {
+        { text = "Aucun vent", apply = function() SetMany({ "hdGrassWind", 0, "hdSxWind", 0 }) end },
+        { text = "Waystone (ton vent actuel)", apply = function() SetMany({ "hdGrassWind", 1, "hdSxWind", 0 }) end },
+        { text = "Seyris (regle la force du vent Waystone selon la zone et la meteo)", apply = function() SetMany({ "hdGrassWind", 1, "hdSxWind", 1 }) end, avail = function() return Has("hdSxWind") end },
+    } })
+    p:Check({ cvar = "hdWater", label = "Eau For Ever" })
+    p:Check({ cvar = "hdWaterReflect", label = "Reflets de l'eau" })
+    p:Check({ cvar = "hdGrassLight", label = "Herbe For Ever (lumiere)" })
+    p:Check({ cvar = "hdGrassReact", label = "L'herbe s'ecarte autour du joueur" })
+    p:Reset({ "hdSxWind", 0, "hdGrassWind", 1, "hdWater", 1, "hdWaterReflect", 1, "hdGrassLight", 1 })
+
+    p:Section("Reglages du vent", false)
+    p:Slider({ cvar = "hdGrassWindStrength", label = "Force", min = 0, max = 5, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdGrassWindSpeed", label = "Vitesse des vagues", min = 0, max = 10, step = 0.1, default = 3 })
+    p:Slider({ cvar = "hdGrassWindDirection", label = "Direction (degres)", min = 0, max = 360, step = 5, default = 45 })
+    p:Slider({ cvar = "hdGrassReactRadius", label = "Ecartement : rayon", min = 0, max = 10, step = 0.5, default = 2 })
+    p:Info(function() return Line("Seyris", "hdSxInfo") end, 2)
+
+    p:Section("Reglages de l'eau", false)
+    p:Slider({ cvar = "hdWaterBody", label = "Couleur propre (1 For Ever)", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdWaterDebug", label = "Vue test (0 normal, 1 prof., 3 reflets, 4 ecume)", min = 0, max = 7, step = 1, default = 0, forever = true })
+    p:Info(function() return Line("Etat", "hdWaterInfo") end, 3)
+
+    p:Section("Distance et densite de l'herbe (au relachement)", false)
+    p:Slider({ cvar = "farclip", label = "Distance de vue", min = 200, max = 2500, step = 25, default = 1277, release = true })
+    p:Slider({ cvar = "groundEffectDist", label = "Herbe : distance (140 WotLK)", min = 0, max = 280, step = 10, default = 140, release = true })
+    p:Slider({ cvar = "groundEffectDensity", label = "Herbe : densite (128 conseille)", min = 16, max = 256, step = 8, default = 128, release = true })
+    p:Slider({ cvar = "hdGrassBuffers", label = "Herbe : tampons (0 = WotLK)", min = 0, max = 4096, step = 128, default = 1536, release = true })
+    p:Slider({ cvar = "hdGrassPack", label = "Herbe : tampons a la bonne taille", min = 0, max = 1, step = 1, default = 1, release = true })
+    p:Slider({ cvar = "hdGrassFillBudget", label = "Herbe : remplissages par image", min = 0, max = 200, step = 5, default = 60, release = true })
+    p:Slider({ cvar = "hdGrassKeep", label = "Herbe : garder hors ecran", min = 0, max = 2000, step = 20, default = 600, release = true })
+end },
+
+{ "fluidite", "FSR / DLSS", function(p)
+    p:Header("Fluidite")
+    p:Drop({ label = "Mise a l'echelle", current = UpscalerMode, options = {
+        { text = "Aucune", apply = function() SetMany({ "hdFSR", 0, "hdDLSS", 0 }); ApplyFsrMode() end },
+        { text = "FSR 3.1 (AMD)", apply = function() SetMany({ "hdFSR", 1, "hdDLSS", 0 }); ApplyFsrMode() end, avail = function() return Has("hdFSR") end },
+        { text = "DLSS (NVIDIA RTX, a la place du FSR)", apply = function() SetMany({ "hdFSR", 0, "hdDLSS", 1 }); ApplyFsrMode() end, avail = function() return Has("hdDLSS") end },
+    } })
+    p:Drop({ label = "Qualite", current = QualityMode, options = {
+        { text = "Natif (sans reduction)", apply = function() SetMany({ "hdFSRQuality", 0 }) end },
+        { text = "Qualite", apply = function() SetMany({ "hdFSRQuality", 1 }) end },
+        { text = "Equilibre", apply = function() SetMany({ "hdFSRQuality", 2 }) end },
+        { text = "Performance", apply = function() SetMany({ "hdFSRQuality", 3 }) end },
+    } })
+    p:Check({ cvar = "hdFSRFrameGeneration", label = "Generation d'images (environ x2)", on = function(c) Set("hdFSRFrameGeneration", c and 1 or 0); ApplyFsrMode() end })
+    p:Reset({})
+
+    p:Section("Nettete", false)
+    p:Slider({ cvar = "hdFSRSharpness", label = "FSR (0 aucune, 1 max)", min = 0, max = 1, step = 0.05, default = 0.2, release = true })
+    p:Slider({ cvar = "hdDLSSSharpness", label = "DLSS (1 = max FSR, jusqu'a 2)", min = 0, max = 2, step = 0.05, default = 1, release = true })
+
+    p:Section("Mouvement (contre les trainees)", false)
+    p:Check({ cvar = "hdFSRObjectMotion", label = "Mouvement des objets" })
+    p:Check({ cvar = "hdFSRRigidMotion", label = "  Objets rigides" })
+    p:Check({ cvar = "hdFSRSkeletalMotion", label = "  Personnages, creatures" })
+    p:Check({ cvar = "hdFSRReactiveMasks", label = "Masques des transparences" })
+    p:Check({ cvar = "hdFSRDebugCheck", label = "Controle AMD (coute des FPS)" })
+
+    p:Section("Etat", false)
+    p:Info(function()
+        return Line("Mise a l'echelle", (Has("hdDLSS") and On("hdDLSS")) and "hdDLSSInfo" or "hdFSRInfo") .. "\n" .. Line("Images generees", "hdFSRFrameGenerationInfo")
+    end, 4)
+end },
+
+{ "avance", "Avance", function(p)
+    p:Header("Lumenveil : reglages avances")
+    p:Note("Pour experimenter. Sans effet tant que la case Lumenveil correspondante est eteinte.")
+    p:Reset({})
+    p:Section("Les curseurs", false)
+    for _, d in ipairs(ADVANCED) do
+        p:Slider({ cvar = d[1], label = d[2], min = d[3], max = d[4], step = d[5], default = d[6] })
     end
-    table.insert(controls, s)
+end },
+}
+
+-- ===================================================================== fenetre
+local function Show(key)
+    if openList then openList:Hide() end
+    for _, p in ipairs(pages) do
+        if p.key == key then
+            if not p.built then p:Build() end
+            p.scroll:Show(); p.button:LockHighlight(); current = p
+        elseif p.built then p.scroll:Hide(); p.button:UnlockHighlight() end
+    end
+    if current then current:Refresh() end
 end
 
-local function Build()
-    local toggleRows = math.ceil(#TOGGLES / 4)
-    local sliderRows = math.ceil(#SLIDERS / 2)
-    local worldRows = math.ceil(#WORLD / 2)
-
+local function BuildPanel()
     panel = CreateFrame("Frame", "WaystoneHDPanel", UIParent)
-    panel:SetWidth(WIDTH)
-    panel:SetHeight(250 + toggleRows * 26 + (sliderRows + worldRows) * ROW) -- HD: +40 for the water status
-    panel:SetPoint("CENTER")
+    panel:SetWidth(780); panel:SetHeight(600); panel:SetPoint("CENTER")
     panel:SetFrameStrata("DIALOG")
-    panel:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 32,
-        insets = { left = 11, right = 12, top = 12, bottom = 11 },
-    })
-    panel:EnableMouse(true)
-    panel:SetMovable(true)
-    panel:SetClampedToScreen(true)
+    panel:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 32, edgeSize = 32,
+        insets = { left = 11, right = 12, top = 12, bottom = 11 } })
+    panel:EnableMouse(true); panel:SetMovable(true); panel:SetClampedToScreen(true)
     panel:RegisterForDrag("LeftButton")
     panel:SetScript("OnDragStart", panel.StartMoving)
     panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
     panel:Hide()
-    tinsert(UISpecialFrames, "WaystoneHDPanel") -- Escape closes it
-
+    tinsert(UISpecialFrames, "WaystoneHDPanel")
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOP", 0, -18)
-    title:SetText("Waystone HD")
-
+    title:SetPoint("TOP", 0, -16); title:SetText("Waystone HD")
     local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -6, -6)
-
-    local y = -44
-    for i, def in ipairs(TOGGLES) do
-        local check = CreateFrame("CheckButton", "WaystoneHDCheck" .. i, panel, "UICheckButtonTemplate")
-        check:SetWidth(24)
-        check:SetHeight(24)
-        -- four columns
-        local col = (i - 1) % 4
-        check:SetPoint("TOPLEFT", 20 + col * 162, y - math.floor((i - 1) / 4) * 26)
-        _G[check:GetName() .. "Text"]:SetText(def.label)
-        check:SetScript("OnClick", function(self)
-            Set(def.cvar, self:GetChecked() and "1" or "0")
-        end)
-        table.insert(controls, { def = def, check = check })
+    for i, d in ipairs(PAGEDEFS) do
+        local page = NewPage(d[1], d[2], panel, d[3])
+        local b = CreateFrame("Button", "WaystoneHDTab" .. i, panel, "UIPanelButtonTemplate")
+        b:SetWidth(148); b:SetHeight(28)
+        b:SetPoint("TOPLEFT", 16, -48 - (i - 1) * 32)
+        b:SetText(d[2])
+        b:SetScript("OnClick", function() Show(d[1]) end)
+        page.button = b
+        table.insert(pages, page)
     end
-    y = y - toggleRows * 26 - 16
-
-    -- two columns: left column first, then the right one
-    for i, def in ipairs(SLIDERS) do
-        local col = i > sliderRows and 1 or 0
-        local row = col == 0 and i - 1 or i - 1 - sliderRows
-        AddSlider(i, def, col, y - row * ROW, false)
-    end
-    y = y - sliderRows * ROW
-
-    local world = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    world:SetPoint("TOPLEFT", 24, y + 4)
-    world:SetText("Distance et herbe (applique quand tu laches le curseur)")
-    y = y - 22
-    for i, def in ipairs(WORLD) do
-        local col = i > worldRows and 1 or 0
-        local row = col == 0 and i - 1 or i - 1 - worldRows
-        AddSlider(#SLIDERS + i, def, col, y - row * ROW, true)
-    end
-    y = y - worldRows * ROW
-
-    -- Forever setting forced everywhere (0 = by place), e.g. 7624 for the Amani Pass test
-    local label = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    label:SetPoint("TOPLEFT", 24, y + 6)
-    label:SetText("Reglage Forever force (0 = selon l'endroit)")
-    local force = CreateFrame("EditBox", "WaystoneHDForce", panel, "InputBoxTemplate")
-    force:SetWidth(70)
-    force:SetHeight(20)
-    force:SetPoint("TOPLEFT", 30, y - 8)
-    force:SetAutoFocus(false)
-    force:SetNumeric(true)
-    force:SetScript("OnEnterPressed", function(self)
-        Set("hdForeverForce", tostring(tonumber(self:GetText()) or 0))
-        self:ClearFocus()
-    end)
-    force:SetScript("OnEscapePressed", function(self) self:ClearFocus() Refresh() end)
-    panel.force = force
-
-    -- puts every slider back to Forever's values, real time, setting by place, test views off
-    local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    reset:SetWidth(120)
-    reset:SetHeight(22)
-    reset:SetPoint("TOPLEFT", 180, y - 7)
-    reset:SetText("Valeurs Forever")
-    reset:SetScript("OnClick", function()
-        for _, def in ipairs(SLIDERS) do Set(def.cvar, tostring(def.default)) end
-        Set("hdForeverForce", "0")
-        Set("hdGradeDebug", "0")
-        Set("hdBloomDebug", "0")
-        Set("hdWmoLight", "1") -- HD: Forever lighting in buildings
-        Set("hdWater", "1")    -- HD: Forever water
-        Set("hdGrassLight", "1")   -- HD: Forever lighting on the grass
-        Set("hdWaterReflect", "1") -- HD: water reflections
-        Refresh()
-    end)
-
-    -- what hdFog is drawing right now (Forever setting, time, layers), and the ground shaders' state
-    local info = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    info:SetPoint("BOTTOMLEFT", 20, 16)
-    info:SetPoint("BOTTOMRIGHT", -20, 16)
-    info:SetJustifyH("LEFT")
     local wait = 0
     panel:SetScript("OnUpdate", function(self, elapsed)
         wait = wait - elapsed
         if wait > 0 then return end
         wait = 0.5
-        info:SetText((GetCVar("hdFogInfo") or "") .. "\nSol : " .. (GetCVar("hdTerrainInfo") or "")
-            .. "\nEau : " .. (GetCVar("hdWaterInfo") or "")) -- HD: hdWater status
+        if current and not openList then current:Refresh() end
     end)
-    panel:SetScript("OnShow", Refresh)
+    panel:SetScript("OnHide", function() if openList then openList:Hide() end end)
+end
+
+local function Open(key)
+    if not panel then BuildPanel() end
+    if not panel:IsShown() then panel:Show() end
+    Show(key or (current and current.key) or "accueil")
 end
 
 SLASH_WAYSTONEHD1 = "/hd"
 SlashCmdList["WAYSTONEHD"] = function()
-    if not panel then Build() end
-    if panel:IsShown() then panel:Hide() else panel:Show() end
+    if not panel then BuildPanel() end
+    if panel:IsShown() then panel:Hide() else Open() end
 end
+SLASH_WAYSTONEHDLV1 = "/hdlumen"
+SlashCmdList["WAYSTONEHDLV"] = function() Open("brouillard") end
+SLASH_WAYSTONEHDLAMP1 = "/hdlampes"
+SlashCmdList["WAYSTONEHDLAMP"] = function() Open("lampes") end
+
+-- Au chargement : remet le mode FSR coherent avec les cases sauvegardees (et le vent M4 coupe).
+local login = CreateFrame("Frame")
+login:RegisterEvent("PLAYER_LOGIN")
+login:SetScript("OnEvent", function() ApplyFsrMode() end)

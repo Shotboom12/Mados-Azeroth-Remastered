@@ -1,6 +1,13 @@
+#include "WoW/Source/WorldClient/HD/HdTime.h"
 // SPDX-License-Identifier: GPL-3.0-or-later
 // HD: HdFog.cpp port. No dependency on the Cata water or the AO module.
 #include "HdVulkanFog.h"
+#if defined(WOWDECOMP_LUMEN) && !defined(HD_FOG_STANDALONE)
+#include "lumen/LvClient.h" // HD 2026-11-02 kit R1 lot L1: R2 boundaries (point 5)
+namespace {bool LumenComposedFog(uint64_t s){return HD::Lumen::Client::ComposedFog(s);}bool LumenNeedsBeforeSpells(){return HD::Lumen::Client::NeedsBeforeSpells();}}
+#else
+namespace {bool LumenComposedFog(uint64_t){return false;}bool LumenNeedsBeforeSpells(){return false;}} // WOWDECOMP_LUMEN OFF: exactly the old fog
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -12,7 +19,7 @@
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Types.h"
-#include "Engine/Source/Gx/GxSeam.h" // HD (Claude): g_gxCataPlane, read only
+#include "Engine/Source/Gx/GxSeam.h" // HD: g_gxCataPlane, read only
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
@@ -89,7 +96,7 @@ struct Effect::Impl {
     VkSampler point{},comparison{};
     uint32_t failedWidth=0,failedHeight=0;
     struct Slot {void* handle=nullptr;WXL_VkBufferInfo buffer{};VkDescriptorSet set{};uint64_t serial=0;
-        void* scatter[2]{};WXL_VkImageInfo scatterInfo[2]{};}; // HD: RGBA16F in-scatter + transmittance, A then B
+        void* scatter[2]{};WXL_VkImageInfo scatterInfo[2]{};bool shareScatter=false;}; // HD: RGBA16F in-scatter + transmittance, A then B
     std::array<Slot,8> slots{};
 #define FOG_FUNCTIONS(X) X(CreateDescriptorSetLayout) X(DestroyDescriptorSetLayout) X(CreatePipelineLayout) X(DestroyPipelineLayout) \
     X(CreateDescriptorPool) X(DestroyDescriptorPool) X(AllocateDescriptorSets) X(UpdateDescriptorSets) \
@@ -158,7 +165,7 @@ bool Effect::Resize(uint32_t w,uint32_t h) {
     bool have=s->slots[0].scatter[0]!=nullptr;
     if(s->width==w && s->height==h && (have || (s->failedWidth==w && s->failedHeight==h))) return true;
     std::array<std::array<void*,2>,8> handles{};std::array<std::array<WXL_VkImageInfo,2>,8> infos{};bool okay=true;
-    WXL_VkImageDesc desc{VK_FORMAT_R16G16B16A16_SFLOAT,w,h,1,VK_IMAGE_USAGE_STORAGE_BIT,VK_IMAGE_ASPECT_COLOR_BIT};
+    WXL_VkImageDesc desc{VK_FORMAT_R16G16B16A16_SFLOAT,w,h,1,VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_COLOR_BIT};
     for(uint32_t i=0;i<s->device.frameSlots && okay;++i) for(uint32_t j=0;j<2;++j) {
         handles[i][j]=s->api->CreateImage(&desc,&infos[i][j]);if(!handles[i][j]) {okay=false;break;}
     }
@@ -188,7 +195,7 @@ bool Effect::Record(const WXL_VkStageContext& ctx,const Parameters& parameters,c
     for(int i=0;i<3;++i) shadows=shadows && maps.view[i] && (maps.layout[i]==VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
         maps.layout[i]==VK_IMAGE_LAYOUT_GENERAL || maps.layout[i]==VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     p.r[33].x=shadows?1.0f:0;p.r[33].y=shadows&&maps.comparison?1.0f:0;
-    // HD (Claude): this frame's water plane (the liquids write no depth): the fog stops at the surface.
+    // HD: this frame's water plane (the liquids write no depth): the fog stops at the surface.
     const bool plane=g_gxCataPlane.m_valid&&std::isfinite(g_gxCataPlane.m_height);
     p.extra.z=plane?g_gxCataPlane.m_height:0;p.extra.w=plane?1.0f:0;
     std::memcpy(slot.buffer.mapped,&p,sizeof p);s->api->FlushBuffer(slot.handle);
@@ -238,7 +245,12 @@ bool Effect::Record(const WXL_VkStageContext& ctx,const Parameters& parameters,c
     }
     barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_TRANSFER_READ_BIT;
     s->CmdPipelineBarrier(ctx.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
-    slot.serial=s->last=ctx.serial;s->error="";return true;
+    slot.shareScatter=split&&mode==0;slot.serial=s->last=ctx.serial;s->error="";return true;
+}
+bool Effect::CurrentScatter(uint64_t serial,VkImageView& view,VkExtent2D& extent) const {
+    view=VK_NULL_HANDLE;extent={};if(!state_||!serial)return false;
+    for(const auto& slot:state_->slots)if(slot.serial==serial&&slot.shareScatter&&slot.scatter[1]){view=slot.scatterInfo[1].view;extent={state_->width,state_->height};return true;}
+    return false;
 }
 bool Effect::Shutdown(uint64_t completed) {
     auto* s=state_;if(!s) return true;if(completed<s->last) {s->error="fog shutdown pending serial";return false;}
@@ -279,7 +291,7 @@ float Clamp(float x,float lo,float hi) {return std::isfinite(x)?std::clamp(x,lo,
     }
 
     // HD: Forever's fog for one light, clear weather blended to storm like the client's colours.
-    bool LightFog(const LightRec* light, int32_t time, float storm, HD::ForeverFog& out) {
+    bool LightFog(const LightRec* light, float time, float storm, HD::ForeverFog& out) {
         if (!HD::ForeverFogAt(light, 0, time, &out)) return false;
         if (storm > 0.0f) {
             HD::ForeverFog stormFog;
@@ -295,7 +307,7 @@ float Clamp(float x,float lo,float hi) {return std::isfinite(x)?std::clamp(x,lo,
         const DayNight::DNInfo& info = DayNight::g_dnInfo;
         const TSGrowableArray<const LightRec*>& lights = DayNight::g_areaLights;
         if (!lights.m_count) return 0.0f;
-        int32_t time = static_cast<int32_t>(info.m_dayProgression * 2880.0f);
+        float time = HD::DayNightBandTime(info.m_dayProgression * 2880.0f);
         float storm = info.m_stormBlend;
 
         bool have = LightFog(lights.m_data[0], time, storm, fog);
@@ -350,7 +362,7 @@ CVar* Var(const char* name,const char* help,const char* value,uint32_t flags=1) 
     return CVar::Register(name,help,flags,value,nullptr,CATEGORY_GRAPHICS,false,nullptr,false);
 }
 int __cdecl Wanted(void*) {return wanted?1:0;}
-void __cdecl Stage(void*,const WXL_VkStageContext* ctx) {if(ctx) {sawRecord=true;Record(*ctx);}}
+void __cdecl Stage(void*,const WXL_VkStageContext* ctx) {if(ctx) {sawRecord=true;if(LumenComposedFog(ctx->serial)){Info("Lumen fog composed; reference retained for fallback");return;}Record(*ctx);}}
 bool IsVulkan() {return g_theGxDevicePtr && g_theGxDevicePtr->DeviceApi()==GxApi_Vulkan;}
 ShadowMaps Maps(uint64_t serial) {
     ShadowMaps result;
@@ -391,8 +403,8 @@ bool BuildLive() {
         auto& a=current.r[9+i*5];auto& b=current.r[10+i*5];auto& c=current.r[11+i*5];auto& d=current.r[12+i*5];auto& e=current.r[13+i*5];
         a={std::pow(l.emissive[0],2.2f)*base,std::pow(l.emissive[1],2.2f)*base,std::pow(l.emissive[2],2.2f)*base,l.density*.0035f*den};
         b={std::pow(l.diffuse[0],2.2f)*l.intensity*lit,std::pow(l.diffuse[1],2.2f)*l.intensity*lit,std::pow(l.diffuse[2],2.2f)*l.intensity*lit,l.g};
-        c={l.start,l.strength,l.exponent,(l.flags&1)?1.0f:0};
-        float rel=(l.flags&2)?dn.m_playerPos.z:0;
+        c={l.start,l.strength,l.exponent,HD::SmoothFogFeatures()?HD::FogShadowWeight(l):((l.flags&1)?1.0f:0)};
+        float rel=(HD::SmoothFogFeatures()?HD::FogRelativeHeightWeight(l):((l.flags&2)?1.0f:0))*dn.m_playerPos.z;
         d={l.topRate*.01f,l.topHeight+rel,l.bottomRate*.01f,l.bottomHeight+rel};
         e={std::pow(l.shadow[0],2.2f)*base,std::pow(l.shadow[1],2.2f)*base,std::pow(l.shadow[2],2.2f)*base,l.shadowMul};
     }
@@ -420,12 +432,13 @@ void Resize() {
     if(wxlvk::native::present::BackBufferInfo(format,extent)) effect.Resize(extent.width,extent.height);
 }
 void ReachBoundary() {
-    if(!stage || !BuildLive()) return;
+    const bool reference=stage&&BuildLive();
+    if(!reference&&!LumenNeedsBeforeSpells())return;
     sawRecord=false;
     // Appended private Point index 4 corresponds to public point 5; see INTEGRATION.md.
     wxlvk::stages::chain::Run(static_cast<wxlvk::stages::Point>(4));
     wanted=false; // never request this effect from a different engine boundary
-    if(!sawRecord) Info("Vulkan fog skipped: exact boundary/backbuffer/depth unavailable");
+    if(reference&&!sawRecord) Info("Vulkan fog skipped: exact boundary/backbuffer/depth unavailable");
 }
 void BeginWorld() {if(!IsVulkan()) HD::FogBeginWorld();}
 void EndWorld() {if(IsVulkan()) ReachBoundary();else HD::FogEndWorld();}
@@ -436,6 +449,10 @@ void Record(const WXL_VkStageContext& ctx) {
     if(!effect.Record(ctx,current,currentMaps)) {Info(effect.Error());return;}
     Info(currentMaps.serial?"Vulkan fog: 3 layers / 32 steps, shadow maps":"Vulkan fog: 3 layers / 32 steps, no shadow maps (sun height retained)");
 }
+bool CurrentScatter(uint64_t serial,VkImageView& view,VkExtent2D& extent){return effect.CurrentScatter(serial,view,extent);}
+// HD 2026-11-02 kit R1 lot L1: read-only views for the Lumen snapshot (same functions BuildLive uses).
+float ForeverFogHere(HD::ForeverFog& fog){fog={};return CurrentForeverFog(fog);}
+bool ReferenceRequested(){return enabled&&enabled->m_intValue!=0;}
 void SetSubpixelOffset(float x,float y) {extraX=x;extraY=y;}
 bool Shutdown() {
     if(!api && !stage) return true;

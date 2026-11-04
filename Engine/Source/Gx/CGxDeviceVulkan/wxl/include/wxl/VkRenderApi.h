@@ -906,6 +906,9 @@ typedef struct WXL_VkGBuffer
 #define WXL_VK_CAP_SPIRV_1_3                0x00002000u   /**< a 1.1 device: SPIR-V 1.3 modules, the subgroup operations (subgroupOps) */
 #define WXL_VK_CAP_SPIRV_1_5                0x00004000u   /**< a 1.2 device: SPIR-V 1.5 modules */
 #define WXL_VK_CAP_MULTI_VIEWPORT           0x00008000u   /**< multiViewport */
+#define WXL_VK_CAP_COMPUTE_DERIVATIVES      0x00010000u   /**< VK_KHR_compute_shader_derivatives (FSR builds only) */
+#define WXL_VK_CAP_TIMELINE_SEMAPHORE       0x00020000u   /**< timelineSemaphore (FSR builds only) */
+#define WXL_VK_CAP_SUBGROUP_SIZE_CONTROL    0x00040000u   /**< VK_EXT_subgroup_size_control (FSR builds only) */
 
 typedef struct WXL_VkDeviceCaps
 {

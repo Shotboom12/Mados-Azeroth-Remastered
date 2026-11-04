@@ -48,6 +48,12 @@ namespace wxlvk::vk
         kCapSpirv13          = 1u << 13,  ///< a 1.1 device: SPIR-V 1.3, the subgroup operations (subgroupOps)
         kCapSpirv15          = 1u << 14,  ///< a 1.2 device: SPIR-V 1.5
         kCapMultiViewport    = 1u << 15,  ///< multiViewport: gl_ViewportIndex (with kCapLayerFromVertex, from a vertex shader)
+        // Asked for only in a WOWDECOMP_FSR build (hd/fsr): what the AMD FidelityFX 2.4 Vulkan runtime needs on the
+        // device the game created. Its shaders declare compute derivatives, its frame generation swapchain waits on
+        // timeline semaphores, and it picks a required subgroup size where the extension exists.
+        kCapComputeDerivatives = 1u << 16, ///< VK_KHR_compute_shader_derivatives, computeDerivativeGroupLinear
+        kCapTimeline           = 1u << 17, ///< timelineSemaphore (1.2 core)
+        kCapSubgroupSizeControl = 1u << 18, ///< VK_EXT_subgroup_size_control: subgroupSizeControl, computeFullSubgroups
     };
 
     /// What the probe found and the device was created with. Zeroed (a 1.0 device, nothing optional) until
@@ -72,5 +78,6 @@ namespace wxlvk::vk
         char     driverName[64] = {};           ///< VkPhysicalDeviceDriverProperties (1.2), "" unknown
         char     driverInfo[64] = {};
         bool     probed = false;                ///< the probe ran (WXL_VK_CAPS on and the device came up)
+        bool     fsrFullSubgroups = false;      ///< computeFullSubgroups offered with kCapSubgroupSizeControl (FSR builds)
     };
 }

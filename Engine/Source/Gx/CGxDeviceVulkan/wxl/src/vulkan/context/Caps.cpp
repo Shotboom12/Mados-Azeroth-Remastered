@@ -107,6 +107,11 @@ namespace wxlvk::vk::context::detail
             { kCapMultiview, "multiview" },
             { kCapLayerFromVertex, "gl_Layer from the vertex stage" },
             { kCapMultiViewport, "multi-viewport" },
+#ifdef WOWDECOMP_FSR
+            { kCapComputeDerivatives, "compute derivatives (FSR)" },
+            { kCapTimeline, "timeline semaphores (FSR)" },
+            { kCapSubgroupSizeControl, "subgroup size control (FSR)" },
+#endif
             { kCapMultiDrawIndirect, "multi-draw indirect" },
             { kCapIndirectFirstInstance, "indirect first instance" },
             { kCapMemoryBudget, "memory budget" },
@@ -206,6 +211,34 @@ namespace wxlvk::vk::context::detail
             if (f16Known && f16.shaderFloat16) offered |= kCapFloat16;
             if (f16Known && f16.shaderInt8) offered |= kCapInt8;
         }
+#ifdef WOWDECOMP_FSR
+        // The FidelityFX runtime's needs (hd/fsr): probed in a query of their own, each struct chained only where the
+        // version or the extension makes its sType known. Offered is not enabled: the runtime is told nothing here,
+        // hd/fsr/HdFsrRuntime.cpp reads Caps().enabled before it reports the device usable.
+        const bool derivativesExt = HasExtension(exts, VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+        const bool subgroupExt    = HasExtension(exts, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+        if (features2 && (v12 || derivativesExt || subgroupExt))
+        {
+            VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR der = {};
+            VkPhysicalDeviceTimelineSemaphoreFeatures           tl  = {};
+            VkPhysicalDeviceSubgroupSizeControlFeaturesEXT      sg  = {};
+            der.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
+            tl.sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+            sg.sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT;
+            void* next = nullptr;
+            if (derivativesExt) { der.pNext = next; next = &der; }
+            if (v12) { tl.pNext = next; next = &tl; }
+            if (subgroupExt) { sg.pNext = next; next = &sg; }
+            VkPhysicalDeviceFeatures2 all = {};
+            all.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            all.pNext = next;
+            features2(g.physical, &all);
+            if (derivativesExt && der.computeDerivativeGroupLinear) offered |= kCapComputeDerivatives;
+            if (v12 && tl.timelineSemaphore) offered |= kCapTimeline;
+            if (subgroupExt && sg.subgroupSizeControl) offered |= kCapSubgroupSizeControl;
+            c.fsrFullSubgroups = subgroupExt && sg.computeFullSubgroups;
+        }
+#endif
         const auto properties2 = v11 ? InstanceFn<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2") : nullptr;
         if (properties2)
         {
@@ -289,6 +322,37 @@ namespace wxlvk::vk::context::detail
             asked |= offered & (kCapFloat16 | kCapInt8);
             if (f16Ext) names[count++] = VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME;
         }
+#ifdef WOWDECOMP_FSR
+        // Same rule as the rest: asked for when offered, whether or not hdFSR is on, because the device outlives every
+        // toggle. Each stays off when its extension name finds no room (the create would refuse the struct).
+        if ((offered & kCapComputeDerivatives) && count < room)
+        {
+            chain.derivatives.sType                         = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
+            chain.derivatives.computeDerivativeGroupLinear  = VK_TRUE;
+            chain.derivatives.pNext = head;
+            head = &chain.derivatives;
+            names[count++] = VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME;
+            asked |= kCapComputeDerivatives;
+        }
+        if (offered & kCapTimeline)
+        {
+            chain.timeline.sType             = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+            chain.timeline.timelineSemaphore = VK_TRUE;
+            chain.timeline.pNext = head;
+            head = &chain.timeline;
+            asked |= kCapTimeline;
+        }
+        if ((offered & kCapSubgroupSizeControl) && count < room)
+        {
+            chain.subgroupSize.sType                = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT;
+            chain.subgroupSize.subgroupSizeControl  = VK_TRUE;
+            chain.subgroupSize.computeFullSubgroups = c.fsrFullSubgroups ? VK_TRUE : VK_FALSE;
+            chain.subgroupSize.pNext = head;
+            head = &chain.subgroupSize;
+            names[count++] = VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
+            asked |= kCapSubgroupSizeControl;
+        }
+#endif
         chain.head = head;
 
         // The extensions, by name, while the caller's array has room.

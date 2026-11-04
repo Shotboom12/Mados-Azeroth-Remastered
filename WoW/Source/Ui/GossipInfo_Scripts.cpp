@@ -69,7 +69,9 @@ static int32_t Script_GetGossipText(lua_State* L) {
 static int32_t Script_GetGossipOptions(lua_State* L) {
     int32_t count = 0;
 
-    for (GossipOption* option = CGGossipInfo::m_options; option < reinterpret_cast<GossipOption*>(CGGossipInfo::m_gossipText); option++) {
+    // HD: x64 layout: the original bound (the address of m_gossipText) also walks the variables between the array and the text,
+    // which gave a ghost option with a garbage m_text (crash on talking to an NPC). Walk the options the server sent.
+    for (GossipOption* option = CGGossipInfo::m_options; option < CGGossipInfo::m_options + CGGossipInfo::m_gossipOptionsCount; option++) {
         if (option && option->m_index >= 0) {
             lua_checkstack(L, 2);
             lua_pushstring(L, option->m_text);

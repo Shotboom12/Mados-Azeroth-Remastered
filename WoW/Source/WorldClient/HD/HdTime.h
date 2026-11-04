@@ -27,6 +27,33 @@ namespace HD {
     // hdShadowSun: how much CShadowQuery::Update steepens the light for the shadow maps (5 = original, 1 = real).
     float ShadowHeightScale();
 
+    // HD: diagnostics/refresh of real-sun cached maps; original short-shadow path is untouched.
+    bool ShadowSunCacheFix();
+    // hdShadowTexelSnap: 1 = shadow band centres on the shadow map texel grid (no swimming edges), 0 = original.
+    bool ShadowTexelSnap();
+    // hdShadowCasterFade: 1 = shadow casters no longer cut at the fade distance inside the near bands (no blinking
+    // shadows of bushes and trees as the player moves), 0 = original.
+    bool ShadowCasterFade();
+    bool SmoothFogFeatures();
+    float ShadowSunRefreshDegrees();
+    float SmoothWeatherBlend(float target, uint32_t now, int32_t mapId);
+    void ResetWeatherBlend();
+    // HD: a single visual clock; native weather and the server/gameplay clock stay independent.
+    bool DayNightSmoothingEnabled();
+    float DayNightBandTime(float ticks);
+    float DayNightBandTime(float ticks, float nativeRounded);
+    float DayNightBlendWeight();
+    void ResetDayNight();
+    uint64_t DayNightFrameSerial();
+
+    // hdShadowSunMin: with hdShadowSun 1, the lowest sun height (degrees above the horizon) the shadow maps use.
+    float ShadowMinElevation();
+
+    // hdSunGlareDim: how much looking at the sun darkens the whole world (DayNight::Update: up to 35% of the map
+    // light's ambient and diffuse). 0 = never (default: with hdSunPath 1 the sun is low and often behind swaying
+    // leaves, and the darkening flickered over the whole screen), 1 = original.
+    float SunGlareDim();
+
     // hdShadowBillboard: billboarded M2 parts (tree leaf cards) in the shadow maps.
     //   0 = original (they face the camera, so their shadow turns with the camera)
     //   1 = they face the sun during the shadow pass (shadow stays still)

@@ -76,7 +76,7 @@ Ray PixelRay(vec2 fullUV, vec2 uv) {
     vec3 w = ray.v.x * c_rot0.xyz + ray.v.y * c_rot1.xyz + ray.v.z * c_rot2.xyz;
     ray.dist = ray.zv * length(w);
     ray.dir = normalize(w);
-    // HD (Claude): the liquids write no depth. Past the sea floor the depth buffer holds the sky, so open water far
+    // HD: the liquids write no depth. Past the sea floor the depth buffer holds the sky, so open water far
     // away was fogged like the sky (the whole fog range: black at night). Stop the ray at the water's surface,
     // extra.z = the height of the plane the Cata water's mirror chose this frame (extra.w = 1 when there is one).
     if (fog.extra.w > 0.5 && ray.dir.z < -1e-4) {

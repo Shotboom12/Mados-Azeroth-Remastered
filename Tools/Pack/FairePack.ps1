@@ -54,5 +54,17 @@ foreach ($f in "Installer.bat", "Installer.ps1", "Reglages-HD.txt", "LISEZMOI.tx
 $zip = Join-Path $out ($name + ".zip")
 if (Test-Path $zip) { Remove-Item -Force $zip }
 Write-Host "Compression (quelques minutes)..."
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -CompressionLevel Optimal
+# Compress-Archive (PowerShell 5.1) ecrit des \ dans les noms du zip, que Linux et macOS lisent comme des noms de fichiers
+# plats. On cree donc le zip nous-memes, avec des / (Windows lit les deux).
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$file = [System.IO.File]::Open($zip, [System.IO.FileMode]::Create)
+$archive = New-Object System.IO.Compression.ZipArchive($file, [System.IO.Compression.ZipArchiveMode]::Create)
+$prefix = $stage.TrimEnd("\") + "\"
+foreach ($item in Get-ChildItem -Recurse -File $stage) {
+    $entry = $item.FullName.Substring($prefix.Length).Replace("\", "/")
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $item.FullName, $entry, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+}
+$archive.Dispose()
+$file.Dispose()
 Write-Host ("Pack pret : " + $zip + " (" + [math]::Round((Get-Item $zip).Length / 1MB) + " Mo)") -ForegroundColor Green

@@ -54,6 +54,11 @@ namespace wxlvk::stages::chain
     /// The world's scene, saved at AfterOpaqueWorld for AfterLiquids and BeforeUi (Run does it at that point).
     void NoteWorld();
 
+#ifdef WOWDECOMP_FSR
+    /// The world's scene as AfterOpaqueWorld saved it, for the frame `serial` only (the FSR pass's camera and viewport).
+    bool WorldSceneOf(uint64_t serial, WXL_VkSceneConstants& scene, VkViewport& viewport, float jitter[2]);
+#endif
+
     /// A point of the frame was reached (src/native/render/WorldPass.cpp, src/native/Render.cpp).
     void Run(Point point);
 

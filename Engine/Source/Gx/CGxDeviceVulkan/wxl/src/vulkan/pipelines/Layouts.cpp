@@ -185,3 +185,25 @@ namespace wxlvk::vk::pipelines::detail
     }
 
 }
+
+#ifdef WOWDECOMP_FSR
+namespace wxlvk::vk::pipelines::detail {
+VkPipelineLayout SkinLayoutFor(uint32_t index){
+ auto&e=s.layouts[index];if(e.skinBones||!HD::Fsr::Skin::Global().Ready()||!s.bonesReady)return e.skinBones;
+ const VkDescriptorSetLayout sets[]={e.set0,s.regsLayout,s.bonesLayout,HD::Fsr::Skin::Global().Layout()};
+ VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT,0,kPushBytes};VkPipelineLayoutCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};info.setLayoutCount=4;info.pSetLayouts=sets;info.pushConstantRangeCount=1;info.pPushConstantRanges=&push;
+ if(s.dapi->CreatePipelineLayout(s.device,&info,nullptr,&e.skinBones)!=VK_SUCCESS)e.skinBones=VK_NULL_HANDLE;return e.skinBones;
+}
+}
+#endif
+
+#ifdef WOWDECOMP_FSR
+namespace wxlvk::vk::pipelines::detail{
+VkPipelineLayout MotionWindLayoutFor(uint32_t index,bool bones){
+ auto&e=s.layouts[index];auto&out=bones?e.motionWindBones:e.motionWind;if(out||!HD::Fsr::WindMotion::Global().Ready())return out;
+ if((bones&&!s.bonesReady)||(!bones&&!s.bonesLayout))return VK_NULL_HANDLE;
+ const VkDescriptorSetLayout sets[]={e.set0,s.regsLayout,s.bonesLayout,HD::Fsr::WindMotion::Global().Layout()};VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT,0,kPushBytes};VkPipelineLayoutCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};info.setLayoutCount=4;info.pSetLayouts=sets;info.pushConstantRangeCount=1;info.pPushConstantRanges=&push;
+ if(s.dapi->CreatePipelineLayout(s.device,&info,nullptr,&out)!=VK_SUCCESS)out=VK_NULL_HANDLE;return out;
+}
+}
+#endif

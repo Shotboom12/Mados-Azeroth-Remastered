@@ -101,6 +101,9 @@ namespace wxlvk::vk::context::detail
         PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
 
         bool debugUtils = false;   ///< VK_EXT_debug_utils was enabled on the instance
+#ifdef WOWDECOMP_FSR
+        bool v1SyncConfigured = false; // explicitly chained validate_sync at successful instance creation
+#endif
         bool validation = false;   ///< VK_LAYER_KHRONOS_validation was enabled on the instance
 
         loader::Instance iapi;
@@ -116,6 +119,16 @@ namespace wxlvk::vk::context::detail
 
         /// Bumped on every swapchain create and destroy. See context::SwapchainGeneration().
         uint32_t swapGen = 0;
+
+#ifdef WOWDECOMP_FSR
+        /// The FSR frame generation swapchain's own queues (Logical.cpp), and the replacer (context::SetSwapchainReplacer).
+        FrameGenQueues   fgQueues;
+        SwapchainReplace replace  = nullptr;
+        SwapchainRelease release  = nullptr;
+        SwapchainDrain   drain    = nullptr;
+        bool             replaced = false;   ///< `swapchain` was made by `replace`; dapi carries its entry points
+        SwapchainFunctions original;         ///< dapi's own entry points while replaced
+#endif
     };
     extern State g;
 
@@ -197,6 +210,11 @@ namespace wxlvk::vk::context::detail
         VkPhysicalDevice16BitStorageFeatures      storage16 = {};
         VkPhysicalDeviceShaderFloat16Int8Features float16   = {};
         VkPhysicalDeviceMultiviewFeatures         multiview = {};
+#ifdef WOWDECOMP_FSR
+        VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives = {};
+        VkPhysicalDeviceTimelineSemaphoreFeatures            timeline    = {};
+        VkPhysicalDeviceSubgroupSizeControlFeaturesEXT       subgroupSize = {};
+#endif
         void*                                     head      = nullptr;
     };
     void PlanCaps(VkPhysicalDeviceFeatures& features, CapsChain& chain, void* tail, const char** names, uint32_t& count,

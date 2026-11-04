@@ -91,6 +91,10 @@ namespace wxlvk::vk::context
      * than logged, with its total. Nothing when the layer reported nothing.
      */
     void LogValidationSummary();
+#ifdef WOWDECOMP_FSR
+    struct ValidationStatus {bool layer=false,messenger=false,syncConfigured=false;uint64_t errors=0,warnings=0;};
+    ValidationStatus ReadValidationStatus(); // render thread; all raw error occurrences, including suppressed repeats
+#endif
 
     /**
      * Whether the instance and logical device exist.
@@ -170,4 +174,51 @@ namespace wxlvk::vk::context
      * @return bool driver : true when budget and usage are the driver's; false when only `props` was filled
      */
     bool MemoryHeaps(VkPhysicalDeviceMemoryProperties& props, VkDeviceSize* budget, VkDeviceSize* usage);
+
+#ifdef WOWDECOMP_FSR
+    // --- FSR frame generation: its queues and its swapchain (hd/fsr/HdFsrRuntime.cpp) -----------------------
+
+    /// One queue the device was created with for the FSR swapchain; queue null when none could be had.
+    struct QueueSlot
+    {
+        VkQueue  queue  = nullptr;
+        uint32_t family = UINT32_MAX;
+        uint32_t index  = 0;
+    };
+
+    /// The three queues AMD's frame generation swapchain needs besides the game's own (src/vulkan/context/Logical.cpp):
+    /// asynchronous compute, present (UI composition and the paced presents) and image acquire. Never the game's queue,
+    /// never used by anything of ours: the SDK's own threads submit to them.
+    struct FrameGenQueues
+    {
+        QueueSlot asyncCompute, present, imageAcquire;
+        bool complete() const { return present.queue && imageAcquire.queue && asyncCompute.queue; }
+    };
+    const FrameGenQueues& FgQueues();
+
+    /// The entry points a replaced swapchain is driven through (vkGetSwapchainImagesKHR, vkAcquireNextImageKHR,
+    /// vkQueuePresentKHR): installed into the device's table while it stands, the originals put back after.
+    struct SwapchainFunctions
+    {
+        PFN_vkGetSwapchainImagesKHR getImages = nullptr;
+        PFN_vkAcquireNextImageKHR   acquire   = nullptr;
+        PFN_vkQueuePresentKHR       present   = nullptr;
+    };
+
+    /// Asked at every swapchain create, before vkCreateSwapchainKHR: true when it made the swapchain itself (`*out`)
+    /// from `info` and filled `fns`; false and the plain swapchain is made as before.
+    using SwapchainReplace = bool (*)(const VkSwapchainCreateInfoKHR& info, VkSwapchainKHR* out, SwapchainFunctions& fns);
+    /// Destroys what SwapchainReplace made; the device is idle.
+    using SwapchainRelease = void (*)(VkSwapchainKHR swapchain);
+    /// Waits until the replaced swapchain's own threads have presented everything handed to them.
+    using SwapchainDrain = void (*)();
+    /// Registered once the FSR runtime is loaded; nulls unregister (and a replaced swapchain must be gone).
+    void SetSwapchainReplacer(SwapchainReplace replace, SwapchainRelease release, SwapchainDrain drain);
+    /// With a replaced swapchain: its presents drained, then the device. Nothing otherwise.
+    void DrainSwapchain();
+    /// Whether the swapchain standing now is a replaced one.
+    bool SwapchainReplaced();
+    /// Destroys the swapchain now (device idle; the renderer rebuilds its image objects from the generation).
+    void DropSwapchainNow();
+#endif
 }

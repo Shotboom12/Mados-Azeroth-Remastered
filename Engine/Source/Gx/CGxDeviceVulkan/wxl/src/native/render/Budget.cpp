@@ -120,8 +120,17 @@ namespace
             b.addressFree  = ms.ullAvailVirtual;
             b.addressTotal = ms.ullTotalVirtual;
         }
+#if defined(_WIN64)
+        // HD: x64. The walk is one VirtualQuery per region of a 128 TiB user address space, and inside the present:
+        // every kWalkPresents the present stalled 24-28 ms (Logs/CataRenderSpikes.log, 2026-10-30), a visible hitch
+        // whenever the camera moves. The question it answers (will a large mapping still fit?) is a 32-bit one; here
+        // the free address space stands for its largest run.
+        (void)walk;
+        b.addressLargestFree = b.addressFree;
+#else
         // The walk is the costly part: its figure is kept between walks.
         b.addressLargestFree = walk || !g.taken ? footprint::Take().largestFree : g.b.addressLargestFree;
+#endif
 
         const uint64_t margin = static_cast<uint64_t>(static_cast<double>(b.deviceLocal.budget) * WXL_VK_RESIDENT_MARGIN);
         const uint64_t keep   = margin > kResidentFloor ? margin : kResidentFloor;

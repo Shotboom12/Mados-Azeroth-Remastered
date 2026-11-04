@@ -16,6 +16,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "native/present/Internal.hpp"
+#ifdef WOWDECOMP_FSR
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrPass.h" // HD: FSR frame generation (step D)
+#endif
 
 using namespace wxlvk::native::present::detail;
 
@@ -450,6 +453,10 @@ namespace wxlvk::native::present
         s.lastPresent = now;
 
         if (!EnsureFrame()) return;
+#ifdef WOWDECOMP_FSR
+        WorldTargetAbortInternal();   // a world target never outlives its frame (normally ended after BeforeUi)
+        HD::Fsr::Pass::BeforePresent();   // HD: a frame the generation did not prepare is presented alone
+#endif
 
         // Until the engine has drawn once, a slowly cycling colour over the whole image (the
         // liveness colour): the login screen's own clear is black, which is also what a hung window

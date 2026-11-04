@@ -18,6 +18,10 @@
 #pragma once
 
 #include "vulkan/Pipelines.hpp"
+#ifdef WOWDECOMP_FSR
+#include "../../../../hd/fsr/HdFsrSkin.h"
+#include "../../../../hd/fsr/HdFsrWind.h"
+#endif
 
 #include "common/ModulePath.hpp"
 #include "common/Settings.hpp"
@@ -400,6 +404,10 @@ namespace wxlvk::vk::pipelines::detail
         VkPipelineLayout      pipeline = VK_NULL_HANDLE;
         VkPipelineLayout      bones    = VK_NULL_HANDLE; ///< set 0, set 1 and the palette's set 2; made on first use
         VkPipelineLayout      wind     = VK_NULL_HANDLE; ///< set 0, set 1, an empty set 2 and tree wind's set 3; made on first use
+        #ifdef WOWDECOMP_FSR
+        VkPipelineLayout      skinBones = VK_NULL_HANDLE;
+        VkPipelineLayout      motionWind = VK_NULL_HANDLE,motionWindBones = VK_NULL_HANDLE;
+#endif
         VkPipelineLayout      windBones = VK_NULL_HANDLE; ///< set 0, set 1, the palette's set 2 and tree wind's set 3; made on first use
         /// The shadow replay's tree-wind layouts: as `wind` / `windBones` with an 80-byte push range
         /// (the wind's values, then the light's matrix); made on first use (src/capture/).
@@ -429,6 +437,10 @@ namespace wxlvk::vk::pipelines::detail
         bool         bones        = false; ///< built from the vertex module's bone-palette variant: 64-row slice, palette in set 2
         bool         wind         = false; ///< built from the vertex module's tree-wind variant: set 3 and the push range
         bool         gbuf         = false; ///< built from the modules' G-buffer variants (tools/gbuffer): the pass's three extra attachments written
+#ifdef WOWDECOMP_FSR
+        uint32_t     velocityMode=0; // 0 unsupported, 1 zero marker, 2 total motion
+        bool         motionPass=false;
+#endif
         bool         gbufNull     = false; ///< a depth-writing pipeline on a G-buffer pass WITHOUT the variants: its pixels leave no record (Build)
         bool         constStream  = false; ///< a stride-0 binding at index `streams` feeds the attributes the layout lacks (State::constVb)
         bool         prewarmed    = false; ///< built at bring-up from the persisted key list, not yet checked against a draw (VerifyPrewarmed)
@@ -697,6 +709,10 @@ namespace wxlvk::vk::pipelines::detail
     extern SetCache g_setCache[wxlvk::vk::pipelines::kFrameSlots];
 
     VkPipelineLayout BonesLayoutFor(uint32_t index);
+#ifdef WOWDECOMP_FSR
+    VkPipelineLayout SkinLayoutFor(uint32_t index);
+    VkPipelineLayout MotionWindLayoutFor(uint32_t index,bool bones);
+#endif
     VkPipelineLayout WindLayoutFor(uint32_t index, bool bones, bool shadow = false);
 
     // --- the fourteen engine formats, by semantic, for the translated modules -----------------
@@ -861,6 +877,12 @@ namespace wxlvk::vk::pipelines::detail
     struct Draft
     {
         uint32_t                   frameSlot = 0;
+#ifdef WOWDECOMP_FSR
+        float                      rigidReprojection[16]; // only read by a mode-2 pipeline
+        HD::Fsr::Skin::DrawData     skinData;
+        HD::Fsr::WindMotion::DrawData windData;
+        uint32_t                   rigidCookie=~uint32_t(0); // history commits only after Issue
+#endif
         Key                        key;
         const PipelineEntry*       entry = nullptr;
         const wxlvk::vk::wind::Draw* windDraw = nullptr;   ///< the windy draw's push values, null otherwise

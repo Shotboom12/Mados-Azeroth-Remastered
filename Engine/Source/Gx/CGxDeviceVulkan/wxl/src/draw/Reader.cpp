@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/lamp/HdLampHooks.h"
 #include "draw/Reader.hpp"
 #include "../../../hd/HdVulkanShadowBridge.h"
 
@@ -484,7 +485,20 @@ namespace
         float* row = c.pixelConst[Cmd::kMoverRow];
         row[0] = row[1] = row[2] = row[3] = 0.0f;
         row[2] = static_cast<float>(HD::VulkanShadows::Bridge::Mask(c.texture));
+        // HD diagnostic (hdSunInfo): the terrain's shadow-map slots and what the mask knew of them
+        if (std::strncmp(c.ps, "Terrain", 7) == 0)
+            HD::VulkanShadows::Bridge::DiagTerrain(c.texture, static_cast<uint32_t>(row[2]), c.ps, c.vertexRows);
         row[3] = HD::VulkanShadows::Bridge::enabled ? 65536.0f + static_cast<float>(HD::VulkanShadows::Bridge::InteriorMask(c.texture)) : 0.0f;
+#ifdef WOWDECOMP_REUSE_SHADER_MEMO
+        // ReadMaterial/ReadShader already invalidates this memo on every shader generation change.
+        // The mover test below trusts this exact same resolved record; lamps can reuse it too.
+        const ShaderMemo& lampMemo = g_shaderMemo[0];
+        const auto* lampRecord = lampMemo.resolvedKnown && std::memcmp(lampMemo.name,c.vs,sizeof lampMemo.name)==0
+                              ? lampMemo.resolved : wxlvk::shaders::translated::Resolve(c.vs,false);
+#else
+        const auto* lampRecord = wxlvk::shaders::translated::Resolve(c.vs, false);
+#endif
+        row[3] = HD::Lamp::Native::Metadata(row[3],lampRecord?lampRecord->md5:nullptr,c.vertexRows);
         // p[14].y: a batch of an interior-lit map object group (native/render/WmoGroups.cpp, the engine's group
         // renderers bracketed). Every indoor group's MapObj vertex module (exterior-lit ones too) places the
         // group's box in view space through its c31..c33.

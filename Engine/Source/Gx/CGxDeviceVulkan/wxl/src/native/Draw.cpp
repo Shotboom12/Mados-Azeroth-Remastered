@@ -804,6 +804,10 @@ namespace wxlvk::native::impl
                                 t.frames ? t.sumMs / static_cast<double>(t.frames) : 0.0, t.maxMs,
                                 static_cast<unsigned long long>(t.slow),
                                 static_cast<unsigned long long>(t.hitches));
+#ifdef WOWDECOMP_FRAME_QUANTILES
+            const auto q=t.recent.Get();
+            wxl::ScriptMgr::Log(WXL_LOG_INFO,"native: frame quantiles (%s): last %u samples; p50 %.3f / p95 %.3f / p99 %.3f ms; 1pct-low %.2f FPS (mean slowest ceil(1pct*N) intervals)",what,q.count,q.p50,q.p95,q.p99,q.onePercentLow);
+#endif
         };
         pacing("since the last line", window);
         pacing("session", session);
