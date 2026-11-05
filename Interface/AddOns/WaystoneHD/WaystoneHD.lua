@@ -147,7 +147,7 @@ local function NewPage(key, title, parent, build)
         value:SetPoint("LEFT", s, "RIGHT", 8, 0)
         local function Show()
             local v = s:GetValue()
-            if def.cvar == "hdTime" and v < 0 then value:SetText("reelle")
+            if def.cvar == "hdTime" and v < 0 then value:SetText("real time")
             elseif def.cvar == "hdTime" then local h = math.floor(v); value:SetText(string.format("%d:%02d", h, math.floor((v - h) * 60 + 0.5)))
             elseif def.step >= 1 then value:SetText(string.format("%d", v))
             else value:SetText(string.format("%.2f", v)) end
@@ -223,7 +223,7 @@ local function NewPage(key, title, parent, build)
         item.refresh = function()
             local i = def.current()
             if i and i > 0 and def.options[i] then button:SetText(def.options[i].text .. "   v")
-            else button:SetText((def.unknown or "Personnalise (reglages melanges)") .. "   v") end
+            else button:SetText((def.unknown or "Custom (mixed settings)") .. "   v") end
         end
         button:SetScript("OnClick", function()
             if openList and openList.owner == button then openList:Hide(); return end
@@ -241,7 +241,7 @@ local function NewPage(key, title, parent, build)
                 local b = CreateFrame("Button", nil, list, "UIPanelButtonTemplate")
                 b:SetWidth(392); b:SetHeight(22); b:SetPoint("TOPLEFT", 6, -5 - (i - 1) * 24)
                 local ok = (not o.avail) or o.avail()
-                b:SetText(ok and o.text or (o.text .. "  (indisponible)"))
+                b:SetText(ok and o.text or (o.text .. "  (unavailable)"))
                 if not ok then b:Disable() end
                 b:SetScript("OnClick", function() o.apply(); list:Hide(); openList = nil; if current then current:Refresh() end end)
             end
@@ -381,7 +381,7 @@ local function ApplyFsrMode()
     end
 end
 
-local function Line(label, cvar) return label .. " : " .. (Read(cvar) or "indisponible dans cette version") end
+local function Line(label, cvar) return label .. " : " .. (Read(cvar) or "unavailable in this version") end
 
 local function Gm(text) if SendChatMessage then pcall(SendChatMessage, text, "SAY") end end
 local function LanternMode() return math.min(2, math.max(0, math.floor(Num("hdLvLantern", 0)))) + 1 end
@@ -395,8 +395,8 @@ local function FourWay(fe, lv)
 end
 
 
--- ===================================================================== "Mes reglages" (3 nov 2026)
--- Un preset personnel : le bouton "Mes reglages" remet tout ce qui est dans la liste ci-dessous ; le bouton
+-- ===================================================================== "My Settings" (3 nov 2026)
+-- Un preset personnel : le bouton "My Settings" remet tout ce qui est dans la liste ci-dessous ; le bouton
 -- "Sauver" relit les valeurs du jeu et les garde dans WaystoneHDMine (WTF\...\SavedVariables\WaystoneHD.lua),
 -- donc elles survivent au redemarrage. Tant que rien n'est sauve, c'est MINE_DEFAUT (les reglages recommandes du 3 nov).
 -- hdTime n'y est pas : c'est l'heure du jeu, pas un reglage d'image.
@@ -499,241 +499,241 @@ local function MineCount()
 end
 
 local PAGEDEFS = {
-{ "accueil", "Accueil", function(p)
+{ "accueil", "Home", function(p)
     p:Header("Waystone HD")
-    p:Note("Un sujet par onglet. Les listes deroulantes te laissent choisir la version For Ever, Lumenveil ou Seyris. Les sections marquees + s'ouvrent pour les reglages fins.")
-    p:Header("Deux rendus complets")
-    p:Button("Tout For Ever (mes graphismes)", 340, function()
+    p:Note("One topic per tab. Choose For Ever, Lumenveil, or Seyris from the dropdowns. Expand sections marked + for detailed settings.")
+    p:Header("Two complete looks")
+    p:Button("All For Ever (my graphics)", 340, function()
         SetMany({ "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0, "hdLvHalos", 0, "hdLvTerrain", 0, "hdLvLamps", 0,
                   "hdLvSpells", 0, "hdLvLantern", 0, "hdLvAmbiance", 0, "hdSxWind", 0, "hdLvLampClasses", 4,
                   "hdFog", 1, "hdRays", 1, "hdBloom", 1, "hdShadowSun", 1, "hdLights", 1, "hdGrassWind", 1 })
     end)
-    p:Button("Tout Lumenveil (For Ever coupe)", 340, function()
+    p:Button("All Lumenveil (For Ever off)", 340, function()
         SetMany({ "hdFog", 0, "hdRays", 0, "hdBloom", 0, "hdShadowSun", 0, "hdLights", 0,
                   "hdLvFog", 1, "hdLvShafts", 1, "hdLvMemory", 1, "hdLvHalos", 1, "hdLvTerrain", 1, "hdLvLamps", 1,
                   "hdLvLampClasses", 30, "hdLvSpells", 1, "hdLvLantern", 1, "hdSxWind", 1, "hdGrassWind", 1 })
     end)
-    p:Note("Ne change ni le FSR/DLSS, ni l'eau, ni la distance de vue.")
-    p:Header("Retour aux valeurs d'origine")
-    p:Button("Valeurs For Ever (curseurs et interrupteurs d'origine)", 340, function()
+    p:Note("This does not change FSR/DLSS, water, or view distance.")
+    p:Header("Restore defaults")
+    p:Button("For Ever defaults (sliders and toggles)", 340, function()
         for _, def in ipairs(pages.foreverSliders or {}) do if Has(def.cvar) then Set(def.cvar, def.default) end end
         SetMany({ "hdForeverForce", 0, "hdGradeDebug", 0, "hdBloomDebug", 0, "hdWmoLight", 1, "hdWater", 1, "hdGrassLight", 1, "hdWaterReflect", 1 })
     end)
-    p:Header("Mes reglages")
-    p:Button("Mes reglages (tout remettre comme je les aime)", 340, function() MineApply() end)
-    p:Button("Sauver les reglages actuels dans ce bouton", 340, function()
+    p:Header("My Settings")
+    p:Button("My Settings (restore my saved look)", 340, function() MineApply() end)
+    p:Button("Save current settings to this button", 340, function()
         local n = MineSave()
-        if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffd200Waystone HD|r : " .. n .. " reglages gardes dans \"Mes reglages\".") end
+        if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffd200Waystone HD|r : " .. n .. " reglages gardes dans \"My Settings\".") end
     end)
     p:Info(function()
         local n, saved = MineCount()
-        return (saved and "Tes reglages sauves : " or "Reglages de depart (3 nov) : ") .. n .. " valeurs. L'heure du jeu (hdTime) n'en fait pas partie."
+        return (saved and "Your saved settings: " or "Starting settings (Nov 3): ") .. n .. " values. In-game time (hdTime) is not included."
     end, 2)
-    p:Section("Etat en direct", false)
+    p:Section("Live Status", false)
     p:Info(function()
-        return Line("Brouillard", "hdFogInfo") .. "\n" .. Line("Sol", "hdTerrainInfo") .. "\n" .. Line("Eau", "hdWaterInfo")
-            .. "\n" .. Line("Lumenveil", "hdLvInfo") .. "\n" .. Line("Lampes Lumenveil", "hdLvLampInfo")
-            .. "\n" .. Line("Herbe Seyris", "hdSxInfo")
-            .. "\n" .. Line("Mise a l'echelle", (Has("hdDLSS") and On("hdDLSS")) and "hdDLSSInfo" or "hdFSRInfo")
-            .. "\n" .. Line("Images generees", "hdFSRFrameGenerationInfo")
+        return Line("Fog", "hdFogInfo") .. "\n" .. Line("Terrain", "hdTerrainInfo") .. "\n" .. Line("Water", "hdWaterInfo")
+            .. "\n" .. Line("Lumenveil", "hdLvInfo") .. "\n" .. Line("Lumenveil Lights", "hdLvLampInfo")
+            .. "\n" .. Line("Seyris Grass", "hdSxInfo")
+            .. "\n" .. Line("Upscaling", (Has("hdDLSS") and On("hdDLSS")) and "hdDLSSInfo" or "hdFSRInfo")
+            .. "\n" .. Line("Generated Frames", "hdFSRFrameGenerationInfo")
     end, 8)
 end },
 
-{ "ambiance", "Ambiance", function(p)
-    p:Header("Ambiance")
-    p:Slider({ cvar = "hdTime", label = "Heure de la journee (-1 = heure reelle)", min = -1, max = 24, step = 0.05, default = -1, forever = true })
-    p:Drop({ label = "Brouillard", current = FogMode, options = {
-        { text = "WotLK d'origine (aucun brouillard HD)", apply = function() SetMany({ "hdFog", 0, "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0 }) end },
-        { text = "For Ever seul", apply = function() SetMany({ "hdFog", 1, "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0 }) end },
-        { text = "Lumenveil seul", apply = function() SetMany({ "hdFog", 0, "hdLvFog", 1 }) end, avail = function() return Has("hdLvFog") end },
-        { text = "For Ever + Lumenveil ensemble", apply = function() SetMany({ "hdFog", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvFog") end },
+{ "ambiance", "Atmosphere", function(p)
+    p:Header("Atmosphere")
+    p:Slider({ cvar = "hdTime", label = "Time of day (-1 = real time)", min = -1, max = 24, step = 0.05, default = -1, forever = true })
+    p:Drop({ label = "Fog", current = FogMode, options = {
+        { text = "Original WotLK (no HD fog)", apply = function() SetMany({ "hdFog", 0, "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0 }) end },
+        { text = "For Ever only", apply = function() SetMany({ "hdFog", 1, "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0 }) end },
+        { text = "Lumenveil only", apply = function() SetMany({ "hdFog", 0, "hdLvFog", 1 }) end, avail = function() return Has("hdLvFog") end },
+        { text = "For Ever + Lumenveil together", apply = function() SetMany({ "hdFog", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvFog") end },
     } })
-    p:Drop({ label = "Rayons du soleil", current = FourWay("hdRays", "hdLvShafts"), options = {
-        { text = "Aucun", apply = function() SetMany({ "hdRays", 0, "hdLvShafts", 0 }) end },
-        { text = "For Ever seul", apply = function() SetMany({ "hdRays", 1, "hdLvShafts", 0 }) end },
-        { text = "Lumenveil seul (allume son brouillard)", apply = function() SetMany({ "hdRays", 0, "hdLvShafts", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvShafts") end },
-        { text = "Les deux ensemble", apply = function() SetMany({ "hdRays", 1, "hdLvShafts", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvShafts") end },
+    p:Drop({ label = "Sun Rays", current = FourWay("hdRays", "hdLvShafts"), options = {
+        { text = "None", apply = function() SetMany({ "hdRays", 0, "hdLvShafts", 0 }) end },
+        { text = "For Ever only", apply = function() SetMany({ "hdRays", 1, "hdLvShafts", 0 }) end },
+        { text = "Lumenveil only (enables its fog)", apply = function() SetMany({ "hdRays", 0, "hdLvShafts", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvShafts") end },
+        { text = "Both together", apply = function() SetMany({ "hdRays", 1, "hdLvShafts", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvShafts") end },
     } })
-    p:Drop({ label = "Halo (bloom)", current = FourWay("hdBloom", "hdLvHalos"), options = {
-        { text = "Aucun", apply = function() SetMany({ "hdBloom", 0, "hdLvHalos", 0 }) end },
-        { text = "For Ever seul", apply = function() SetMany({ "hdBloom", 1, "hdLvHalos", 0 }) end },
-        { text = "Lumenveil seul (allume son brouillard)", apply = function() SetMany({ "hdBloom", 0, "hdLvHalos", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvHalos") end },
-        { text = "Les deux ensemble", apply = function() SetMany({ "hdBloom", 1, "hdLvHalos", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvHalos") end },
+    p:Drop({ label = "Glow (bloom)", current = FourWay("hdBloom", "hdLvHalos"), options = {
+        { text = "None", apply = function() SetMany({ "hdBloom", 0, "hdLvHalos", 0 }) end },
+        { text = "For Ever only", apply = function() SetMany({ "hdBloom", 1, "hdLvHalos", 0 }) end },
+        { text = "Lumenveil only (enables its fog)", apply = function() SetMany({ "hdBloom", 0, "hdLvHalos", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvHalos") end },
+        { text = "Both together", apply = function() SetMany({ "hdBloom", 1, "hdLvHalos", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvHalos") end },
     } })
-    p:Drop({ label = "Ombres lointaines", current = FourWay("hdShadowSun", "hdLvTerrain"), options = {
-        { text = "Aucune", apply = function() SetMany({ "hdShadowSun", 0, "hdLvTerrain", 0 }) end },
-        { text = "For Ever seules", apply = function() SetMany({ "hdShadowSun", 1, "hdLvTerrain", 0 }) end },
-        { text = "Lumenveil seul (allume son brouillard)", apply = function() SetMany({ "hdShadowSun", 0, "hdLvTerrain", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvTerrain") end },
-        { text = "Les deux ensemble", apply = function() SetMany({ "hdShadowSun", 1, "hdLvTerrain", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvTerrain") end },
+    p:Drop({ label = "Distant Shadows", current = FourWay("hdShadowSun", "hdLvTerrain"), options = {
+        { text = "Nonee", apply = function() SetMany({ "hdShadowSun", 0, "hdLvTerrain", 0 }) end },
+        { text = "For Ever onlyes", apply = function() SetMany({ "hdShadowSun", 1, "hdLvTerrain", 0 }) end },
+        { text = "Lumenveil only (enables its fog)", apply = function() SetMany({ "hdShadowSun", 0, "hdLvTerrain", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvTerrain") end },
+        { text = "Both together", apply = function() SetMany({ "hdShadowSun", 1, "hdLvTerrain", 1, "hdLvFog", 1 }) end, avail = function() return Has("hdLvTerrain") end },
     } })
-    p:Drop({ label = "Meteo (commande GM envoyee au serveur)", unknown = "Choisir une meteo...", current = function() return 0 end, options = {
-        { text = "Beau temps", apply = function() Gm(".wchange 1 0") end },
-        { text = "Pluie legere", apply = function() Gm(".wchange 1 0.3") end },
-        { text = "Pluie", apply = function() Gm(".wchange 1 0.6") end },
-        { text = "Forte pluie", apply = function() Gm(".wchange 1 1") end },
-        { text = "Neige", apply = function() Gm(".wchange 2 0.6") end },
-        { text = "Tempete de sable", apply = function() Gm(".wchange 3 0.6") end },
+    p:Drop({ label = "Weather (GM command sent to server)", unknown = "Choose weather...", current = function() return 0 end, options = {
+        { text = "Clear", apply = function() Gm(".wchange 1 0") end },
+        { text = "Light rain", apply = function() Gm(".wchange 1 0.3") end },
+        { text = "Rain", apply = function() Gm(".wchange 1 0.6") end },
+        { text = "Heavy rain", apply = function() Gm(".wchange 1 1") end },
+        { text = "Snow", apply = function() Gm(".wchange 2 0.6") end },
+        { text = "Sandstorm", apply = function() Gm(".wchange 3 0.6") end },
     } })
     p:Reset({ "hdLvFog", 0, "hdLvShafts", 0, "hdLvMemory", 0, "hdLvHalos", 0, "hdLvTerrain", 0, "hdLvTerrainWmo", 1, "hdForeverForce", 0, "hdWmoLight", 1 })
 
-    p:Section("Reglages du brouillard", false)
-    p:Slider({ cvar = "hdFogDensity", label = "For Ever : densite", min = 0, max = 3, step = 0.05, default = 1, forever = true })
-    p:Slider({ cvar = "hdFogSun", label = "For Ever : couleur du soleil", min = 0, max = 3, step = 0.05, default = 1, forever = true })
-    p:Slider({ cvar = "hdFogAmbient", label = "For Ever : couleur de base", min = 0, max = 5, step = 0.05, default = 1, forever = true })
-    p:Check({ cvar = "hdFogShadow", label = "For Ever : rayons dans la brume" })
-    p:Slider({ cvar = "hdLvDensity", label = "Lumenveil : densite", min = 0, max = 4, step = 0.05, default = 1 })
-    p:Slider({ cvar = "hdLvQuality", label = "Lumenveil : qualite (1 haute, 3 rapide)", min = 1, max = 3, step = 1, default = 2 })
-    p:Slider({ cvar = "hdLvTemporal", label = "Lumenveil : stabilisation", min = 0, max = 0.95, step = 0.01, default = 0.85 })
-    p:Check({ cvar = "hdLvMemory", label = "Lumenveil : memoire des obstacles", tip = "Demande le brouillard et les rayons Lumenveil." })
+    p:Section("Fog Settings", false)
+    p:Slider({ cvar = "hdFogDensity", label = "For Ever: density", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdFogSun", label = "For Ever: sun color", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdFogAmbient", label = "For Ever: ambient color", min = 0, max = 5, step = 0.05, default = 1, forever = true })
+    p:Check({ cvar = "hdFogShadow", label = "For Ever: fog rays" })
+    p:Slider({ cvar = "hdLvDensity", label = "Lumenveil: density", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdLvQuality", label = "Lumenveil: quality (1 high, 3 fast)", min = 1, max = 3, step = 1, default = 2 })
+    p:Slider({ cvar = "hdLvTemporal", label = "Lumenveil: temporal stability", min = 0, max = 0.95, step = 0.01, default = 0.85 })
+    p:Check({ cvar = "hdLvMemory", label = "Lumenveil: obstacle memory", tip = "Requires Lumenveil fog and rays." })
 
-    p:Section("Reglages des rayons, du halo et des ombres", false)
-    p:Slider({ cvar = "hdRaysStrength", label = "Rayons For Ever : force", min = 0, max = 3, step = 0.05, default = 1, forever = true })
-    p:Slider({ cvar = "hdLvShaftGain", label = "Rayons Lumenveil : force", min = 0, max = 4, step = 0.05, default = 1 })
-    p:Slider({ cvar = "hdBloomStrength", label = "Halo For Ever : force", min = 0, max = 3, step = 0.05, default = 1, forever = true })
-    p:Slider({ cvar = "hdBloomThreshold", label = "Halo For Ever : seuil", min = 0, max = 1, step = 0.01, default = 0.7, forever = true })
-    p:Slider({ cvar = "hdLvHaloGain", label = "Halo Lumenveil : force dans la brume", min = 0, max = 4, step = 0.05, default = 1 })
-    p:Slider({ cvar = "hdLvCfg_LampFog", label = "Halo Lumenveil : lumiere des lampes dans la brume", min = 0, max = 4, step = 0.02, default = 1 })
-    p:Slider({ cvar = "hdLvCfg_FarLights", label = "Halo Lumenveil : lampes lointaines", min = 0, max = 4, step = 0.02, default = 1 })
-    p:Check({ cvar = "hdLvTerrainWmo", label = "Ombres du relief : batiments inclus", tip = "Decoche : le sol seul." })
+    p:Section("Ray, Glow, and Shadow Settings", false)
+    p:Slider({ cvar = "hdRaysStrength", label = "For Ever Rays: strength", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdLvShaftGain", label = "Lumenveil Rays: strength", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdBloomStrength", label = "For Ever Glow: strength", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdBloomThreshold", label = "For Ever Glow: threshold", min = 0, max = 1, step = 0.01, default = 0.7, forever = true })
+    p:Slider({ cvar = "hdLvHaloGain", label = "Lumenveil Glow: strength in fog", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdLvCfg_LampFog", label = "Lumenveil Glow: lamp light in fog", min = 0, max = 4, step = 0.02, default = 1 })
+    p:Slider({ cvar = "hdLvCfg_FarLights", label = "Lumenveil Glow: distant lights", min = 0, max = 4, step = 0.02, default = 1 })
+    p:Check({ cvar = "hdLvTerrainWmo", label = "Terrain shadows: include buildings", tip = "Uncheck for terrain only." })
 
-    p:Section("Lumiere et couleurs For Ever", false)
-    p:Check({ cvar = "hdForever", label = "Lumieres For Ever" })
-    p:Check({ cvar = "hdGrade", label = "Etalonnage For Ever" })
-    p:Check({ cvar = "hdSunPath", label = "Soleil comme For Ever" })
-    p:Check({ cvar = "hdWmoLight", label = "Batiments For Ever" })
-    p:Slider({ cvar = "hdForeverLight", label = "Decor (1 For Ever, 0 WotLK)", min = 0, max = 1, step = 0.05, default = 1, forever = true })
-    p:Slider({ cvar = "hdTerrainLight", label = "Sol (1 For Ever, 0 WotLK, 2 test, 3 soleil)", min = 0, max = 3, step = 1, default = 1, forever = true })
-    p:Slider({ cvar = "hdLightAmbient", label = "Sol : force de l'ambiance", min = 0, max = 1.5, step = 0.05, default = 1, forever = true })
-    p:Slider({ cvar = "hdGradeStrength", label = "Etalonnage : force", min = 0, max = 2, step = 0.05, default = 1, forever = true })
-    p:Input({ cvar = "hdForeverForce", label = "For Ever force partout (0 = selon l'endroit, ex. 7624)" })
+    p:Section("For Ever Lighting and Color", false)
+    p:Check({ cvar = "hdForever", label = "For Ever Lights" })
+    p:Check({ cvar = "hdGrade", label = "For Ever Color Grading" })
+    p:Check({ cvar = "hdSunPath", label = "Terraineil comme For Ever" })
+    p:Check({ cvar = "hdWmoLight", label = "For Ever Building Lights" })
+    p:Slider({ cvar = "hdForeverLight", label = "Scenery (1 For Ever, 0 WotLK)", min = 0, max = 1, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdTerrainLight", label = "Terrain (1 For Ever, 0 WotLK, 2 test, 3 sun)", min = 0, max = 3, step = 1, default = 1, forever = true })
+    p:Slider({ cvar = "hdLightAmbient", label = "Terrain: ambient strength", min = 0, max = 1.5, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdGradeStrength", label = "Color Grading: strength", min = 0, max = 2, step = 0.05, default = 1, forever = true })
+    p:Input({ cvar = "hdForeverForce", label = "Strength For Ever everywhere (0 = location-based, e.g. 7624)" })
 
-    p:Section("Vue test et etat", false)
-    p:Slider({ cvar = "hdFogDebug", label = "Vue test (0 normal, 3 brume, 4 ombres)", min = 0, max = 4, step = 1, default = 0, forever = true })
+    p:Section("Debug View and Status", false)
+    p:Slider({ cvar = "hdFogDebug", label = "Debug view (0 normal, 3 fog, 4 shadows)", min = 0, max = 4, step = 1, default = 0, forever = true })
     p:Info(function() return Line("For Ever", "hdFogInfo") .. "\n" .. Line("Lumenveil", "hdLvInfo") end, 2)
 end },
 
-{ "lampes", "Lampes", function(p)
-    p:Header("Lampes")
-    p:Drop({ label = "Qui eclaire autour des lampes", current = LampMode, options = {
-        { text = "WotLK d'origine", apply = function() SetMany({ "hdLights", 0, "hdLvLamps", 0 }) end },
-        { text = "For Ever seul", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 0 }) end },
-        { text = "Lumenveil seul", apply = function() SetMany({ "hdLights", 0, "hdLvLamps", 1, "hdLvLampClasses", 30 }) end, avail = function() return Has("hdLvLamps") end },
-        { text = "For Ever + Lumenveil (murs des batiments)", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 1, "hdLvLampClasses", 4, "hdLvLampForever", 1 }) end, avail = function() return Has("hdLvLamps") end },
-        { text = "Sol For Ever + vraie lumiere Lumenveil", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 1, "hdLvLampClasses", 28, "hdLvLampForever", 0 }) end, avail = function() return Has("hdLvLampForever") end },
+{ "lampes", "Lights", function(p)
+    p:Header("Lights")
+    p:Drop({ label = "What lights the area around lamps", current = LampMode, options = {
+        { text = "Original WotLK", apply = function() SetMany({ "hdLights", 0, "hdLvLamps", 0 }) end },
+        { text = "For Ever only", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 0 }) end },
+        { text = "Lumenveil only", apply = function() SetMany({ "hdLights", 0, "hdLvLamps", 1, "hdLvLampClasses", 30 }) end, avail = function() return Has("hdLvLamps") end },
+        { text = "For Ever + Lumenveil (building walls)", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 1, "hdLvLampClasses", 4, "hdLvLampForever", 1 }) end, avail = function() return Has("hdLvLamps") end },
+        { text = "For Ever terrain + true Lumenveil lighting", apply = function() SetMany({ "hdLights", 1, "hdLvLamps", 1, "hdLvLampClasses", 28, "hdLvLampForever", 0 }) end, avail = function() return Has("hdLvLampForever") end },
     } })
-    p:Drop({ label = "Lanterne du joueur", current = LanternMode, options = {
-        { text = "Eteinte", apply = function() SetMany({ "hdLvLantern", 0 }) end },
-        { text = "Automatique (la nuit)", apply = function() SetMany({ "hdLvLantern", 1 }) end, avail = function() return Has("hdLvLantern") end },
-        { text = "Toujours allumee", apply = function() SetMany({ "hdLvLantern", 2 }) end, avail = function() return Has("hdLvLantern") end },
+    p:Drop({ label = "Player Lantern", current = LanternMode, options = {
+        { text = "Off", apply = function() SetMany({ "hdLvLantern", 0 }) end },
+        { text = "Automatic (at night)", apply = function() SetMany({ "hdLvLantern", 1 }) end, avail = function() return Has("hdLvLantern") end },
+        { text = "Always on", apply = function() SetMany({ "hdLvLantern", 2 }) end, avail = function() return Has("hdLvLantern") end },
     } })
-    p:Drop({ label = "Lumieres des sorts (couleur du sort)", current = function()
+    p:Drop({ label = "Spell Lights (spell color)", current = function()
         if not On("hdLvSpells") then return 1 end
         return (Has("hdLvSpellGround") and On("hdLvSpellGround")) and 3 or 2
     end, options = {
-        { text = "Aucune", apply = function() SetMany({ "hdLvSpells", 0, "hdLvSpellGround", 0 }) end },
-        { text = "Lumenveil (selon les reglages des lampes)", apply = function() SetMany({ "hdLvSpells", 1, "hdLvSpellGround", 0 }) end, avail = function() return Has("hdLvSpells") end },
-        { text = "Lumenveil partout, sol compris", apply = function() SetMany({ "hdLvSpells", 1, "hdLvSpellGround", 1 }) end, avail = function() return Has("hdLvSpellGround") end },
+        { text = "Nonee", apply = function() SetMany({ "hdLvSpells", 0, "hdLvSpellGround", 0 }) end },
+        { text = "Lumenveil (uses light settings)", apply = function() SetMany({ "hdLvSpells", 1, "hdLvSpellGround", 0 }) end, avail = function() return Has("hdLvSpells") end },
+        { text = "Lumenveil everywhere, including terrain", apply = function() SetMany({ "hdLvSpells", 1, "hdLvSpellGround", 1 }) end, avail = function() return Has("hdLvSpellGround") end },
     } })
 
-    p:Check({ cvar = "hdLvLampForever", label = "Lumenveil prend les couleurs For Ever", tip = "Decoche : les lampes Lumenveil gardent leurs propres couleurs, meme avec les lampes For Ever allumees." })
+    p:Check({ cvar = "hdLvLampForever", label = "Lumenveil uses For Ever colors", tip = "Uncheck to let Lumenveil lamps keep their own colors even when For Ever lights are enabled." })
     p:Reset({ "hdLvSpellGround", 0, "hdLvLampForever", 1, "hdLvLamps", 0, "hdLvLampClasses", 4, "hdLvSpells", 0, "hdLvLantern", 0, "hdLights", 1 })
 
-    p:Section("Reglages des lampes", false)
-    p:Slider({ cvar = "hdLights", label = "Lampes du sol (1 For Ever, 0 WotLK)", min = 0, max = 3, step = 1, default = 1 })
-    p:Slider({ cvar = "hdLvLampCount", label = "Lumenveil : nombre de lampes", min = 0, max = 128, step = 1, default = 32 })
-    p:Slider({ cvar = "hdLvLampGain", label = "Lumenveil : intensite", min = 0, max = 4, step = 0.05, default = 1 })
-    p:Slider({ cvar = "hdLvSpellGain", label = "Sorts : intensite", min = 0, max = 4, step = 0.05, default = 1 })
-    p:Header("Ce que Lumenveil eclaire")
-    p:Check({ label = "Murs des batiments", get = function() return ClassBit(4) end, on = function(c) SetClassBit(4, c) end })
-    p:Check({ label = "Sol (deja eclaire)", get = function() return ClassBit(2) end, on = function(c) SetClassBit(2, c) end })
-    p:Check({ label = "Interieurs", get = function() return ClassBit(8) end, on = function(c) SetClassBit(8, c) end })
-    p:Check({ label = "Modeles (deja eclaires)", get = function() return ClassBit(16) end, on = function(c) SetClassBit(16, c) end })
+    p:Section("Light Settings", false)
+    p:Slider({ cvar = "hdLights", label = "Lights du sol (1 For Ever, 0 WotLK)", min = 0, max = 3, step = 1, default = 1 })
+    p:Slider({ cvar = "hdLvLampCount", label = "Lumenveil: number of lights", min = 0, max = 128, step = 1, default = 32 })
+    p:Slider({ cvar = "hdLvLampGain", label = "Lumenveil: intensity", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdLvSpellGain", label = "Spells: intensity", min = 0, max = 4, step = 0.05, default = 1 })
+    p:Header("What Lumenveil Lights")
+    p:Check({ label = "Building walls", get = function() return ClassBit(4) end, on = function(c) SetClassBit(4, c) end })
+    p:Check({ label = "Terrain (deja eclaire)", get = function() return ClassBit(2) end, on = function(c) SetClassBit(2, c) end })
+    p:Check({ label = "Interiors", get = function() return ClassBit(8) end, on = function(c) SetClassBit(8, c) end })
+    p:Check({ label = "Models (already lit)", get = function() return ClassBit(16) end, on = function(c) SetClassBit(16, c) end })
 
-    p:Section("Couleur de la lanterne", false)
-    p:Slider({ cvar = "hdLvLanternR", label = "Rouge", min = 0, max = 4, step = 0.01, default = 1 })
-    p:Slider({ cvar = "hdLvLanternG", label = "Vert", min = 0, max = 4, step = 0.01, default = 0.55 })
-    p:Slider({ cvar = "hdLvLanternB", label = "Bleu", min = 0, max = 4, step = 0.01, default = 0.2 })
+    p:Section("Lantern Color", false)
+    p:Slider({ cvar = "hdLvLanternR", label = "Red", min = 0, max = 4, step = 0.01, default = 1 })
+    p:Slider({ cvar = "hdLvLanternG", label = "Green", min = 0, max = 4, step = 0.01, default = 0.55 })
+    p:Slider({ cvar = "hdLvLanternB", label = "Blue", min = 0, max = 4, step = 0.01, default = 0.2 })
 
-    p:Section("Etat", false)
-    p:Info(function() return Line("Lampes", "hdLvLampInfo") .. "\n" .. Line("Lumenveil", "hdLvInfo") .. "\n" .. Line("Lampes du sol", "hdLightsInfo") .. "\n" .. Line("Sorts", "hdLvSpellInfo") end, 5)
+    p:Section("Status", false)
+    p:Info(function() return Line("Lights", "hdLvLampInfo") .. "\n" .. Line("Lumenveil", "hdLvInfo") .. "\n" .. Line("Lights du sol", "hdLightsInfo") .. "\n" .. Line("Sorts", "hdLvSpellInfo") end, 5)
 end },
 
-{ "nature", "Eau et herbe", function(p)
-    p:Header("Eau et herbe")
-    p:Drop({ label = "Vent de l'herbe", current = function()
+{ "nature", "Water and Grass", function(p)
+    p:Header("Water and Grass")
+    p:Drop({ label = "Grass Wind", current = function()
         local wind, sx = On("hdGrassWind"), Has("hdSxWind") and On("hdSxWind")
         if not wind then return 1 elseif not sx then return 2 else return 3 end
     end, options = {
-        { text = "Aucun vent", apply = function() SetMany({ "hdGrassWind", 0, "hdSxWind", 0 }) end },
-        { text = "Waystone (ton vent actuel)", apply = function() SetMany({ "hdGrassWind", 1, "hdSxWind", 0 }) end },
-        { text = "Seyris (regle la force du vent Waystone selon la zone et la meteo)", apply = function() SetMany({ "hdGrassWind", 1, "hdSxWind", 1 }) end, avail = function() return Has("hdSxWind") end },
+        { text = "No wind", apply = function() SetMany({ "hdGrassWind", 0, "hdSxWind", 0 }) end },
+        { text = "Waystone (current wind)", apply = function() SetMany({ "hdGrassWind", 1, "hdSxWind", 0 }) end },
+        { text = "Seyris (adjusts Waystone wind strength by zone and weather)", apply = function() SetMany({ "hdGrassWind", 1, "hdSxWind", 1 }) end, avail = function() return Has("hdSxWind") end },
     } })
-    p:Check({ cvar = "hdWater", label = "Eau For Ever" })
-    p:Check({ cvar = "hdWaterReflect", label = "Reflets de l'eau" })
-    p:Check({ cvar = "hdGrassLight", label = "Herbe For Ever (lumiere)" })
-    p:Check({ cvar = "hdGrassReact", label = "L'herbe s'ecarte autour du joueur" })
+    p:Check({ cvar = "hdWater", label = "Water For Ever" })
+    p:Check({ cvar = "hdWaterReflect", label = "Water Reflections" })
+    p:Check({ cvar = "hdGrassLight", label = "For Ever Grass (lighting)" })
+    p:Check({ cvar = "hdGrassReact", label = "Grass parts around the player" })
     p:Reset({ "hdSxWind", 0, "hdGrassWind", 1, "hdWater", 1, "hdWaterReflect", 1, "hdGrassLight", 1 })
 
-    p:Section("Reglages du vent", false)
-    p:Slider({ cvar = "hdGrassWindStrength", label = "Force", min = 0, max = 5, step = 0.05, default = 1 })
-    p:Slider({ cvar = "hdGrassWindSpeed", label = "Vitesse des vagues", min = 0, max = 10, step = 0.1, default = 3 })
-    p:Slider({ cvar = "hdGrassWindDirection", label = "Direction (degres)", min = 0, max = 360, step = 5, default = 45 })
-    p:Slider({ cvar = "hdGrassReactRadius", label = "Ecartement : rayon", min = 0, max = 10, step = 0.5, default = 2 })
+    p:Section("Wind Settings", false)
+    p:Slider({ cvar = "hdGrassWindStrength", label = "Strength", min = 0, max = 5, step = 0.05, default = 1 })
+    p:Slider({ cvar = "hdGrassWindSpeed", label = "Wave Speed", min = 0, max = 10, step = 0.1, default = 3 })
+    p:Slider({ cvar = "hdGrassWindDirection", label = "Direction (degrees)", min = 0, max = 360, step = 5, default = 45 })
+    p:Slider({ cvar = "hdGrassReactRadius", label = "Grass Response: Radius", min = 0, max = 10, step = 0.5, default = 2 })
     p:Info(function() return Line("Seyris", "hdSxInfo") end, 2)
 
-    p:Section("Reglages de l'eau", false)
-    p:Slider({ cvar = "hdWaterBody", label = "Couleur propre (1 For Ever)", min = 0, max = 3, step = 0.05, default = 1, forever = true })
-    p:Slider({ cvar = "hdWaterDebug", label = "Vue test (0 normal, 1 prof., 3 reflets, 4 ecume)", min = 0, max = 7, step = 1, default = 0, forever = true })
-    p:Info(function() return Line("Etat", "hdWaterInfo") end, 3)
+    p:Section("Water Settings", false)
+    p:Slider({ cvar = "hdWaterBody", label = "Water Color (1 For Ever)", min = 0, max = 3, step = 0.05, default = 1, forever = true })
+    p:Slider({ cvar = "hdWaterDebug", label = "Debug view (0 normal, 1 depth, 3 reflections, 4 foam)", min = 0, max = 7, step = 1, default = 0, forever = true })
+    p:Info(function() return Line("Status", "hdWaterInfo") end, 3)
 
-    p:Section("Distance et densite de l'herbe (au relachement)", false)
-    p:Slider({ cvar = "farclip", label = "Distance de vue", min = 200, max = 2500, step = 25, default = 1277, release = true })
-    p:Slider({ cvar = "groundEffectDist", label = "Herbe : distance (140 WotLK)", min = 0, max = 280, step = 10, default = 140, release = true })
-    p:Slider({ cvar = "groundEffectDensity", label = "Herbe : densite (128 conseille)", min = 16, max = 256, step = 8, default = 128, release = true })
-    p:Slider({ cvar = "hdGrassBuffers", label = "Herbe : tampons (0 = WotLK)", min = 0, max = 4096, step = 128, default = 1536, release = true })
-    p:Slider({ cvar = "hdGrassPack", label = "Herbe : tampons a la bonne taille", min = 0, max = 1, step = 1, default = 1, release = true })
-    p:Slider({ cvar = "hdGrassFillBudget", label = "Herbe : remplissages par image", min = 0, max = 200, step = 5, default = 60, release = true })
-    p:Slider({ cvar = "hdGrassKeep", label = "Herbe : garder hors ecran", min = 0, max = 2000, step = 20, default = 600, release = true })
+    p:Section("Grass Distance and Density (apply on release)", false)
+    p:Slider({ cvar = "farclip", label = "View Distance", min = 200, max = 2500, step = 25, default = 1277, release = true })
+    p:Slider({ cvar = "groundEffectDist", label = "Grass: distance (140 WotLK)", min = 0, max = 280, step = 10, default = 140, release = true })
+    p:Slider({ cvar = "groundEffectDensity", label = "Grass: density (128 recommended)", min = 16, max = 256, step = 8, default = 128, release = true })
+    p:Slider({ cvar = "hdGrassBuffers", label = "Grass: buffers (0 = WotLK)", min = 0, max = 4096, step = 128, default = 1536, release = true })
+    p:Slider({ cvar = "hdGrassPack", label = "Grass: correctly sized buffers", min = 0, max = 1, step = 1, default = 1, release = true })
+    p:Slider({ cvar = "hdGrassFillBudget", label = "Grass: fills per frame", min = 0, max = 200, step = 5, default = 60, release = true })
+    p:Slider({ cvar = "hdGrassKeep", label = "Grass: retain off-screen", min = 0, max = 2000, step = 20, default = 600, release = true })
 end },
 
 { "fluidite", "FSR / DLSS", function(p)
-    p:Header("Fluidite")
-    p:Drop({ label = "Mise a l'echelle", current = UpscalerMode, options = {
-        { text = "Aucune", apply = function() SetMany({ "hdFSR", 0, "hdDLSS", 0 }); ApplyFsrMode() end },
+    p:Header("Performance")
+    p:Drop({ label = "Upscaling", current = UpscalerMode, options = {
+        { text = "Nonee", apply = function() SetMany({ "hdFSR", 0, "hdDLSS", 0 }); ApplyFsrMode() end },
         { text = "FSR 3.1 (AMD)", apply = function() SetMany({ "hdFSR", 1, "hdDLSS", 0 }); ApplyFsrMode() end, avail = function() return Has("hdFSR") end },
-        { text = "DLSS (NVIDIA RTX, a la place du FSR)", apply = function() SetMany({ "hdFSR", 0, "hdDLSS", 1 }); ApplyFsrMode() end, avail = function() return Has("hdDLSS") end },
+        { text = "DLSS (NVIDIA RTX, instead of FSR)", apply = function() SetMany({ "hdFSR", 0, "hdDLSS", 1 }); ApplyFsrMode() end, avail = function() return Has("hdDLSS") end },
     } })
-    p:Drop({ label = "Qualite", current = QualityMode, options = {
-        { text = "Natif (sans reduction)", apply = function() SetMany({ "hdFSRQuality", 0 }) end },
-        { text = "Qualite", apply = function() SetMany({ "hdFSRQuality", 1 }) end },
-        { text = "Equilibre", apply = function() SetMany({ "hdFSRQuality", 2 }) end },
+    p:Drop({ label = "Quality", current = QualityMode, options = {
+        { text = "Native (no upscaling)", apply = function() SetMany({ "hdFSRQuality", 0 }) end },
+        { text = "Quality", apply = function() SetMany({ "hdFSRQuality", 1 }) end },
+        { text = "Balanced", apply = function() SetMany({ "hdFSRQuality", 2 }) end },
         { text = "Performance", apply = function() SetMany({ "hdFSRQuality", 3 }) end },
     } })
-    p:Check({ cvar = "hdFSRFrameGeneration", label = "Generation d'images (environ x2)", on = function(c) Set("hdFSRFrameGeneration", c and 1 or 0); ApplyFsrMode() end })
+    p:Check({ cvar = "hdFSRFrameGeneration", label = "Frame Generation (about 2x)", on = function(c) Set("hdFSRFrameGeneration", c and 1 or 0); ApplyFsrMode() end })
     p:Reset({})
 
-    p:Section("Nettete", false)
-    p:Slider({ cvar = "hdFSRSharpness", label = "FSR (0 aucune, 1 max)", min = 0, max = 1, step = 0.05, default = 0.2, release = true })
-    p:Slider({ cvar = "hdDLSSSharpness", label = "DLSS (1 = max FSR, jusqu'a 2)", min = 0, max = 2, step = 0.05, default = 1, release = true })
+    p:Section("Sharpness", false)
+    p:Slider({ cvar = "hdFSRSharpness", label = "FSR (0 none, 1 max)", min = 0, max = 1, step = 0.05, default = 0.2, release = true })
+    p:Slider({ cvar = "hdDLSSSharpness", label = "DLSS (1 = max FSR, up to 2)", min = 0, max = 2, step = 0.05, default = 1, release = true })
 
-    p:Section("Mouvement (contre les trainees)", false)
-    p:Check({ cvar = "hdFSRObjectMotion", label = "Mouvement des objets" })
-    p:Check({ cvar = "hdFSRRigidMotion", label = "  Objets rigides" })
-    p:Check({ cvar = "hdFSRSkeletalMotion", label = "  Personnages, creatures" })
-    p:Check({ cvar = "hdFSRReactiveMasks", label = "Masques des transparences" })
-    p:Check({ cvar = "hdFSRDebugCheck", label = "Controle AMD (coute des FPS)" })
+    p:Section("Motion (reduces ghosting)", false)
+    p:Check({ cvar = "hdFSRObjectMotion", label = "Object Motion" })
+    p:Check({ cvar = "hdFSRRigidMotion", label = "    Rigid Objects" })
+    p:Check({ cvar = "hdFSRSkeletalMotion", label = "    Characters, Creatures" })
+    p:Check({ cvar = "hdFSRReactiveMasks", label = "Transparency Masks" })
+    p:Check({ cvar = "hdFSRDebugCheck", label = "AMD Check (costs FPS)" })
 
-    p:Section("Etat", false)
+    p:Section("Status", false)
     p:Info(function()
-        return Line("Mise a l'echelle", (Has("hdDLSS") and On("hdDLSS")) and "hdDLSSInfo" or "hdFSRInfo") .. "\n" .. Line("Images generees", "hdFSRFrameGenerationInfo")
+        return Line("Upscaling", (Has("hdDLSS") and On("hdDLSS")) and "hdDLSSInfo" or "hdFSRInfo") .. "\n" .. Line("Generated Frames", "hdFSRFrameGenerationInfo")
     end, 4)
 end },
 
-{ "avance", "Avance", function(p)
-    p:Header("Lumenveil : reglages avances")
-    p:Note("Pour experimenter. Sans effet tant que la case Lumenveil correspondante est eteinte.")
+{ "avance", "Advanced", function(p)
+    p:Header("Lumenveil: Advanced Settings")
+    p:Note("For experimentation. These settings have no effect while the corresponding Lumenveil option is off.")
     p:Reset({})
-    p:Section("Les curseurs", false)
+    p:Section("Sliders", false)
     for _, d in ipairs(ADVANCED) do
         p:Slider({ cvar = d[1], label = d[2], min = d[3], max = d[4], step = d[5], default = d[6] })
     end
