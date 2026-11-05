@@ -1,20 +1,19 @@
-﻿WoW HD (client 3.3.5a avec rendu Vulkan HD)
-============================================
+WoW HD (WoW 3.3.5a client with Vulkan HD rendering)
+=====================================================
 
-Il te faut :
-- un client World of Warcraft 3.3.5a (version 12340) complet, qui marche déjà ;
-- Windows 10 ou 11, 64 bits ;
-- une carte graphique compatible Vulkan, avec un pilote à jour.
+Requirements:
+- A complete, working World of Warcraft 3.3.5a (build 12340) client
+- Windows 10 or 11, 64-bit
+- A Vulkan-compatible graphics card with an up-to-date driver
 
-Installation :
-1. Dézippe tout ce pack, par exemple sur ton bureau.
-2. Double-clique sur Installer.bat.
-3. Si on te le demande, choisis le dossier de ton client WoW (celui qui contient Wow.exe).
-4. Tape l'adresse de ton serveur, ou appuie sur Entrée pour garder celle de ton client.
-5. Lance le jeu avec le raccourci « WoW HD » sur ton bureau.
+Installation:
+1. Extract this entire package, for example to your desktop.
+2. Double-click Installer.bat.
+3. If prompted, select your WoW client folder (the one containing Wow.exe).
+4. Enter your server address, or press Enter to keep the address already configured in your client.
+5. Launch the game with the WoW HD desktop shortcut.
 
-L'installeur ajoute WowClient64.exe à côté de Wow.exe, sans rien supprimer.
-Pour revenir au jeu d'origine, lance simplement Wow.exe.
+The installer adds WowClient64.exe beside Wow.exe and does not remove anything.
+To return to the original game, launch Wow.exe.
 
-Si le jeu ne démarre pas, mets à jour le pilote de ta carte graphique,
-puis regarde les fichiers du dossier Logs de ton client.
+If the game does not start, update your graphics driver and check the files in your client's Logs folder.
