@@ -1,5 +1,5 @@
-# Reglages graphiques HD ecrits dans WTF\Config.wtf par Installer.ps1.
-# Une ligne par reglage : SET nom "valeur". Les lignes avec # sont ignorees.
+# HD graphics settings written to WTF\Config.wtf by Installer.ps1.
+# One setting per line: SET name "value". Lines beginning with # are ignored.
 SET gxApi "vulkan"
 SET farclip "1275"
 SET specular "1"
