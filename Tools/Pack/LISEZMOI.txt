@@ -13,6 +13,9 @@ Installation:
 4. Enter your server address, or press Enter to keep the address already configured in your client.
 5. Launch the game with the WoW HD desktop shortcut.
 
+
+The in-game WaystoneHD graphics panel is in English. Open it with /hd or click the gear beside the menu buttons.
+
 The installer adds WowClient64.exe beside Wow.exe and does not remove anything.
 To return to the original game, launch Wow.exe.
 
