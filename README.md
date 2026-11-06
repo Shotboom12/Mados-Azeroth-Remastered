@@ -2,10 +2,10 @@ This is a modification of Saty's WoTLK decompile.
 
 ## Install the HD version (players)
 
-1. Download the latest `WoW-HD-YYYY-MM-DD.zip` from this repository's [Releases](../../releases).
-2. Extract the ZIP, then double-click `Installer.bat`.
-3. If prompted, select your 3.3.5a client folder (the one containing `Wow.exe`).
-4. Launch the game with the **WoW HD** desktop shortcut.
+1. Download the latest `Azeroth.Remastered-YYYY-MM-DD.zip` from this repository's [Releases](../../releases).
+2. Extract the ZIP, then double-click `Installer.bat`. The guide, installer prompts, recommended graphics settings, and WaystoneHD panel are in English.
+3. If prompted, select your 3.3.5a client folder (the one containing the `Data` folder).
+4. Launch the game with the **Azeroth Remastered** desktop shortcut.
 
 You need a complete WoW 3.3.5a (12340) client, Windows 10 or 11 (64-bit), and a Vulkan-compatible graphics card with an up-to-date driver. The installer does not remove the original game; `Wow.exe` remains untouched.
 

@@ -1,5 +1,5 @@
 -- Waystone HD : petit bouton engrenage colle a la barre des micro-boutons (personnage, sorts, ..., menu, aide).
--- Clic gauche = ouvre / ferme le panneau /hd. (ne plus taper /hd).
+-- Clic gauche = ouvre / ferme le panneau /hd. HD 2026-11-02, a la demande de Max (ne plus taper /hd).
 -- Il suit le dernier micro-bouton a droite (barre de Blizzard ou celle de DragonUI), meme apres un deplacement.
 local MICRO = { "CharacterMicroButton", "SpellbookMicroButton", "TalentMicroButton", "AchievementMicroButton",
     "QuestLogMicroButton", "SocialsMicroButton", "PVPMicroButton", "LFDMicroButton", "MainMenuMicroButton",
@@ -26,7 +26,7 @@ end)
 button:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
     GameTooltip:SetText("Waystone HD")
-    GameTooltip:AddLine("Reglages graphiques HD (comme /hd)", 1, 1, 1)
+    GameTooltip:AddLine("HD graphics settings (same as /hd)", 1, 1, 1)
     GameTooltip:Show()
 end)
 button:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -72,3 +72,4 @@ watcher:SetScript("OnUpdate", function(self, elapsed)
     wait = 1
     if not InCombatLockdown() then Place() end
 end)
+
