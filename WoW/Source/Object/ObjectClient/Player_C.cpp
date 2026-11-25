@@ -12048,6 +12048,13 @@ int32_t Packet_SMSG_GUILD_EVENT(void* param, NETMESSAGE msgId, uint32_t time, CD
 // VERIFY: 4f7b81f9 manual
 // OFFSET: 0x007261B0
 bool CGPlayer_C::IsInFlyableZone(int32_t checkContinent) {
+    // Claude 2026-11-12 lot CF1 : avec hdCataFlight, licence de vol sur les cartes 0 et 1 comme Cataclysm 15595
+    // (FlyingMountAllowed : 90267 ; ici hdCataFlightLicense). checkContinent garde son sens (attribut ExG 0x400000).
+    if (CataFlightEnabled() && (CGGameUI::m_iCurrentMapID == 0 || CGGameUI::m_iCurrentMapID == 1)) {
+        uint32_t license = CataFlightLicenseSpell();
+        return IsInFlyableArea() && (!(this->m_obj->m_type & TYPEMASK_PLAYER) || !checkContinent || !license || HasSpell(license));
+    }
+
     return IsInFlyableArea() && (!(this->m_obj->m_type & TYPEMASK_PLAYER) || !checkContinent || CGGameUI::m_iCurrentMapID != 571 || HasSpell(static_cast<uint32_t>(54197)));
 }
 

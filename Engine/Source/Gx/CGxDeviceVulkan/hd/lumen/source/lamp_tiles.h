@@ -12,9 +12,9 @@ namespace HD::Lumen::Source {
 
 constexpr int kLampTilePixels = 64;
 constexpr int kLampTileBlockWidth = 16;
-constexpr int kLampTileBlockHeight = 8;
+constexpr int kLampTileBlockHeight = 16; // Claude LV41: was 8 (127 lamps a tile before the every-lamp fallback; now 255)
 constexpr int kLampTileCapacity = kLampTileBlockWidth * kLampTileBlockHeight - 1;
-constexpr uint8_t kLampTileOverflow = 255;
+constexpr uint16_t kLampTileOverflow = 0xFFFF; // Claude LV41: 16-bit entries (R16_UNORM), was 8-bit
 constexpr float kLampTileMarginPixels = 2.0f;
 constexpr float kLampTileMarginShare = 0.01f;
 constexpr float kLampTileNearDepth = 0.1f;
@@ -22,7 +22,8 @@ constexpr float kFarCoreSpreadForTiles = 3.0f;
 constexpr float kFarCoreYardsForTiles = 0.4f;
 
 
-static_assert(kLampSlots < kLampTileOverflow, "a slot index fits a byte below the overflow mark");
+static_assert(kLampSlots < kLampTileOverflow, "a slot index fits 16 bits below the overflow mark");
+static_assert(kLampTileCapacity < kLampTileOverflow, "a count fits below the overflow mark");
 
 enum LampTileList
 {
@@ -67,11 +68,11 @@ public:
     int TilesY() const { return m_tilesY; }
     uint32_t TextureWidth() const { return static_cast<uint32_t>(m_tilesX * kLampTileBlockWidth); }
     uint32_t TextureHeight() const { return static_cast<uint32_t>(m_tilesY * kLampTileBlockHeight * kLampTileLists); }
-    void Write(unsigned char* bits, int pitch, int bytesPerTexel) const;
     void Empty();
     int Count(LampTileList list, int tileX, int tileY) const;
     int Entry(LampTileList list, int tileX, int tileY, int index) const;
-    const std::vector<uint8_t>& Texels() const { return m_texels; }
+    const std::vector<uint16_t>& Texels() const { return m_texels; } // Claude LV41: 16-bit
+    size_t TexelBytes() const { return m_texels.size() * sizeof(uint16_t); }
     const LampTileStats& Stats() const { return m_stats; }
     void NoteWriteMs(double ms) { m_stats.writeMs = ms; }
     void NoteBuildMs(double ms) { m_stats.buildMs = ms; }
@@ -86,8 +87,7 @@ private:
     float m_width = 0.0f;
     float m_height = 0.0f;
     std::vector<uint16_t> m_counts[kLampTileLists];
-    std::vector<uint8_t> m_texels;
-    mutable std::vector<uint8_t> m_row;
+    std::vector<uint16_t> m_texels;
     LampTileStats m_stats = {};
 };
 

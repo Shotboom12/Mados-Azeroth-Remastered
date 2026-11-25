@@ -11,6 +11,8 @@ struct CGxPool;
 class CMapChunkLiquidBuf;
 class CMapChunkLiquid;
 
+struct HdLiquidPage; // Claude B3
+
 class CMapChunkLiquidBuf {
     public:
     static TSList<CMapChunkLiquid, TSGetExplicitLink<CMapChunkLiquid> > s_freeLists;
@@ -29,6 +31,8 @@ class CMapChunkLiquidBuf {
     /* 0018 */ CGxPool* m_vertexPool;
     /* 001C */ CGxPool* m_indexPool;
     /* 0020 */ TSLink<CMapChunkLiquidBuf> m_link;
+    HdLiquidPage* m_hdPage;   // Claude B3: its two pools are this page's (shared); null: its own
+    uint32_t m_hdSlot;
 
     CMapChunkLiquidBuf();
     ~CMapChunkLiquidBuf();

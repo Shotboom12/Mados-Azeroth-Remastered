@@ -310,7 +310,8 @@ private:
     // it changes (the first 40 changes), its counters every 600 frames.
     static void LogMaterial() {
         static const char* const kKept[] = {"camera in a liquid", "runtime files or shaders", "proxy textures", "no scene copy",
-                                            "not a Cata water type", "WMO water", "textures", "constants", "vertex buffers"};
+                                            "no Cata row", "WMO water", "textures", "constants", "vertex buffers",
+                                            "services down", "magma noise not ready"};
         char kept[512];
         size_t used = 0;
         kept[0] = 0;
@@ -320,7 +321,7 @@ private:
                 if (n > 0) used += static_cast<size_t>(n);
             }
         }
-        wxl::ScriptMgr::Log(WXL_LOG_INFO, "cata water: material: %u water draw(s) with the Cata shaders; kept 3.3.5: %s; status \"%s\"",
+        wxl::ScriptMgr::Log(WXL_LOG_INFO, "cata water: material: %u water draw(s) with the Cata shaders; NOT drawn (Claude BLZ1, no 3.3.5 material): %s; status \"%s\"",
                             g_gxCataWater.m_drawn, used ? kept : "none", g_gxCataWater.m_info);
     }
     void Record(const WXL_VkStageContext& ctx) {
@@ -396,7 +397,6 @@ DebugView g_debug;
 Ripples g_ripples;   // HD: tranche 2
 bool g_ripplesUp = false;
 bool g_up = false;
-std::atomic<int32_t> g_water(0);
 std::atomic<int32_t> g_debugMode(0);
 PFN_vkDeviceWaitIdle g_waitIdle = nullptr;
 VkDevice g_device = VK_NULL_HANDLE;
@@ -404,18 +404,12 @@ VkDevice g_device = VK_NULL_HANDLE;
 void Apply() {
     if (!g_up) return;
     const int32_t debug = g_debugMode.load();
-    const bool water = g_water.load() != 0;
-    g_capture.Enable(water || debug != 0);
-    g_mirror.Enable(water || debug == 3);
-    g_bridge.Enable(water);
-    if (g_ripplesUp) g_ripples.Enable(water);   // HD: tranche 2
+    // AR1: Cata water always on (no hdCataWater: the 3.3.5 water is never chosen)
+    g_capture.Enable(true);
+    g_mirror.Enable(true);
+    g_bridge.Enable(true);
+    if (g_ripplesUp) g_ripples.Enable(true);   // HD: tranche 2
     g_debug.Enable(debug >= 1 && debug <= 3 ? static_cast<uint32_t>(debug) : 0u);
-}
-
-bool WaterCallback(CVar*, const char*, const char* value, void*) {
-    g_water.store(value && value[0] == '1' ? 1 : 0);
-    Apply();
-    return true;
 }
 
 bool DebugCallback(CVar*, const char*, const char* value, void*) {
@@ -428,11 +422,8 @@ void RegisterCVars() {
     static bool registered = false;
     if (registered) return;
     registered = true;
-    CVar* water = CVar::Register("hdCataWater", "HD: 1 = Cata water (Vulkan; steps A-B: copies the scene before the water and draws its reflection)",
-                                 1, "0", WaterCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar* debug = CVar::Register("hdCataDebug", "HD: Cata water check (Vulkan): 1 = the copied scene in the lower right, 2 = its depth, 3 = the reflection",
                                  1, "0", DebugCallback, CATEGORY_GRAPHICS, false, nullptr, false);
-    if (water) g_water.store(water->m_intValue == 1 ? 1 : 0);
     if (debug) g_debugMode.store(debug->m_intValue >= 1 && debug->m_intValue <= 3 ? debug->m_intValue : 0);
 }
 }
@@ -473,7 +464,7 @@ void Service::Startup() {
     g_up = true;
     Apply();
     wxl::ScriptMgr::Log(WXL_LOG_INFO, "cata water: steps A-B up: scene copy and reflection at BeforeLiquids (%s), reflection %s, "
-                        "hdCataDebug %d", g_water.load() || g_debugMode.load() ? "on" : "off until hdCataWater 1 or hdCataDebug 1/2/3",
+                        "hdCataDebug %d", "on",
                         mirror ? "ready" : "unavailable", g_debugMode.load());
 }
 

@@ -17,6 +17,7 @@
 #pragma once
 
 #include "common/Simd.hpp"
+#include "vulkan/GpuSceneData.hpp"
 #include "vulkan/Texture.hpp"
 #include "vulkan/Vk.hpp"
 
@@ -193,6 +194,36 @@ namespace wxlvk::draw
         const float (*paletteRows)[4];
         uint32_t     paletteCount;
         uint64_t     paletteSerial;
+        /// Claude PERF2: an M2 batch drawn by CM2SceneRender::DrawBatch: the farthest of its skin section's own
+        /// vertices from the model's origin (bind pose, model units) and the section's bone count (its palette rows
+        /// c31 .. c31 + 3 n). modelBones 0: unknown (any other draw), the bound keeps its fixed reach.
+        float        modelReach;
+        uint32_t     modelBones;
+        /// Claude INST1: a hardware-instanced sun-shadow M2 draw (M2Model.cpp RenderBatchShadowMap): instanceCount
+        /// copies of the section, copy i reading the palette instanceRows rows further (the module's .inst variant).
+        /// 0 / 1: an ordinary draw. Written by the reader for every draw (after Reset's zeroed head).
+        uint32_t     instanceCount;
+        uint32_t     instanceRows;
+        /// Claude voie B: a GPU-driven draw of fixed casters. The GPU wrote `gpuDrawCount` VkDrawIndexedIndirectCommand
+        /// records at `gpuArgsOffset` in `gpuArgs` (each command's firstIndex / vertexOffset / firstInstance its own, the
+        /// draw's own fields only choose the pipeline and the bindings); the vertex module is the .bones.gpu twin and its
+        /// palette (set 2) is `gpuPaletteSet` at `gpuPaletteOffset`, `instanceRows` rows a copy. 0: an ordinary draw.
+        uint32_t     gpuIndirect;
+        VkBuffer     gpuArgs;
+        uint32_t     gpuArgsOffset;
+        uint32_t     gpuDrawCount;
+        VkDescriptorSet gpuPaletteSet;
+        uint32_t     gpuPaletteOffset;
+        /// Claude B2: a group of the main scene's fixed doodads (the .gpus twin; its copies noted one by one by the
+        /// capture, with the palette's 3600-byte set below at their rows). Null: a sun-shadow group (voie B, B1).
+        const HD::GpuSceneData::Draw* gpuScene;
+        VkDescriptorSet gpuReplaySet;
+        /// Claude B3 (the water): `gpuDrawCount` commands at `gpuArgsOffset` of `gpuArgs` in place of the one draw: the same
+        /// buffers, constants, textures and state, drawn in order. 0: an ordinary draw (or a gpuIndirect one).
+        uint32_t gpuMulti;
+        /// Claude B3: a group of terrain chunks (the .gput twins, the engine's own buffers): one command a chunk, its rows
+        /// (HD::GpuTerrainData::kRows a chunk) in `gpuPaletteSet` at its firstInstance. Null: any other draw.
+        const HD::GpuTerrainData::Draw* gpuTerrain;
 
         // --- fixed function: vs == "" (the register file) ------------------------------------
         //

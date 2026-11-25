@@ -16,6 +16,7 @@
 
 
 #include "native/api/Internal.hpp"
+#include "capture/Aside.hpp"   // Claude CPU-A
 
 namespace wxlvk::native::render::detail
 {
@@ -79,6 +80,8 @@ namespace wxlvk::native::render::detail
         if (!desc || desc->structSize < offsetof(WXL_VkReplayDesc, minIndexCount)) return 0;
         return wxlvk::capture::Replay(*desc, stats) ? 1 : 0;
     }
+
+    VkCommandBuffer __cdecl BeginReplayAside() { return wxlvk::capture::aside::Begin(); }   // Claude CPU-A (capture/Aside.cpp)
 
     int __cdecl ReplayWorldViews(const WXL_VkReplayViewsDesc* desc, WXL_VkReplayStats* stats)
     {
@@ -280,6 +283,18 @@ namespace wxlvk::native::render::detail
     {
         if (!out) return 0;
         return wxlvk::native::render::framestats::Get(*out) ? 1 : 0;
+    }
+
+    // Claude LV28: an engine texture's image as the draws bind it (src/native/Textures.cpp ResolveTexture).
+    int __cdecl GetTextureView(const void* gxTex, VkImageView* view, VkImageLayout* layout)
+    {
+        if (!gxTex || !view || !layout) return 0;
+        const wxlvk::vk::texture::Image* image = nullptr;
+        if (!wxlvk::native::impl::ResolveTexture(gxTex, image) || !image || image->view == VK_NULL_HANDLE || image->cube
+            || image->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) return 0;
+        *view   = image->view;
+        *layout = image->layout;
+        return 1;
     }
 
     // Tree wind (src/vulkan/Wind.hpp).

@@ -460,6 +460,35 @@ int32_t CM2Shared::SetVertices(uint32_t texCoordIndex) {
     return 1;
 }
 
+// Claude voie B (23 nov 2026): copy 0 of SetVertices (shaders on: the vertex, its bone indices + 0) and of SetIndices
+// (shared vertices: offset 0), the same bytes the CPU path's buffers hold for its first copy.
+bool CM2Shared::HdGpuFixedMesh(std::vector<uint8_t>& vertices, std::vector<uint16_t>& indices, std::vector<uint32_t>& sectionFirst) const {
+    const M2SkinProfile* skin = this->m_skinData;
+    if (!skin || !this->m_data || !this->m_skinSections) return false;
+    const uint32_t vertexCount = skin->m_vertices.m_count;
+    vertices.assign(size_t(vertexCount) * sizeof(M2Vertex), 0);
+    M2Vertex* out = reinterpret_cast<M2Vertex*>(vertices.data());
+    for (uint32_t i = 0; i < skin->m_skinSections.m_count; i++) {
+        const M2SkinSection* section = &skin->m_skinSections[i];
+        const uint32_t end = section->m_vertexStart + section->m_vertexCount;
+        if (end > vertexCount) return false;
+        for (uint32_t j = section->m_vertexStart; j < end; j++) {
+            memcpy(&out[j], &this->m_data->m_vertices[skin->m_vertices[j]], sizeof(M2Vertex));
+            *reinterpret_cast<uint32_t*>(&out[j].m_indices) = *reinterpret_cast<const uint32_t*>(&skin->m_bones[j]);
+        }
+    }
+    indices.clear();
+    sectionFirst.assign(skin->m_skinSections.m_count, 0);
+    for (uint32_t i = 0; i < skin->m_skinSections.m_count; i++) {
+        const uint32_t start = skin->m_skinSections[i].m_indexStart;
+        sectionFirst[i] = static_cast<uint32_t>(indices.size());
+        for (uint32_t j = 0; j < this->m_skinSections[i].m_indexCount; j++) {
+            indices.push_back(static_cast<uint16_t>(0 + skin->m_indices[start + j]));
+        }
+    }
+    return true;
+}
+
 // VERIFY: 76031c3f manual
 // OFFSET: 0x00836600
 CShaderEffect* CM2Shared::GetEffect(uint32_t textureCount, uint16_t shader, uint16_t textureCoordComboIndex) {

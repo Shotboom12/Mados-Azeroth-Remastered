@@ -554,6 +554,7 @@ const Mirror::Pipe* Mirror::PipeFor(uint32_t entry) {
         p.layout = src.base.layout;
         p.bones = src.base.bones;
         p.wind = src.base.wind;
+        p.table = src.base.table;   // Claude B3
         p.failed = false;
         ++stats_.pipelines;
         return &p;
@@ -716,7 +717,7 @@ void Mirror::Record(const WXL_VkStageContext& ctx) {
 
         VkPipeline boundPipe = VK_NULL_HANDLE;
         VkPipelineLayout boundLayout = VK_NULL_HANDLE;
-        VkDescriptorSet boundSet0 = VK_NULL_HANDLE, boundRing = VK_NULL_HANDLE, boundBones = VK_NULL_HANDLE;
+        VkDescriptorSet boundSet0 = VK_NULL_HANDLE, boundRing = VK_NULL_HANDLE, boundBones = VK_NULL_HANDLE, boundTable = VK_NULL_HANDLE;
         uint32_t boundRingOffset = 0xFFFFFFFFu, boundBonesOffset = 0xFFFFFFFFu;
         for (uint32_t i = 0; i < count; ++i) {
             const Draw& dr = draws[i];
@@ -732,7 +733,7 @@ void Mirror::Record(const WXL_VkStageContext& ctx) {
             if (boundLayout != p->layout) {
                 // A new layout disturbs every set and the push range: bind and push them all again.
                 boundLayout = p->layout;
-                boundSet0 = boundRing = boundBones = VK_NULL_HANDLE;
+                boundSet0 = boundRing = boundBones = boundTable = VK_NULL_HANDLE;
                 boundRingOffset = boundBonesOffset = 0xFFFFFFFFu;
                 d.CmdPushConstants(ctx.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT, p->wind ? sizeof dr.windPush : 0u,
                                    16 * sizeof(float), m);
@@ -744,10 +745,17 @@ void Mirror::Record(const WXL_VkStageContext& ctx) {
                 boundRing = dr.ring;
                 boundRingOffset = dr.ringOffset;
             }
-            if (p->bones && (boundBones != dr.bones || boundBonesOffset != dr.bonesOffset)) {
-                d.CmdBindDescriptorSets(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 2, 1, &dr.bones, 1, &dr.bonesOffset);
-                boundBones = dr.bones;
-                boundBonesOffset = dr.bonesOffset;
+            // Claude B2: a scene doodad's copy draws with its GPU twin: the whole palette, at its own instance.
+            const VkDescriptorSet bones = dr.palette ? dr.palette : dr.bones;
+            const uint32_t bonesOffset = dr.palette ? 0u : dr.bonesOffset;
+            if (p->bones && (boundBones != bones || boundBonesOffset != bonesOffset)) {
+                d.CmdBindDescriptorSets(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 2, 1, &bones, 1, &bonesOffset);
+                boundBones = bones;
+                boundBonesOffset = bonesOffset;
+            }
+            if (p->table && boundTable != pipelines::TableSet()) {   // Claude B3
+                boundTable = pipelines::TableSet();
+                d.CmdBindDescriptorSets(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 3, 1, &boundTable, 0, nullptr);
             }
             if (p->wind) {
                 d.CmdBindDescriptorSets(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 3, 1, &dr.windSet, 0, nullptr);
@@ -757,7 +765,14 @@ void Mirror::Record(const WXL_VkStageContext& ctx) {
             d.CmdBindVertexBuffers(ctx.cmd, 0, dr.vbCount, dr.vbs, zeros);
             if (dr.indexed) {
                 d.CmdBindIndexBuffer(ctx.cmd, dr.ib, 0, VK_INDEX_TYPE_UINT16);
-                d.CmdDrawIndexed(ctx.cmd, dr.count, 1, dr.firstIndex, dr.vertexOffset, 0);
+                // Claude B2 / B3: a GPU-driven group whole: its records are its indirect commands, in the same order.
+                if (dr.groupArgs && dr.groupRecords && i + dr.groupRecords <= count) {
+                    d.CmdDrawIndexedIndirect(ctx.cmd, dr.groupArgs, dr.groupOffset, dr.groupCommands, sizeof(VkDrawIndexedIndirectCommand));
+                    i += dr.groupRecords - 1;
+                    drawn += dr.groupRecords;
+                    continue;
+                }
+                d.CmdDrawIndexed(ctx.cmd, dr.count, 1, dr.firstIndex, dr.vertexOffset, dr.instance);
             } else {
                 d.CmdDraw(ctx.cmd, dr.count, 1, static_cast<uint32_t>(dr.vertexOffset), 0);
             }

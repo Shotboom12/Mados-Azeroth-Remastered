@@ -19,6 +19,7 @@
 #include "native/Engine.hpp"
 #include "native/Native.hpp"
 #include "native/Present.hpp"
+#include "native/record/RecordThread.hpp" // Claude CPU-B
 #include "vulkan/Context.hpp"
 #include "vulkan/Loader.hpp"
 
@@ -169,7 +170,8 @@ namespace wxlvk::native::impl
         // A clear that begins the pass over its whole area is the pass's load op; `folded` says
         // which aspects that took, and only the others are recorded below.
         uint32_t        folded = 0;
-        VkCommandBuffer cmd    = present::PassClearing(pending, folded);
+        bool            queued = false;   // Claude CPU-B: the pass is the record thread's queue's (hdVkPassQueue)
+        VkCommandBuffer cmd    = present::PassClearing(pending, folded, &queued);
         if (!cmd)
         {
             ++g_clearsSkipped;
@@ -200,6 +202,12 @@ namespace wxlvk::native::impl
         VkClearRect r = {};
         r.rect       = rect;
         r.layerCount = 1;
+        if (queued)
+        {
+            if (present::QueueClear(n, a, r)) return;   // Claude CPU-B: in order, after the begin
+            wxlvk::recordthread::DrainFor(wxlvk::recordthread::Boundary::Pass);
+            wxlvk::recordthread::Drain();
+        }
         context::Get()->dapi->CmdClearAttachments(cmd, n, a, 1, &r);
     }
 

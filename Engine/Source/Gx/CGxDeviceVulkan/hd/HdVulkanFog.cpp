@@ -3,7 +3,7 @@
 // HD: HdFog.cpp port. No dependency on the Cata water or the AO module.
 #include "HdVulkanFog.h"
 #if defined(WOWDECOMP_LUMEN) && !defined(HD_FOG_STANDALONE)
-#include "lumen/LvClient.h" // HD 2026-11-02 kit R1 lot L1: R2 boundaries (point 5)
+#include "lumen/LvClient.h" // Claude 2026-11-02 kit R1 lot L1: R2 boundaries (point 5)
 namespace {bool LumenComposedFog(uint64_t s){return HD::Lumen::Client::ComposedFog(s);}bool LumenNeedsBeforeSpells(){return HD::Lumen::Client::NeedsBeforeSpells();}}
 #else
 namespace {bool LumenComposedFog(uint64_t){return false;}bool LumenNeedsBeforeSpells(){return false;}} // WOWDECOMP_LUMEN OFF: exactly the old fog
@@ -19,7 +19,7 @@ namespace {bool LumenComposedFog(uint64_t){return false;}bool LumenNeedsBeforeSp
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Types.h"
-#include "Engine/Source/Gx/GxSeam.h" // HD: g_gxCataPlane, read only
+#include "Engine/Source/Gx/GxSeam.h" // HD (Claude): g_gxCataPlane, read only
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
@@ -195,7 +195,7 @@ bool Effect::Record(const WXL_VkStageContext& ctx,const Parameters& parameters,c
     for(int i=0;i<3;++i) shadows=shadows && maps.view[i] && (maps.layout[i]==VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
         maps.layout[i]==VK_IMAGE_LAYOUT_GENERAL || maps.layout[i]==VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     p.r[33].x=shadows?1.0f:0;p.r[33].y=shadows&&maps.comparison?1.0f:0;
-    // HD: this frame's water plane (the liquids write no depth): the fog stops at the surface.
+    // HD (Claude): this frame's water plane (the liquids write no depth): the fog stops at the surface.
     const bool plane=g_gxCataPlane.m_valid&&std::isfinite(g_gxCataPlane.m_height);
     p.extra.z=plane?g_gxCataPlane.m_height:0;p.extra.w=plane?1.0f:0;
     std::memcpy(slot.buffer.mapped,&p,sizeof p);s->api->FlushBuffer(slot.handle);
@@ -303,12 +303,11 @@ float Clamp(float x,float lo,float hi) {return std::isfinite(x)?std::clamp(x,lo,
     // HD: the fog where the camera is: the zone light, then the nearby area lights blended in by
     // distance (same falloff as DayNight::BlendAreaLight). Lights Forever does not have fade the fog out.
     // Returns how much Forever fog there is here (0 = none).
-    float CurrentForeverFog(HD::ForeverFog& fog) {
+    // Claude 2026-11-13 lot LV10: same blend at any band time and storm (hdLvDensityAdapt reads the whole day).
+    float CurrentForeverFogAt(HD::ForeverFog& fog, float time, float storm) {
         const DayNight::DNInfo& info = DayNight::g_dnInfo;
         const TSGrowableArray<const LightRec*>& lights = DayNight::g_areaLights;
         if (!lights.m_count) return 0.0f;
-        float time = HD::DayNightBandTime(info.m_dayProgression * 2880.0f);
-        float storm = info.m_stormBlend;
 
         bool have = LightFog(lights.m_data[0], time, storm, fog);
         float strength = have ? 1.0f : 0.0f;
@@ -355,6 +354,12 @@ float Clamp(float x,float lo,float hi) {return std::isfinite(x)?std::clamp(x,lo,
         return have ? strength : 0.0f;
     }
 
+    // HD: the fog where the camera is, now (unchanged by lot LV10).
+    float CurrentForeverFog(HD::ForeverFog& fog) {
+        const DayNight::DNInfo& info = DayNight::g_dnInfo;
+        return CurrentForeverFogAt(fog, HD::DayNightBandTime(info.m_dayProgression * 2880.0f), info.m_stormBlend);
+    }
+
 
 void Info(const char* value) {if(info && std::strcmp(lastInfo,value)){info->Set(value,true,false,false,false);lastInfo=value;}}
 CVar* Var(const char* name,const char* help,const char* value,uint32_t flags=1) {
@@ -382,8 +387,15 @@ ShadowMaps Maps(uint64_t serial) {
     }
     result.serial=serial;return result;
 }
+// AR1: never no fog of ours: the For Ever fog is on with hdFog 1, and also whenever Lumenveil's fog is off.
+bool On() {
+    if(!enabled) return false;
+    if(enabled->m_intValue!=0) return true;
+    const CVar* lumen=CVar::LookupRegistered("hdLvFog");
+    return !lumen || lumen->m_intValue==0;
+}
 bool BuildLive() {
-    current={};currentMaps={};wanted=enabled && enabled->m_intValue!=0;
+    current={};currentMaps={};wanted=On();
     if(!wanted) {Info("off");return false;}
     HD::ForeverFog fog{};float weight=CurrentForeverFog(fog);
     int mode=debug?std::clamp(debug->m_intValue,0,4):0;
@@ -414,7 +426,7 @@ bool BuildLive() {
 }
 bool Init() {
     if(stage) return true;
-    enabled=Var("hdFog","HD: global volumetric fog, 0 off / 1 on","0");
+    enabled=Var("hdFog","Azeroth Remastered: For Ever volumetric fog, 1 on / 0 off when Lumenveil fog is on (never no fog: AR1)","0");
     density=Var("hdFogDensity","HD: fog density multiplier, 0..5","1");sunScale=Var("hdFogSun","HD: sun scattering multiplier, 0..5","1");
     ambient=Var("hdFogAmbient","HD: ambient fog multiplier, 0..5","1");shadow=Var("hdFogShadow","HD: sun shadow cascades in the fog","1");
     debug=Var("hdFogDebug","HD: 1 distance, 2 depth, 3 fog alone, 4 sun shadows","0",0);info=Var("hdFogInfo","HD: fog status","off",0);
@@ -427,7 +439,7 @@ bool Init() {
     Info("off");return true;
 }
 void Resize() {
-    if(!stage || !enabled || !enabled->m_intValue) return;
+    if(!stage || !On()) return;
     VkFormat format{};VkExtent2D extent{};
     if(wxlvk::native::present::BackBufferInfo(format,extent)) effect.Resize(extent.width,extent.height);
 }
@@ -450,9 +462,10 @@ void Record(const WXL_VkStageContext& ctx) {
     Info(currentMaps.serial?"Vulkan fog: 3 layers / 32 steps, shadow maps":"Vulkan fog: 3 layers / 32 steps, no shadow maps (sun height retained)");
 }
 bool CurrentScatter(uint64_t serial,VkImageView& view,VkExtent2D& extent){return effect.CurrentScatter(serial,view,extent);}
-// HD 2026-11-02 kit R1 lot L1: read-only views for the Lumen snapshot (same functions BuildLive uses).
+// Claude 2026-11-02 kit R1 lot L1: read-only views for the Lumen snapshot (same functions BuildLive uses).
 float ForeverFogHere(HD::ForeverFog& fog){fog={};return CurrentForeverFog(fog);}
-bool ReferenceRequested(){return enabled&&enabled->m_intValue!=0;}
+float ForeverFogHereAt(HD::ForeverFog& fog,float time){fog={};return CurrentForeverFogAt(fog,time,0.0f);} // Claude 2026-11-13 lot LV10: clear weather
+bool ReferenceRequested(){return On();}
 void SetSubpixelOffset(float x,float y) {extraX=x;extraY=y;}
 bool Shutdown() {
     if(!api && !stage) return true;

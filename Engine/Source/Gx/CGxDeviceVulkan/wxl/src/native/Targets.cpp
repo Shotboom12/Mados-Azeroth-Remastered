@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 
 // cgxdevice 9.3 / 10.2 / 10.3 is the D3D behaviour reproduced:
 //
@@ -176,7 +177,7 @@ namespace
                 ++g.setDepthTexture;
             }
         }
-        present::SetTarget(t);
+        present::SetTarget(t, true);   // Claude CPU-B: slot 23's end of the pass may be queued
     }
 
     /**
@@ -250,7 +251,7 @@ namespace
             ++g.copyRefused;
             return false;
         }
-        VkCommandBuffer cmd = present::Outside();
+        VkCommandBuffer cmd = present::Outside("hors-passe Targets:254");
         VkImage         back = VK_NULL_HANDLE;
         VkFormat        backFormat = VK_FORMAT_UNDEFINED;
         VkExtent2D      backExtent = {};
@@ -319,6 +320,12 @@ namespace wxlvk::native::impl
 {
     // --- slot 23 -------------------------------------------------------------------------------------
 
+    bool TargetsReady(void* device, const void* tex)
+    {
+        return TexReady(tex) && TexReady(*TableEntry(device, gxdev::kBufferColor))
+            && TexReady(*TableEntry(device, gxdev::kBufferDepth));
+    }
+
     void __fastcall DeviceSetRenderTarget(void* device, void* edx, uint32_t buffer, CGxTex* tex, uint32_t face)
     {
         ++g.setCalls;
@@ -361,7 +368,7 @@ namespace wxlvk::native::impl
         t.depthImage = g_saved.image;
         t.depthView  = g_saved.view;
         t.depthStamp = g_saved.stamp;
-        present::SetTarget(t);
+        present::SetTarget(t, true);   // Claude CPU-B
     }
 
     void __fastcall DeviceResolveDepthBuffer(void* device, void* /*edx*/, CGxTex* tex)
@@ -375,7 +382,7 @@ namespace wxlvk::native::impl
         t.depthImage = d.image;
         t.depthView  = d.view;
         t.depthStamp = d.stamp;
-        present::SetTarget(t);
+        present::SetTarget(t, true);   // Claude CPU-B
     }
 
     // --- slots 27, 59, 60 -----------------------------------------------------------------------------
@@ -391,7 +398,7 @@ namespace wxlvk::native::impl
             ++g.copyRefused;
             return;
         }
-        VkCommandBuffer cmd = present::Outside();
+        VkCommandBuffer cmd = present::Outside("hors-passe Targets:401");
         if (!cmd)
         {
             ++g.copyRefused;
@@ -452,6 +459,215 @@ namespace wxlvk::native::impl
         return ok;
     }
 
+    // GPT CACHE1: preflight the four attachments before rendering or changing their contents.
+    static bool ResolveSunShadowLayers(void* device, void* sourceColour, void* sourceDepth,
+                                      void* destColour, void* destDepth, TargetImage (&targets)[4])
+    {
+        void* const textures[] = { sourceColour, sourceDepth, destColour, destDepth };
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            if (!textures[i] || !TargetImageOf(device, textures[i], 0, true, targets[i])
+                || targets[i].depth != ((i & 1u) != 0)
+                || targets[i].image->format != ((i & 1u) ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_R32_SFLOAT)
+                || targets[i].image->extent.width != targets[0].image->extent.width
+                || targets[i].image->extent.height != targets[0].image->extent.height)
+                return false;
+        }
+        return targets[0].image != targets[2].image && targets[1].image != targets[3].image;
+    }
+
+    bool SunShadowLayersSupported(void* device, void* sourceColour, void* sourceDepth,
+                                  void* destColour, void* destDepth, uint64_t* sourceIdentity)
+    {
+        TargetImage targets[4];
+        if (!ResolveSunShadowLayers(device, sourceColour, sourceDepth, destColour, destDepth, targets))
+            return false;
+        if (sourceIdentity)
+            *sourceIdentity = (uint64_t(targets[0].image->id) << 32) | targets[1].image->id;
+        return true;
+    }
+
+    bool CopySunShadowLayers(void* device, void* sourceColour, void* sourceDepth,
+                             void* destColour, void* destDepth)
+    {
+        // Claude CPU-E (hdVkCopyQueue): queued in order, no drain, when the four textures have their images already (nothing
+        // created here) -- the same commands, computed from the queue's layouts (present::QueueLayerCopies).
+        if (sourceColour && sourceDepth && destColour && destDepth && TexReady(sourceColour) && TexReady(sourceDepth)
+            && TexReady(destColour) && TexReady(destDepth) && present::OutsideQueued())
+        {
+            TargetImage queued[4];
+            if (!ResolveSunShadowLayers(device, sourceColour, sourceDepth, destColour, destDepth, queued)) return false;
+            wxlvk::vk::texture::Image* const images[4] = { queued[0].image, queued[1].image, queued[2].image, queued[3].image };
+            if (!present::QueueLayerCopies(images)) return false;
+            const uint64_t serial = present::Serial();
+            for (uint32_t i = 0; i < 2; ++i)
+            {
+                if (queued[i].stamp) *queued[i].stamp = serial;
+                if (queued[2 + i].stamp) *queued[2 + i].stamp = serial;
+            }
+            g.copyTex += 2;
+            return true;
+        }
+        // Drain earlier draws once and preflight both attachments before recording either copy.
+        const VkCommandBuffer cmd = present::Outside("hors-passe Targets:494");
+        TargetImage targets[4];
+        if (!cmd || !ResolveSunShadowLayers(device, sourceColour, sourceDepth, destColour, destDepth, targets)
+            || targets[0].image->layout == VK_IMAGE_LAYOUT_UNDEFINED
+            || targets[1].image->layout == VK_IMAGE_LAYOUT_UNDEFINED)
+            return false;
+        const uint64_t serial = present::Serial();
+        const auto& extent = targets[0].image->extent;
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            auto& from = targets[i];
+            auto& to = targets[2 + i];
+            present::Transition(cmd, *from.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            present::Transition(cmd, *to.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            VkImageCopy region = {};
+            const VkImageAspectFlags aspect = i ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            region.srcSubresource = { aspect, 0, 0, 1 };
+            region.dstSubresource = region.srcSubresource;
+            region.extent = { extent.width, extent.height, 1 };
+            wxlvk::vk::context::Get()->dapi->CmdCopyImage(cmd, from.image->handle,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, to.image->handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            present::Transition(cmd, *from.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            present::Transition(cmd, *to.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (from.stamp) *from.stamp = serial;
+            if (to.stamp) *to.stamp = serial;
+        }
+        g.copyTex += 2;
+        return true;
+    }
+
+    // GPT CACHE1: read raw R32F values. DeviceReadPixels converts back-buffer pixels to BGRA.
+    // Claude CACHE1c (diagnostic): when set, the next comparison writes both images as 16-bit PGM files
+    // (<prefix>-a.pgm = held, <prefix>-b.pgm = reference; grey = depth, white = empty), then the prefix is cleared.
+    static char s_compareDump[260] = {};
+    void SetSunShadowCompareDump(const char* prefix)
+    {
+        s_compareDump[0] = 0;
+        if (prefix) std::snprintf(s_compareDump, sizeof(s_compareDump), "%s", prefix);
+    }
+
+    static void WriteShadowPgm(const char* path, const float* data, uint32_t width, uint32_t height)
+    {
+        FILE* file = std::fopen(path, "wb");
+        if (!file) return;
+        std::fprintf(file, "P5\n%u %u\n65535\n", width, height);
+        unsigned char* row = static_cast<unsigned char*>(std::malloc(size_t(width) * 2));
+        if (!row) { std::fclose(file); return; }
+        for (uint32_t y = 0; y < height; ++y)
+        {
+            for (uint32_t x = 0; x < width; ++x)
+            {
+                float v = data[size_t(y) * width + x];
+                if (!std::isfinite(v)) v = 0.0f;
+                v = v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
+                const unsigned value = unsigned(v * 65535.0f + 0.5f);
+                row[size_t(x) * 2] = static_cast<unsigned char>(value >> 8);
+                row[size_t(x) * 2 + 1] = static_cast<unsigned char>(value & 0xFF);
+            }
+            std::fwrite(row, 1, size_t(width) * 2, file);
+        }
+        std::free(row);
+        std::fclose(file);
+    }
+
+    bool CompareSunShadowTargets(void* device, void* held, void* reference, uint64_t& count,
+                                 uint64_t& different, uint64_t& nonFinite, float& maxDelta, uint64_t* detail)
+    {
+        TargetImage a, b;
+        if (!present::BackBufferReadable()
+            || !TargetImageOf(device, held, 0, false, a)
+            || !TargetImageOf(device, reference, 0, false, b)
+            || a.image == b.image || a.depth || b.depth
+            || a.image->format != VK_FORMAT_R32_SFLOAT || b.image->format != VK_FORMAT_R32_SFLOAT
+            || a.image->layout == VK_IMAGE_LAYOUT_UNDEFINED || b.image->layout == VK_IMAGE_LAYOUT_UNDEFINED
+            || a.image->extent.width != b.image->extent.width
+            || a.image->extent.height != b.image->extent.height)
+            return false;
+
+        const VkDeviceSize pixels = VkDeviceSize(a.image->extent.width) * a.image->extent.height;
+        const VkDeviceSize bytes = pixels * sizeof(float);
+        memory::Buffer readback;
+        if (!bytes || !memory::CreateBuffer(bytes * 2, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                          memory::Where::HostVisible, readback))
+            return false;
+        if (!memory::HostCoherent(readback.block))
+        {
+            memory::DestroyBuffer(readback);
+            return false;
+        }
+
+        VkCommandBuffer cmd = present::Outside("hors-passe Targets:584");
+        if (!cmd)
+        {
+            memory::DestroyBuffer(readback);
+            return false;
+        }
+
+        VkBufferImageCopy region = {};
+        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        region.imageExtent = { a.image->extent.width, a.image->extent.height, 1 };
+        const uint64_t serial = present::Serial();
+        for (TargetImage* target : { &a, &b })
+        {
+            const VkImageLayout previous = target->image->layout;
+            present::Transition(cmd, *target->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            wxlvk::vk::context::Get()->dapi->CmdCopyImageToBuffer(
+                cmd, target->image->handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.handle, 1, &region);
+            present::Transition(cmd, *target->image, previous);
+            if (target->stamp) *target->stamp = serial;
+            region.bufferOffset += bytes;
+        }
+        if (!present::FlushAndWait())
+        {
+            present::RetireBuffer(readback, serial);
+            return false;
+        }
+
+        const auto* first = static_cast<const float*>(readback.block.mapped);
+        const auto* second = first + pixels;
+        if (s_compareDump[0])
+        {
+            char path[300];
+            std::snprintf(path, sizeof(path), "%s-a.pgm", s_compareDump);
+            WriteShadowPgm(path, first, a.image->extent.width, a.image->extent.height);
+            std::snprintf(path, sizeof(path), "%s-b.pgm", s_compareDump);
+            WriteShadowPgm(path, second, a.image->extent.width, a.image->extent.height);
+            s_compareDump[0] = 0;
+        }
+        count = pixels;
+        different = nonFinite = 0;
+        maxDelta = 0.0f;
+        // GPT CACHE1b: detail = { held nearer, reference nearer, min x, max x, min y, max y } of the differing texels.
+        if (detail) { detail[0] = detail[1] = 0; detail[2] = detail[4] = ~0ull; detail[3] = detail[5] = 0; }
+        const VkDeviceSize width = a.image->extent.width;
+        for (VkDeviceSize i = 0; i < pixels; ++i)
+        {
+            const bool differs = std::memcmp(first + i, second + i, sizeof(float)) != 0;
+            different += differs;
+            if (differs && detail)
+            {
+                if (first[i] < second[i]) ++detail[0]; else ++detail[1];
+                const uint64_t x = i % width, y = i / width;
+                if (x < detail[2]) detail[2] = x;
+                if (x > detail[3]) detail[3] = x;
+                if (y < detail[4]) detail[4] = y;
+                if (y > detail[5]) detail[5] = y;
+            }
+            if (!std::isfinite(first[i]) || !std::isfinite(second[i]))
+            {
+                ++nonFinite;
+                continue;
+            }
+            const float delta = std::fabs(first[i] - second[i]);
+            if (delta > maxDelta) maxDelta = delta;
+        }
+        memory::DestroyBuffer(readback);
+        return true;
+    }
+
     // --- slot 20 ---------------------------------------------------------------------------------------
 
     void __fastcall DeviceReadPixels(void* device, void* edx, CiRect* rect, TSGrowableArray* out)
@@ -473,7 +689,7 @@ namespace wxlvk::native::impl
         bool ok = false;
         if (At<uint32_t>(device, gxdev::kContext) && present::DrawPathUp() && present::BackBufferReadable())
         {
-            VkCommandBuffer cmd = present::Outside();
+            VkCommandBuffer cmd = present::Outside("hors-passe Targets:674");
             VkImage         back = VK_NULL_HANDLE;
             VkFormat        format = VK_FORMAT_UNDEFINED;
             VkExtent2D      extent = {};

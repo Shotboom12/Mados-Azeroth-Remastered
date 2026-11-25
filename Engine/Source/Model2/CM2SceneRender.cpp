@@ -4,6 +4,7 @@
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/lamp/HdLampHooks.h"
 #include <cmath>
 #include <cstdint>
+#include <unordered_map> // Claude PERF2
 #include "Engine/Source/Model2/CM2SceneRender.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
@@ -14,6 +15,8 @@
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Model2/M2Shared.h"
+#include "Engine/Source/Model2/HdM2Count.h"
+#include "Engine/Source/Model2/HdGpuSceneHooks.h" // Claude B2
 #include "Engine/Source/Services/ParticleSystem2.h"
 #include "Engine/Source/Services/RibbonEmitter.h"
 #include "Engine/Source/Services/Texture.h"
@@ -421,6 +424,47 @@ void CM2SceneRender::SetupMaterial() {
 
 // VERIFY: aeedaf63 manual
 // OFFSET: 0x008203B0
+// Claude PERF2: the model's own extent for the Vulkan device's shadow culling (wxl draw/Reader.cpp reads it into the
+// draw's Cmd, vulkan/pipelines/Record.cpp ModelBound turns it into the draw's exact bounding sphere). -1 / 0: unknown.
+thread_local float g_hdM2DrawReach = -1.0f;
+thread_local uint32_t g_hdM2DrawBones = 0;
+bool g_hdM2ExactBounds = true;   // hdShadowExactBounds (hd/lumen/LvClient.cpp)
+namespace {
+// The farthest of a skin section's vertices from the model's origin, bind pose: |v| over
+// data->m_vertices[skin->m_vertices[j]], j in the section's range (what M2Shared::SetVertices uploads). Cached by
+// section, checked against the model data, the range and the first vertex (a freed section's address reused by
+// another model is measured again). -1 when the range does not fit the arrays.
+float HdSectionReach(M2Data* data, M2SkinProfile* skin, const M2SkinSection* sec) {
+    struct Entry { const void* data; uint32_t start, count, first; float x, y, z, reach; };
+    thread_local std::unordered_map<const void*, Entry> cache;
+    if (!data || !skin || !sec) return -1.0f;
+    const uint32_t start = sec->m_vertexStart, count = sec->m_vertexCount;
+    if (!count || start + count > skin->m_vertices.m_count) return -1.0f;
+    const uint32_t first = skin->m_vertices[start];
+    if (first >= data->m_vertices.m_count) return -1.0f;
+    const C3Vector& p0 = data->m_vertices[first].m_position;
+    auto it = cache.find(sec);
+    if (it != cache.end()) {
+        const Entry& e = it->second;
+        if (e.data == data && e.start == start && e.count == count && e.first == first && e.x == p0.x && e.y == p0.y && e.z == p0.z) return e.reach;
+    }
+    float r2 = 0.0f;
+    bool ok = true;
+    for (uint32_t j = start; j < start + count && ok; ++j) {
+        const uint32_t v = skin->m_vertices[j];
+        if (v >= data->m_vertices.m_count) { ok = false; break; }
+        const C3Vector& p = data->m_vertices[v].m_position;
+        const float d = p.x * p.x + p.y * p.y + p.z * p.z;
+        if (!std::isfinite(d)) { ok = false; break; }
+        r2 = d > r2 ? d : r2;
+    }
+    if (cache.size() > 200000) cache.clear();
+    const float reach = ok ? std::sqrt(r2) : -1.0f;
+    cache[sec] = Entry{ data, start, count, first, p0.x, p0.y, p0.z, reach };
+    return reach;
+}
+}
+
 void CM2SceneRender::DrawBatch() {
 #ifdef WOWDECOMP_FSR
     // Only one affine palette matrix for the WHOLE mesh; multi-bone skinning and wind wait for M3/M4.
@@ -432,7 +476,7 @@ void CM2SceneRender::DrawBatch() {
         CShaderEffect::s_enableShaders&&this->m_data->m_bones.m_count==1&&fsrSkin&&fsrSkin->m_boneCount==1&&fsrSkin->m_boneInfluences<=1,
         false,fsrPalette?uint32_t(fsrSkin->m_boneCount)*3u:0u,
         fsrPalette?&this->m_data->m_boneCombos[fsrSkin->m_boneComboIndex]:nullptr);
-    HD::Fsr::Rigid::DiagModel fsrDiagModel(this->m_curModel->m_shared->m_fileNameWithoutPath,fsrSkin?uint32_t(fsrSkin->m_boneCount):0u,uint32_t(this->m_data->m_bones.m_count)); // DIAG M3 (2026-10-31)
+    HD::Fsr::Rigid::DiagModel fsrDiagModel(this->m_curModel->m_shared->m_fileNameWithoutPath,fsrSkin?uint32_t(fsrSkin->m_boneCount):0u,uint32_t(this->m_data->m_bones.m_count)); // DIAG M3 (Claude 2026-10-31)
 #endif
     DebugLog("Batch: model=%s index=%d", this->m_curModel->m_shared->m_fileNameWithoutPath, this->m_curElement->m_index);
 
@@ -489,7 +533,12 @@ void CM2SceneRender::DrawBatch() {
     if (CShaderEffect::s_enableShaders) {
         batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
+        // Claude PERF2: the section's own extent and bone count, for the shadow replay's culling (exact bound)
+        g_hdM2DrawReach = !g_hdM2ExactBounds ? -1.0f : HdSectionReach(this->m_curShared ? this->m_curShared->m_data : nullptr, this->m_curShared ? this->m_curShared->m_skinData : nullptr, this->m_curSkinSection);
+        g_hdM2DrawBones = g_hdM2DrawReach >= 0.0f ? this->m_curSkinSection->m_boneCount : 0u;
         g_theGxDevicePtr->Draw(&batch, 1);
+        g_hdM2DrawReach = -1.0f;
+        g_hdM2DrawBones = 0;
     } else if (sharedVertices) {
         CGxMatrixStack& world = g_theGxDevicePtr->m_xforms[GxXform_World];
         world.m_dirty = 1;
@@ -508,6 +557,38 @@ void CM2SceneRender::DrawBatch() {
         batch.m_minIndex = 0;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
         g_theGxDevicePtr->Draw(&batch, 1);
+    }
+}
+
+// Claude B2: a group of fixed doodads, DrawBatchDoodad's state for its representative, then one GPU-driven draw (the
+// shared store's buffers and the copies' rows take the place of the representative's: draw/Reader.cpp).
+void CM2SceneRender::HdDrawGpuScene() {
+    M2Element* element = this->m_curElement;
+    this->m_curBatch = element->m_batch;
+    this->m_curSkinSection = element->m_skinSection;
+    this->m_curMaterial = &this->m_data->m_materials[this->m_curBatch->m_materialIndex];
+    element->m_effect->SetCurrent();
+
+    this->SetupLighting();
+    this->SetupMaterial();
+    this->SetupTextures();
+
+    if (!this->m_curShared->SetIndices() || !this->m_curShared->SetVertices(0)) {
+        return;
+    }
+
+    CShaderEffect::SetShaders(element->m_vertexPermute, element->m_pixelPermute);
+
+    CGxBatch batch;
+    batch.m_primType = GxPrim_Triangles;
+    batch.m_start = 0;
+    batch.m_count = 3;
+    batch.m_minIndex = 0;
+    batch.m_maxIndex = 2;
+
+    if (HD::GpuScene::Arm(element)) {
+        g_theGxDevicePtr->Draw(&batch, 1);
+        HD::GpuScene::Disarm();
     }
 }
 
@@ -631,6 +712,11 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
         instances = total;
     }
 
+    if (HDM2Count::on && instances) { // HD lot I1: counting only (draws this call issues, instances they carry)
+        HDM2Count::Add(HDM2Count::BatchDraws, (total + instances - 1) / instances);
+        HDM2Count::Add(HDM2Count::BatchInstances, total);
+    }
+
     this->m_curShared->SetIndices();
 
     CGxBatch batch;
@@ -678,7 +764,14 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
             batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
+            // Claude INST1-CUBES: the batch's exact extent for the lamp cubes' culling (Record.cpp ExactModelBound), as
+            // DrawBatch gives it: copy n's vertices use bones n * boneCount .. (n + 1) * boneCount - 1, all at the
+            // section's reach from their bone. Without it the bound read the stale c31 rows (none at all, every cube).
+            g_hdM2DrawReach = !g_hdM2ExactBounds ? -1.0f : HdSectionReach(this->m_curShared ? this->m_curShared->m_data : nullptr, this->m_curShared ? this->m_curShared->m_skinData : nullptr, this->m_curSkinSection);
+            g_hdM2DrawBones = g_hdM2DrawReach >= 0.0f ? registers : 0u;
             g_theGxDevicePtr->Draw(&batch, 1);
+            g_hdM2DrawReach = -1.0f;
+            g_hdM2DrawBones = 0;
         }
     } else {
         for (uint32_t done = 0; done < total; done += instances) {
@@ -1016,6 +1109,10 @@ void CM2SceneRender::Draw(M2PASS pass, M2Element* elements, uint32_t* indices, u
         this->m_data = this->m_curShared->m_data;
         this->m_cache->LinkToSharedUpdateList(this->m_curShared);
 
+        if (element->m_flags & HD::GpuScene::kElement) { // Claude B2
+            this->m_curLighting = HD::GpuScene::Lighting(element);
+        }
+
         switch (this->m_curElement->m_type) {
             case 0:
                 this->DrawBatch();
@@ -1024,6 +1121,11 @@ void CM2SceneRender::Draw(M2PASS pass, M2Element* elements, uint32_t* indices, u
                 this->DrawBatchProj();
                 break;
             case 2:
+                if (element->m_flags & HD::GpuScene::kElement) { // Claude B2
+                    this->HdDrawGpuScene();
+                    break;
+                }
+
                 this->DrawBatchDoodad(elements, &indices[i]);
                 i += this->m_curElement->m_count - 1;
                 break;

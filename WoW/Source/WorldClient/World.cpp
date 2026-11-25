@@ -1,6 +1,15 @@
+#include <emmintrin.h>
+#include <xmmintrin.h>
+#include <vector>
+#include "WoW/Source/WorldClient/HD/HdGpuFixed.h" // Claude B4
+#include "WoW/Source/WorldClient/HD/HdGpuScene.h"
+#include "WoW/Source/WorldClient/HD/HdGpuTerrain.h" // Claude B3
 #include "WoW/Source/WorldClient/HD/HdCataWmoStreaming.h"
 #include "WoW/Source/WorldClient/HD/HdCataRenderPerf.h"
 #include "WoW/Source/WorldClient/HD/HdDetailDoodad.h" // HD: hdGrassBuffers
+#include "WoW/Source/WorldClient/HD/HdMapObj.h" // Claude BLZ1
+#include "WoW/Source/WorldClient/HD/HdSky.h" // Claude BLZ1
+#include "WoW/Source/WorldClient/HD/HdTerrain.h" // Claude BLZ1
 #include "World.h"
 #include "Engine/Source/Model2/HdExtraLamps.h" // HD: hdExtraLampsObjects
 #include "WoW/Source/WorldClient/HD/HdCataViewDistance.h" // HD: Cata view policy
@@ -28,6 +37,7 @@
 #include "Engine/Source/Model2/M2Cache.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Model.h"
+#include "Engine/Source/Model2/HdGpuSceneHooks.h" // Claude ORDRE1
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Model2/M2Shared.h"
 #include "Engine/Source/Os/System.h"
@@ -109,6 +119,7 @@
 #include <cstring>
 #include "WoW/Source/Object/ObjectClient/Object_C.h"
 #include "WoW/Source/Game/GameClient/ProjectTex.h"
+#include "WoW/Source/WorldClient/HD/HdForever.h" // HD lot NUIT1: ForeverSpecularScale
 
 // STATIC: 0x00ADEE48
 static const char* s_zonePaths[11] = {
@@ -1410,6 +1421,13 @@ void CWorld::LoadMap(const char* mapName, C3Vector* position, int32_t zoneID, in
     Liquid::SetShadersEnabled(shaders);
     Liquid::SetSpecularEnabled(CMap::enableSpecular);
     Liquid::CMaterialBank::Destroy();
+
+    // Claude BLZ1: under the loading screen, our world shaders are ready before the first world frame (from
+    // HD\ShaderCache in a few ms, or compiled on every core the first time): no frame is drawn with Blizzard's.
+    HD::TerrainShadersWait();
+    HD::MapObjShadersWait();
+    HD::DetailDoodadShadersWait();
+    HD::SkyShadersWait();
 }
 
 // VERIFY: 5c8f2417 manual
@@ -1489,6 +1507,9 @@ void DayNight::Update(int32_t reset, const C3Vector* cameraPos) {
     light.m_dirColor = C3Vector(diffuse.r * (1.0f / 255.0f), diffuse.g * (1.0f / 255.0f), diffuse.b * (1.0f / 255.0f));
     const CImVector& sun = info->m_bands.m_sunCloudColors[0];
     light.m_specColor = C3Vector(sun.r * (1.0f / 255.0f), sun.g * (1.0f / 255.0f), (1.0f / 255.0f) * sun.b);
+    // HD lot NUIT1: no white moon specular at night from Forever's band 9 (hdForeverNightSpec, see HdForever.cpp)
+    float hdSpec = HD::ForeverSpecularScale(info->m_dayProgression);
+    light.m_specColor = C3Vector(light.m_specColor.x * hdSpec, light.m_specColor.y * hdSpec, light.m_specColor.z * hdSpec);
     DayNight::SetFogMode(0);
 }
 
@@ -2190,6 +2211,62 @@ void CWorldScene::CullHorizon(CRect* rect) {
     g_theGxDevicePtr->XformSetProjection(savedProjection);
 }
 
+// Claude LV11 2026-11-14 ("Objets lumineux : distance", hdLitObjDist in HdCataViewDistance). A map doodad whose model has
+// M2 lights (the lights hdExtraLamps adds included) keeps its light out to LitFadeEnd(): its size level no longer hides
+// it, and out of the frame or behind an obstacle it stays animated (its lights live) without being drawn.
+// LitFadeEnd() 0 (Normal) = Blizzard: none of this runs.
+static bool HdLitDoodad(const CMapDoodadDef* doodadDef) {
+    if (!(HD::CataViewDistance::LitFadeEnd() > 0.0f)) {
+        return false;
+    }
+
+    const CM2Model* model = doodadDef->m_model;
+    return model && (doodadDef->m_flags & MAPOBJ_FLAG_PREPARED) && (model->m_fFlags & 1) && model->m_shared
+        && model->m_shared->m_data && model->m_shared->m_data->m_lights.m_count > 0;
+}
+
+// Fade of a lit doodad at distSq: end = max(end of its size level, LitFadeEnd()), range = max(range of its level, 5 % of
+// that end). 0 = beyond (or under 1 %), same rounding as Blizzard's fade.
+static float HdLitAlpha(const CMapDoodadDef* doodadDef, float distSq) {
+    const uint32_t level = doodadDef->m_fadeLevel;
+    const float lit = HD::CataViewDistance::LitFadeEnd();
+    const float end = CWorldScene::s_fadeDist[level] > lit ? CWorldScene::s_fadeDist[level] : lit;
+    const float range = CWorldScene::s_fadeRangeDefault[level] > 0.05f * end ? CWorldScene::s_fadeRangeDefault[level] : 0.05f * end;
+    const float start = end - range;
+
+    if (distSq > end * end) {
+        return 0.0f;
+    }
+
+    if (distSq <= start * start) {
+        return 1.0f;
+    }
+
+    const float alpha = 1.0f - (sqrtf(distSq) - start) / range;
+
+    if (alpha > 0.99000001f) {
+        return 1.0f;
+    }
+
+    return alpha <= 0.0099999998f ? 0.0f : alpha;
+}
+
+// A lit doodad out of the frame or hidden by an obstacle, whose sphere grown by 15 yd still meets the frame (tested by
+// the caller): near enough, it stays animated with the fade Add would give it (its lights reach the screen), not drawn.
+// Same path as Blizzard's 10 yd rule. false = too far, left to Blizzard's rule.
+static bool HdKeepLitDoodad(CMapDoodadDef* doodadDef) {
+    const C3Vector delta = doodadDef->m_sphere.c - CWorldScene::s_activeWorldView;
+    const float alpha = HdLitAlpha(doodadDef, delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+
+    if (!(alpha > 0.0f)) {
+        return false;
+    }
+
+    doodadDef->m_model->SetAnimating(1);
+    doodadDef->m_model->m_fadeAlpha = (CWorld::enables & Enable_NoFullAlpha) && !(doodadDef->m_flags & 0x800) ? alpha : 1.0f;
+    return true;
+}
+
 // VERIFY: b484c5b7 manual
 // OFFSET: 0x00791CB0
 void CWorldScene::AddDoodadDefModelToModelScene(CMapDoodadDef* doodadDef) {
@@ -2211,11 +2288,15 @@ void CWorldScene::AddDoodadDefModelToModelScene(CMapDoodadDef* doodadDef) {
         float dz = doodadDef->m_sphere.c.z - CWorldScene::s_activeWorldView.z;
         float distSq = dz * dz + dy * dy + dx * dx;
 
-        if (distSq > CWorldView::s_fadeDistSqr[doodadDef->m_fadeLevel]) {
-            return;
-        }
+        if (HdLitDoodad(doodadDef)) { // Claude LV11: lit doodad, fade end max(its level, hdLitObjDist)
+            alpha = HdLitAlpha(doodadDef, distSq);
 
-        if (distSq > CWorldScene::s_fadeDistMinSqr[doodadDef->m_fadeLevel]) {
+            if (!(alpha > 0.0f)) {
+                return;
+            }
+        } else if (distSq > CWorldView::s_fadeDistSqr[doodadDef->m_fadeLevel]) {
+            return;
+        } else if (distSq > CWorldScene::s_fadeDistMinSqr[doodadDef->m_fadeLevel]) {
             float dist = CMap::s_useSSE ? sqrtf(distSq) : sqrt(distSq);
             alpha = 1.0f - (dist - CWorldScene::s_fadeDistMin[doodadDef->m_fadeLevel]) / CWorldScene::s_fadeRangeDefault[doodadDef->m_fadeLevel];
 
@@ -2225,6 +2306,21 @@ void CWorldScene::AddDoodadDefModelToModelScene(CMapDoodadDef* doodadDef) {
                 return;
             }
         }
+    }
+
+    // HD lot I1 (Claude 2026-11-04): doodads added to the M2 scene by distance to the camera (hdCataRenderPerf 1 only),
+    // to size what a far-object proxy could take. Counting only.
+    if (HD::CataRenderPerf::Enabled()) {
+        const C3Vector hdDelta = doodadDef->m_sphere.c - CWorldScene::s_activeWorldView;
+        const float hdDistSq = hdDelta.x * hdDelta.x + hdDelta.y * hdDelta.y + hdDelta.z * hdDelta.z;
+        HD::CataRenderPerf::Add(hdDistSq < 100.0f * 100.0f ? HD::CataRenderPerf::Counter::DoodadsTo100
+                              : hdDistSq < 300.0f * 300.0f ? HD::CataRenderPerf::Counter::Doodads100To300
+                              : hdDistSq < 600.0f * 600.0f ? HD::CataRenderPerf::Counter::Doodads300To600
+                              : HD::CataRenderPerf::Counter::DoodadsBeyond600);
+    }
+
+    if (alpha == 1.0f && HD::GpuScene::Take(doodadDef)) { // Claude B2: the GPU draws it
+        return;
     }
 
     doodadDef->m_model->SetAnimating(1);
@@ -2399,7 +2495,7 @@ void CWorldScene::CullEntitys(CSortEntry* entry) {
 
         CAaSphere sphere = entity->m_sphere;
 
-        if (!CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(sphere) || CWorldOcclusion::QueryVolumes(&entity->m_sphere) || CWorldOcclusion::QueryBuffer(entity->m_sphere.c, entity->m_sphere.r, 0)) {
+        if (!CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(sphere) || HD::CataMirrorOutside(sphere.c, sphere.r) /* Claude LV31 */ || CWorldOcclusion::QueryVolumes(&entity->m_sphere) || CWorldOcclusion::QueryBuffer(entity->m_sphere.c, entity->m_sphere.r, 0)) {
             CWorldScene::sortTable.m_culledEntityList.LinkToTail(entity);
             entity = next;
             continue;
@@ -2589,7 +2685,7 @@ void CWorldScene::CullLiquid(CSortEntry* entry) {
             CAaBox box;
             liquid->GetAaBox(box);
 
-            if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(box) && !CWorldOcclusion::QueryBuffer(&box, 0) && !CWorldOcclusion::QueryVolumes(liquid->GetSphere())) {
+            if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(box) && !HD::CataMirrorOutside(box) /* Claude LV31 */ && !CWorldOcclusion::QueryBuffer(&box, 0) && !CWorldOcclusion::QueryVolumes(liquid->GetSphere())) {
                 liquid->RenderPrep();
 
                 if (CWorldScene::s_liquidRenderer && liquid->m_instance) {
@@ -2601,6 +2697,9 @@ void CWorldScene::CullLiquid(CSortEntry* entry) {
         }
     }
 }
+
+static bool HdTri2();
+static void HdOcclusionFetch(CSortEntry* entry);
 
 // VERIFY: 672d50fa manual
 // OFFSET: 0x00793760
@@ -2618,6 +2717,8 @@ void CWorldScene::UpdateOcclusion(CSortEntry* entry) {
 
         return;
     }
+
+    if (HdTri2()) HdOcclusionFetch(entry);
 
     CMapChunk* chunk = entry->m_holedChunkList.Head();
 
@@ -3046,9 +3147,59 @@ void CWorldScene::LocateViewer3() {
     }
 }
 
+// Claude ORDRE1: the plain sun-shadow casters without a pixel stage (Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Keys.cpp).
+bool g_hdOrdre1Shadow = false;
+
+// Claude ORDRE1: one of the group's batches is blended over what is behind it.
+static bool HdBlended(CMapObjDefGroup* group) {
+    CMapObj* mapObj = static_cast<CMapObjDef*>(group->m_parentLinkList.Head()->m_ref)->m_owner;
+    CMapObjGroup* data = mapObj->GetGroup(group->m_groupNum, 0);
+
+    if (!data || (data->m_unkLoadedFlag & 0x4)) { // 0x4: no batch with a blend mode
+        return false;
+    }
+
+    const uint32_t count = static_cast<uint32_t>(data->m_batchListCount);
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (mapObj->m_materialList[data->m_batchList[i].m_texture].m_blendMode > 1) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Claude ORDRE1: the ground over the objects already drawn, with a strict depth test: they keep the pixels at the same depth,
+// as when they were drawn after it.
+void CWorldScene::HdRenderGround() {
+    g_theGxDevicePtr->RsPush();
+    GxRsSet(GxRs_DepthFunc, 3);
+    CWorldScene::RenderChunks();
+    g_theGxDevicePtr->RsPop();
+}
+
 // VERIFY: a040cfec manual
 // OFFSET: 0x007964A0
 void CWorldScene::RenderMapObjDefGroups() {
+    // Claude ORDRE1: the ground after the buildings and the doodads of the GPU scene (most of its pixels are hidden by them),
+    // or before the first group with a blended batch (glass: it blends over the ground); 0: the original order.
+    const bool hdOrdre1 = HD::GpuScene::Ordre1();
+    const bool hdGroundLast = hdOrdre1 && CMap::enableTerrainShaderVertex && CMap::gTerrainPixelShadersValid && !(CWorld::enables & 0x40000000);
+    CMapObjDefGroup* hdGroundBefore = nullptr;
+    g_hdOrdre1Shadow = hdOrdre1;
+
+    if (!hdGroundLast) {
+        CWorldScene::RenderChunks();
+    } else {
+        for (CMapObjDefGroup* group = CWorldScene::sortTable.m_mapObjDefGroup.Head(); group && !hdGroundBefore; group = CWorldScene::sortTable.m_mapObjDefGroup.Next(group)) {
+            if (HdBlended(group)) {
+                hdGroundBefore = group;
+            }
+        }
+    }
+
+    {
     HD::CataRenderPerf::Scope hdPerfScope(HD::CataRenderPerf::Stage::WmoDraw);
     g_theGxDevicePtr->RsPush();
     CWorldScene::frustumIndex++;
@@ -3060,6 +3211,13 @@ void CWorldScene::RenderMapObjDefGroups() {
     while (group) {
         CMapObjDefGroup* next = CWorldScene::sortTable.m_mapObjDefGroup.Next(group);
         group->m_sortTableLink.Unlink();
+
+        if (group == hdGroundBefore) { // Claude ORDRE1
+            g_theGxDevicePtr->RsPop();
+            CWorldScene::HdRenderGround();
+            g_theGxDevicePtr->RsPush();
+            CShadowCache::SetShadowMapGenericGlobal();
+        }
 
         CMapObjDef* mapObjDef = static_cast<CMapObjDef*>(group->m_parentLinkList.Head()->m_ref);
         CMapObj* mapObj = mapObjDef->m_owner;
@@ -3105,6 +3263,24 @@ void CWorldScene::RenderMapObjDefGroups() {
 
     CWorldScene::frustumIndex--;
     g_theGxDevicePtr->RsPop();
+    }
+
+    if (hdGroundLast && !hdGroundBefore) { // Claude ORDRE1
+        CM2Scene* scene = World::s_m2Scene;
+
+        // (The portals' planes and the sky are drawn at the far depth after it: the doodads stay in front.)
+        if (scene && (CWorld::m_M2PassMask & (1 << M2PASS_0)) && HD::GpuScene::Early(scene)) {
+            HD::CataRenderPerf::Scope hdPerf(HD::CataRenderPerf::Stage::M2Opaque);
+            g_theGxDevicePtr->RsPush();
+            scene->SetFloat18(-CWorld::s_unk_CD7758);
+            scene->m_passMask = CWorld::m_M2PassMask;
+            scene->HdDrawGpuScene();
+            g_theGxDevicePtr->RsPop();
+            CShaderEffect::UpdateProjMatrix();
+        }
+
+        CWorldScene::HdRenderGround();
+    }
 }
 
 // VERIFY: 4e07fb4f manual
@@ -3614,7 +3790,7 @@ void CWorldScene::RenderDetailDoodads() {
     for (CDetailDoodadInst* inst = CWorldScene::sortTable.m_detailDoodadInstList.Head(); inst; inst = next) {
         next = CWorldScene::sortTable.m_detailDoodadInstList.Next(inst);
         CMapChunk* chunk = inst->m_chunk;
-        inst->m_age = 0;
+        inst->m_age = HD::g_detailDoodadClock; // Claude 2026-11-04 lot C2: age 0 (grass clock)
 
         HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::GrassChunks);
         uint64_t hdPerfLights = HD::CataRenderPerf::Begin();
@@ -3662,7 +3838,7 @@ void CWorldScene::CullDoodads(CSortEntry* entry, uint16_t fadeLevel) {
         CMapDoodadDef* next = entry->m_doodadDefList.Next(doodadDef);
         doodadDef->m_doodadDefLink.Unlink();
 
-        if (doodadDef->m_fadeLevel < fadeLevel) {
+        if (doodadDef->m_fadeLevel < fadeLevel && !HdLitDoodad(doodadDef)) { // Claude LV11: a lit doodad passes its size
             doodadDef = next;
             continue;
         }
@@ -3679,7 +3855,7 @@ void CWorldScene::CullDoodads(CSortEntry* entry, uint16_t fadeLevel) {
         doodadDef->m_cullPassStamp = CWorldScene::s_cullPassStamp;
         doodadDef->m_culled = 1;
 
-        bool visible = CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(doodadDef->m_sphere) && !CWorldOcclusion::QueryVolumes(&doodadDef->m_sphere);
+        bool visible = CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(doodadDef->m_sphere) && !HD::CataMirrorOutside(doodadDef->m_sphere.c, doodadDef->m_sphere.r) /* Claude LV31 */ && !CWorldOcclusion::QueryVolumes(&doodadDef->m_sphere);
 
         if (visible) {
             doodadDef->m_culled = 0;
@@ -3689,6 +3865,8 @@ void CWorldScene::CullDoodads(CSortEntry* entry, uint16_t fadeLevel) {
         if (visible) {
             CWorldScene::AddDoodadDefModelToModelScene(doodadDef);
             CWorldScene::nDoodadsRendered++;
+        } else if (HdLitDoodad(doodadDef) && CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(doodadDef->m_sphere.c, doodadDef->m_sphere.r + 15.0f) && HdKeepLitDoodad(doodadDef)) {
+            // Claude LV11: lit doodad out of the frame or occluded, its lights kept
         } else if ((doodadDef->m_staticFlags & 0x400) || (doodadDef->m_sphere.c.x - CWorldScene::s_activeWorldView.x) * (doodadDef->m_sphere.c.x - CWorldScene::s_activeWorldView.x) + ((doodadDef->m_sphere.c.y - CWorldScene::s_activeWorldView.y) * (doodadDef->m_sphere.c.y - CWorldScene::s_activeWorldView.y) + (doodadDef->m_sphere.c.z - CWorldScene::s_activeWorldView.z) * (doodadDef->m_sphere.c.z - CWorldScene::s_activeWorldView.z)) < 100.0f) {
             doodadDef->m_model->SetAnimating(1);
         } else {
@@ -3703,6 +3881,20 @@ void CWorldScene::CullDoodads(CSortEntry* entry, uint16_t fadeLevel) {
 // OFFSET: 0x007989C0
 void CWorldScene::RenderChunksSinglePass() {
     TSExplicitList<CMapRenderChunk, offsetof(CMapRenderChunk, m_renderChunkLink)> singlePassList;
+
+    // Claude B3: the chunks the groups could take this time (voie B)
+    bool hdGpuTerrain = false;
+    if (HD::GpuTerrain::Mode() && CMap::enableTerrainShaderVertex && (CWorld::enables & Enable_Chunks) && !(CWorld::enables & 0x40000000)) {
+        static std::vector<CMapRenderChunk*> s_chunks;
+        s_chunks.clear();
+        for (uint32_t pass = 0; pass < 4; pass++) {
+            for (uint32_t layers = 1; layers <= 4; layers++) {
+                TSExplicitList<CMapRenderChunk, offsetof(CMapRenderChunk, m_renderChunkLink)>& list = CWorldScene::sortTable.m_renderChunkList[4 * layers + pass];
+                for (CMapRenderChunk* chunk = list.Head(); !list.IsEnd(chunk); chunk = list.RawNext(chunk)) s_chunks.push_back(chunk);
+            }
+        }
+        hdGpuTerrain = HD::GpuTerrain::Begin(s_chunks);
+    }
 
     for (uint32_t pass = 0; pass < 4; pass++) {
         switch (pass) {
@@ -3730,9 +3922,19 @@ void CWorldScene::RenderChunksSinglePass() {
 
             TSExplicitList<CMapRenderChunk, offsetof(CMapRenderChunk, m_renderChunkLink)>& list = CWorldScene::sortTable.m_renderChunkList[4 * layers + pass];
             CMapRenderChunk* renderChunk = list.Head();
+            const bool hdGroups = hdGpuTerrain && CMapRenderChunk::s_currentShaderX[layers - 1] != nullptr; // Claude B3
 
             while (!list.IsEnd(renderChunk)) {
                 CMapRenderChunk* next = list.RawNext(renderChunk);
+
+                // Claude B3: the chunk joins a group the GPU draws in one command; otherwise the original
+                if (hdGroups && HD::GpuTerrain::Add(renderChunk, static_cast<int32_t>(layers))) {
+                    renderChunk->m_renderChunkLink.Unlink();
+                    CMap::s_mapRenderChunkUpdateList.LinkToTail(renderChunk);
+                    renderChunk = next;
+                    continue;
+                }
+
                 renderChunk->RenderSetup(1);
 
                 if (CWorld::enables & Enable_Chunks) {
@@ -3757,6 +3959,8 @@ void CWorldScene::RenderChunksSinglePass() {
 
                 renderChunk = next;
             }
+
+            if (hdGroups) HD::GpuTerrain::Flush(); // Claude B3
         }
     }
 
@@ -3928,24 +4132,106 @@ void CWorldScene::AddDoodadDefs(TSList<CMapBaseObjLink, TSGetExplicitLink<CMapBa
     }
 }
 
-// VERIFY: 9f2071e4 manual
-// OFFSET: 0x00799980
-void CWorldScene::CullDoodadsExterior(TSList<CMapBaseObjLink, TSGetExplicitLink<CMapBaseObjLink> >* linkList, uint8_t fadeLevel) {
-    CMapBaseObjLink* link = linkList->Head();
+// Claude B4 (24 nov 2026): CullDoodadsExterior, same doodads, same order, same statements, from an array kept per chunk
+// (void as soon as one is linked or unlinked, m_hdLinkGen, or changes size level, HD::GpuFixed::ListGeneration) instead of the
+// linked list: the next doodads are fetched from memory ahead, and the small far ones without a lamp are not in it.
+struct HdCullEntry {
+    CMapDoodadDef* doodad;
+    uint32_t level;
+    uint32_t lit;   // 1: its model is loaded and has no lamp (HdLitDoodad is false), 0: to be asked
+};
 
-    while (!linkList->IsEnd(link)) {
+struct HdCullList {
+    uint32_t capacity;
+    HdCullEntry entries[1];
+};
+
+void HdCullListFree(HdCullList* list) {
+    free(list);
+}
+
+static bool HdNeverLit(const CMapDoodadDef* doodadDef) {
+    const CM2Model* model = doodadDef->m_model;
+    return model && (model->m_fFlags & 1) && model->m_shared && model->m_shared->m_data && model->m_shared->m_data->m_lights.m_count == 0;
+}
+
+// The chunk's list for this size level: the doodads the original walk does something with.
+static void HdCullListMake(CMapChunk* chunk, uint32_t gen, uint8_t fadeLevel, bool stops) {
+    uint32_t total = 0;
+    for (CMapBaseObjLink* link = chunk->m_doodadDefLinkList.Head(); link; link = chunk->m_doodadDefLinkList.Next(link)) ++total;
+    if (total && (!chunk->m_hdCull || chunk->m_hdCull->capacity < total)) {
+        free(chunk->m_hdCull);
+        chunk->m_hdCull = static_cast<HdCullList*>(malloc(sizeof(HdCullList) + sizeof(HdCullEntry) * total));
+        chunk->m_hdCull->capacity = total;
+    }
+    uint32_t count = 0;
+    for (CMapBaseObjLink* link = chunk->m_doodadDefLinkList.Head(); link; link = chunk->m_doodadDefLinkList.Next(link)) {
         CMapDoodadDef* doodadDef = static_cast<CMapDoodadDef*>(link->m_owner);
-
+        const bool neverLit = HdNeverLit(doodadDef);
         if (doodadDef->m_fadeLevel < fadeLevel) {
-            if (CMap::header.m_flags & 0x8) {
-                return;
+            if (stops) break;
+            if (neverLit) continue;
+        }
+        chunk->m_hdCull->entries[count++] = { doodadDef, doodadDef->m_fadeLevel, neverLit ? 1u : 0u };
+    }
+    chunk->m_hdCullGen = gen;
+    chunk->m_hdCullLinkGen = chunk->m_hdLinkGen;
+    chunk->m_hdCullKey = fadeLevel | (stops ? 0x100u : 0u);
+    chunk->m_hdCullCount = count;
+}
+
+static void HdCullFetch(const CMapDoodadDef* doodadDef) {
+    _mm_prefetch(reinterpret_cast<const char*>(&doodadDef->m_sphere), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&doodadDef->m_cullPassStamp), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&doodadDef->m_model), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&doodadDef->m_flags), _MM_HINT_T0);
+}
+
+// The next chunks of the sort entry, fetched from memory ahead (the second one after, then what the next one points to).
+static void HdCullFetch(const CMapChunk* next, const CMapChunk* after) {
+    if (next->m_hdCullCount && next->m_hdCull) {
+        _mm_prefetch(reinterpret_cast<const char*>(next->m_hdCull), _MM_HINT_T0);
+        _mm_prefetch(reinterpret_cast<const char*>(next->m_hdCull) + 64, _MM_HINT_T0);
+    }
+    if (next->m_renderChunk) _mm_prefetch(reinterpret_cast<const char*>(next->m_renderChunk), _MM_HINT_T0);
+    if (!after) return;
+    _mm_prefetch(reinterpret_cast<const char*>(&after->m_sphere), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&after->m_distToCamera), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&after->m_sortListLink), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&after->m_header), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&after->m_hdCull), _MM_HINT_T0);
+    _mm_prefetch(reinterpret_cast<const char*>(&after->m_renderChunk), _MM_HINT_T0);
+}
+
+static void HdCullDoodadsExterior(CMapChunk* chunk, uint8_t fadeLevel) {
+    const uint32_t gen = HD::GpuFixed::ListGeneration();
+    const bool stops = (CMap::header.m_flags & 0x8) && !(HD::CataViewDistance::LitFadeEnd() > 0.0f);
+    if (chunk->m_hdCullGen != gen || chunk->m_hdCullLinkGen != chunk->m_hdLinkGen || chunk->m_hdCullKey != (fadeLevel | (stops ? 0x100u : 0u)))
+        HdCullListMake(chunk, gen, fadeLevel, stops);
+    const uint32_t count = chunk->m_hdCullCount;
+    if (!count) return;
+    const HdCullEntry* const entries = chunk->m_hdCull->entries;
+    for (uint32_t i = 0; i < count && i < 6; ++i) HdCullFetch(entries[i].doodad);
+    for (uint32_t i = 0; i < count; ++i) {
+        const HdCullEntry& e = entries[i];
+        if (i + 6 < count) HdCullFetch(entries[i + 6].doodad);
+        if (i + 3 < count) {
+            CMapDoodadDef* a = entries[i + 3].doodad;
+            if (a->m_cullPassStamp != CWorldScene::s_cullPassStamp) {
+                if (const CM2Model* m = a->m_model) _mm_prefetch(reinterpret_cast<const char*>(&m->m_animatePrev), _MM_HINT_T0);
+                HD::GpuScene::Ahead(a);
             }
+        }
+        CMapDoodadDef* doodadDef = e.doodad;
+
+        if (e.level < fadeLevel && (e.lit == 1 || !HdLitDoodad(doodadDef))) { // Claude LV11: a lit doodad passes its size
+            if (HdNeverLit(doodadDef)) chunk->m_hdCullKey = 0xFFFFFFFFu;   // loaded, no lamp: leaves the list
         } else if (doodadDef->m_model && (doodadDef->m_flags & MAPOBJ_FLAG_PREPARED)) {
             if (doodadDef->m_cullPassStamp != CWorldScene::s_cullPassStamp) {
                 doodadDef->m_cullPassStamp = CWorldScene::s_cullPassStamp;
                 doodadDef->m_culled = 1;
                 HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::CullDoodadsTested);
-                int32_t culled = CWorldScene::FrustumCull(doodadDef->m_sphere.c, doodadDef->m_sphere.r);
+                int32_t culled = CWorldScene::FrustumCull(doodadDef->m_sphere.c, doodadDef->m_sphere.r) || HD::CataMirrorOutside(doodadDef->m_sphere.c, doodadDef->m_sphere.r); // Claude LV31
 
                 if (!culled) {
                     doodadDef->m_culled = 0;
@@ -3954,6 +4240,63 @@ void CWorldScene::CullDoodadsExterior(TSList<CMapBaseObjLink, TSGetExplicitLink<
                 if (!culled && CWorldOcclusion::QueryBuffer(doodadDef->m_sphere.c, doodadDef->m_sphere.r, 0x10) < 2) {
                     CWorldScene::AddDoodadDefModelToModelScene(doodadDef);
                     CWorldScene::nDoodadsRendered++;
+                } else if (e.lit != 1 && HdLitDoodad(doodadDef) && !CWorldScene::FrustumCull(doodadDef->m_sphere.c, doodadDef->m_sphere.r + 15.0f) && HdKeepLitDoodad(doodadDef)) {
+                    // Claude LV11: lit doodad out of the frame or occluded, its lights kept
+                } else {
+                    C3Vector delta = doodadDef->m_sphere.c - CWorldScene::s_activeWorldView;
+
+                    if ((doodadDef->m_staticFlags & 0x400) || delta.x * delta.x + delta.z * delta.z + delta.y * delta.y < 100.0f) {
+                        doodadDef->m_model->SetAnimating(1);
+                    } else {
+                        doodadDef->m_model->SetAnimating(0);
+                    }
+                }
+            }
+        } else {
+            CAaBox box;
+            CAaBox bounds = doodadDef->m_model->m_shared->m_boundingBox;
+            CWorldMath::TransformAABox(doodadDef->m_mat, bounds, box);
+            CWorldScene::s_barrier.AddBarrier(box, 10.0f);
+        }
+
+        if (HD::GpuFixed::ListGeneration() != gen) {
+            // A size level moved meanwhile (a model came): the original walk for the rest (what is done is stamped).
+            CWorldScene::CullDoodadsExterior(&chunk->m_doodadDefLinkList, fadeLevel);
+            return;
+        }
+    }
+}
+
+// VERIFY: 9f2071e4 manual
+// OFFSET: 0x00799980
+void CWorldScene::CullDoodadsExterior(TSList<CMapBaseObjLink, TSGetExplicitLink<CMapBaseObjLink> >* linkList, uint8_t fadeLevel) {
+    CMapBaseObjLink* link = linkList->Head();
+
+    while (!linkList->IsEnd(link)) {
+        CMapDoodadDef* doodadDef = static_cast<CMapDoodadDef*>(link->m_owner);
+
+        if (doodadDef->m_fadeLevel < fadeLevel && !HdLitDoodad(doodadDef)) { // Claude LV11: a lit doodad passes its size
+            // List sorted by size: Blizzard stops at the first small one. In lit mode (hdLitObjDist) the walk goes on,
+            // or the small lanterns after it are lost.
+            if ((CMap::header.m_flags & 0x8) && !(HD::CataViewDistance::LitFadeEnd() > 0.0f)) {
+                return;
+            }
+        } else if (doodadDef->m_model && (doodadDef->m_flags & MAPOBJ_FLAG_PREPARED)) {
+            if (doodadDef->m_cullPassStamp != CWorldScene::s_cullPassStamp) {
+                doodadDef->m_cullPassStamp = CWorldScene::s_cullPassStamp;
+                doodadDef->m_culled = 1;
+                HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::CullDoodadsTested);
+                int32_t culled = CWorldScene::FrustumCull(doodadDef->m_sphere.c, doodadDef->m_sphere.r) || HD::CataMirrorOutside(doodadDef->m_sphere.c, doodadDef->m_sphere.r); // Claude LV31
+
+                if (!culled) {
+                    doodadDef->m_culled = 0;
+                }
+
+                if (!culled && CWorldOcclusion::QueryBuffer(doodadDef->m_sphere.c, doodadDef->m_sphere.r, 0x10) < 2) {
+                    CWorldScene::AddDoodadDefModelToModelScene(doodadDef);
+                    CWorldScene::nDoodadsRendered++;
+                } else if (HdLitDoodad(doodadDef) && !CWorldScene::FrustumCull(doodadDef->m_sphere.c, doodadDef->m_sphere.r + 15.0f) && HdKeepLitDoodad(doodadDef)) {
+                    // Claude LV11: lit doodad out of the frame or occluded, its lights kept
                 } else {
                     C3Vector delta = doodadDef->m_sphere.c - CWorldScene::s_activeWorldView;
 
@@ -3981,7 +4324,7 @@ void CWorldScene::CullDoodadsInterior(TSList<CMapBaseObjLink, TSGetExplicitLink<
     for (CMapBaseObjLink* link = linkList->Head(); link; link = linkList->Next(link)) {
         CMapDoodadDef* doodadDef = static_cast<CMapDoodadDef*>(link->m_owner);
 
-        if (doodadDef->m_fadeLevel < fadeLevel) {
+        if (doodadDef->m_fadeLevel < fadeLevel && !HdLitDoodad(doodadDef)) { // Claude LV11: a lit doodad passes its size
             continue;
         }
 
@@ -4030,12 +4373,314 @@ void CWorldScene::CullDoodadsInterior(TSList<CMapBaseObjLink, TSGetExplicitLink<
                 break;
             }
         }
+
+        // Claude LV11: lit doodad in no frame of this group, its lights kept when its grown sphere meets one
+        if (doodadDef->m_culled && HdLitDoodad(doodadDef)) {
+            for (CWFrustum* test = frustum; test; test = test->m_link.Next()) {
+                if (test->Cull(doodadDef->m_sphere.c, doodadDef->m_sphere.r + 15.0f)) {
+                    HdKeepLitDoodad(doodadDef);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// Claude TRI2 (25 nov 2026): CullChunks' statements, one kind at a time over the whole sort entry instead of one chunk at a
+// time (the horizon only moves after the entry, UpdateOcclusion): what each kind reads is asked from memory for all of
+// them first, and the frustums are tested 4 planes at once. Same float operations, same chunks, same doodads, same order.
+static bool HdTri2() {
+    static CVar* cvar = CVar::Register("hdTri2", "HD (Claude TRI2) : 1 = le tri des morceaux de terrain et de leurs objets fait par etapes regroupees (meme "
+                                       "resultat, moins d'attentes de memoire) ; 0 = comme avant", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    return cvar->m_intValue != 0;
+}
+
+static inline void HdFetch(const void* at) {
+    _mm_prefetch(static_cast<const char*>(at), _MM_HINT_T0);
+}
+
+// A frustum's planes, 4 by 4 (the last one repeated), and CFrustum::Cull on them.
+struct HdPlanes4 {
+    __m128 x[2], y[2], z[2], d[2];
+
+    void Set(const CFrustum& frustum) {
+        for (int h = 0; h < 2; ++h) {
+            __m128 p[4];
+            for (int i = 0; i < 4; ++i) p[i] = _mm_loadu_ps(&frustum.planes[h * 4 + i < 6 ? h * 4 + i : 5].n.x);
+            _MM_TRANSPOSE4_PS(p[0], p[1], p[2], p[3]);
+            x[h] = p[0]; y[h] = p[1]; z[h] = p[2]; d[h] = p[3];
+        }
+    }
+
+    bool Inside(const C3Vector& c, float r) const {
+        const __m128 cx = _mm_set1_ps(c.x), cy = _mm_set1_ps(c.y), cz = _mm_set1_ps(c.z), limit = _mm_set1_ps(-r);
+        for (int h = 0; h < 2; ++h) {
+            const __m128 at = _mm_add_ps(_mm_add_ps(_mm_add_ps(_mm_mul_ps(x[h], cx), _mm_mul_ps(z[h], cz)), _mm_mul_ps(y[h], cy)), d[h]);
+            if (_mm_movemask_ps(_mm_cmplt_ps(at, limit))) return false;
+        }
+        return true;
+    }
+
+    // The corner the furthest along each plane: b where the normal is negative.
+    static __m128 Far(__m128 n, __m128 t, __m128 b) {
+        const __m128 negative = _mm_castsi128_ps(_mm_srai_epi32(_mm_castps_si128(n), 31));
+        return _mm_or_ps(_mm_and_ps(negative, b), _mm_andnot_ps(negative, t));
+    }
+
+    bool Inside(const CAaBox& box) const {
+        const __m128 tx = _mm_set1_ps(box.t.x), ty = _mm_set1_ps(box.t.y), tz = _mm_set1_ps(box.t.z);
+        const __m128 bx = _mm_set1_ps(box.b.x), by = _mm_set1_ps(box.b.y), bz = _mm_set1_ps(box.b.z);
+        const __m128 limit = _mm_set1_ps(-0.019444443f);
+        for (int h = 0; h < 2; ++h) {
+            const __m128 at = _mm_add_ps(_mm_add_ps(_mm_add_ps(_mm_mul_ps(Far(z[h], tz, bz), z[h]), _mm_mul_ps(Far(y[h], ty, by), y[h])),
+                                                    _mm_mul_ps(Far(x[h], tx, bx), x[h])), d[h]);
+            if (_mm_movemask_ps(_mm_cmplt_ps(at, limit))) return false;
+        }
+        return true;
+    }
+};
+
+// The frustum of the stack and the two CataMirrorOutside tests.
+struct HdCullPlanes {
+    HdPlanes4 stack, camera, mirror;
+    bool united;
+    float height;
+
+    void Set() {
+        stack.Set(CWorldScene::frustumStack[CWorldScene::frustumIndex]);
+        const CFrustum *a, *b;
+        united = HD::CataMirrorUnion(a, b, height);
+        if (united) { camera.Set(*a); mirror.Set(*b); }
+    }
+
+    bool Inside(const CAaBox& box) const {
+        return stack.Inside(box) && (!united || camera.Inside(box) || (box.t.z >= height && mirror.Inside(box)));
+    }
+
+    bool Inside(const C3Vector& c, float r) const {
+        return stack.Inside(c, r) && (!united || camera.Inside(c, r) || (c.z + r >= height && mirror.Inside(c, r)));
+    }
+};
+
+struct HdCullDoodad {
+    CMapDoodadDef* doodad;
+    uint32_t chunk;     // in s_hdKept
+    uint16_t lit;       // HdCullEntry's
+    uint8_t small;      // below its chunk's size level
+    uint8_t verdict;    // HdCull...
+};
+enum : uint8_t { HdCullNothing, HdCullSeen, HdCullUnseen, HdCullBarrier };
+
+static std::vector<CMapChunk*> s_hdTested, s_hdKept;
+static std::vector<HdCullDoodad> s_hdDoodads;
+
+// CullDoodadsExterior for the kept chunks.
+static void HdCullDoodads(const HdCullPlanes& planes) {
+    const uint32_t gen = HD::GpuFixed::ListGeneration();
+    const bool stops = (CMap::header.m_flags & 0x8) && !(HD::CataViewDistance::LitFadeEnd() > 0.0f);
+
+    s_hdDoodads.clear();
+    for (uint32_t k = 0; k < s_hdKept.size(); ++k) {
+        CMapChunk* chunk = s_hdKept[k];
+        const uint8_t fadeLevel = CWorldView::GetFadeLevelForDistance(chunk->m_distToCamera);
+        if (chunk->m_hdCullGen != gen || chunk->m_hdCullLinkGen != chunk->m_hdLinkGen || chunk->m_hdCullKey != (fadeLevel | (stops ? 0x100u : 0u)))
+            HdCullListMake(chunk, gen, fadeLevel, stops);
+        for (uint32_t i = 0; i < chunk->m_hdCullCount; ++i) {
+            const HdCullEntry& e = chunk->m_hdCull->entries[i];
+            HdCullFetch(e.doodad);
+            s_hdDoodads.push_back({ e.doodad, k, static_cast<uint16_t>(e.lit), static_cast<uint8_t>(e.level < fadeLevel), HdCullNothing });
+        }
+    }
+
+    for (HdCullDoodad& e : s_hdDoodads) {
+        CMapDoodadDef* doodadDef = e.doodad;
+
+        if (e.small && (e.lit == 1 || !HdLitDoodad(doodadDef))) { // Claude LV11: a lit doodad passes its size
+            if (HdNeverLit(doodadDef)) s_hdKept[e.chunk]->m_hdCullKey = 0xFFFFFFFFu;   // loaded, no lamp: leaves the list
+        } else if (doodadDef->m_model && (doodadDef->m_flags & MAPOBJ_FLAG_PREPARED)) {
+            if (doodadDef->m_cullPassStamp != CWorldScene::s_cullPassStamp) {
+                doodadDef->m_cullPassStamp = CWorldScene::s_cullPassStamp;
+                HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::CullDoodadsTested);
+                const bool culled = !planes.Inside(doodadDef->m_sphere.c, doodadDef->m_sphere.r);
+                doodadDef->m_culled = culled;
+                const CM2Model* model = doodadDef->m_model;
+                HdFetch(&model->m_animatePrev);
+
+                if (!culled && CWorldOcclusion::QueryBuffer(doodadDef->m_sphere.c, doodadDef->m_sphere.r, 0x10) < 2) {
+                    e.verdict = HdCullSeen;
+                    HD::GpuScene::Ahead(doodadDef);
+                } else {
+                    e.verdict = HdCullUnseen;
+                    HdFetch(&model->m_flags);
+                }
+            }
+        } else {
+            e.verdict = HdCullBarrier;
+        }
+    }
+
+    const uint32_t count = static_cast<uint32_t>(s_hdDoodads.size());
+    for (uint32_t i = 0; i < count; ++i) {
+        if (i + 4 < count && s_hdDoodads[i + 4].verdict == HdCullSeen) {
+            const CM2Model* model = s_hdDoodads[i + 4].doodad->m_model;
+            HdFetch(model->m_bones);
+            HdFetch(model->m_textures);
+        }
+        const HdCullDoodad& e = s_hdDoodads[i];
+        CMapDoodadDef* doodadDef = e.doodad;
+
+        if (e.verdict == HdCullSeen) {
+            CWorldScene::AddDoodadDefModelToModelScene(doodadDef);
+            CWorldScene::nDoodadsRendered++;
+        } else if (e.verdict == HdCullUnseen) {
+            if (e.lit != 1 && HdLitDoodad(doodadDef) && !CWorldScene::FrustumCull(doodadDef->m_sphere.c, doodadDef->m_sphere.r + 15.0f) && HdKeepLitDoodad(doodadDef)) {
+                // Claude LV11: lit doodad out of the frame or occluded, its lights kept
+            } else {
+                C3Vector delta = doodadDef->m_sphere.c - CWorldScene::s_activeWorldView;
+
+                if ((doodadDef->m_staticFlags & 0x400) || delta.x * delta.x + delta.z * delta.z + delta.y * delta.y < 100.0f) {
+                    doodadDef->m_model->SetAnimating(1);
+                } else {
+                    doodadDef->m_model->SetAnimating(0);
+                }
+            }
+        } else if (e.verdict == HdCullBarrier) {
+            CAaBox box;
+            CAaBox bounds = doodadDef->m_model->m_shared->m_boundingBox;
+            CWorldMath::TransformAABox(doodadDef->m_mat, bounds, box);
+            CWorldScene::s_barrier.AddBarrier(box, 10.0f);
+        }
+
+        if (HD::GpuFixed::ListGeneration() != gen) {
+            // A size level moved meanwhile (a model came): the original walk for the rest.
+            const uint32_t from = e.chunk;
+            for (uint32_t k = i + 1; k < count; ++k)
+                if (s_hdDoodads[k].verdict == HdCullSeen || s_hdDoodads[k].verdict == HdCullUnseen) s_hdDoodads[k].doodad->m_cullPassStamp = CWorldScene::s_cullPassStamp - 1;
+            for (uint32_t k = from; k < s_hdKept.size(); ++k)
+                CWorldScene::CullDoodadsExterior(&s_hdKept[k]->m_doodadDefLinkList, CWorldView::GetFadeLevelForDistance(s_hdKept[k]->m_distToCamera));
+            return;
+        }
+    }
+}
+
+static void HdCullChunks(CSortEntry* entry, uint32_t index) {
+    CMapChunk* head = entry->m_mapChunkList.Head();
+    if (!head) return;
+
+    HdCullPlanes planes;
+    planes.Set();
+    s_hdTested.clear();
+    s_hdKept.clear();
+
+    for (CMapChunk* chunk = head; chunk;) {
+        CMapChunk* next = entry->m_mapChunkList.Next(chunk);
+        if (next) HdFetch(&next->m_sortListLink);
+        chunk->m_sortListLink.Unlink();
+        s_hdTested.push_back(chunk);
+        HdFetch(&chunk->m_sphere);
+        HdFetch(&chunk->m_bbox.t);
+        HdFetch(&chunk->m_distToCamera);
+        HdFetch(&chunk->m_renderChunk);
+        HdFetch(&chunk->m_header);
+        HdFetch(&chunk->m_hdCull);
+        chunk = next;
+    }
+
+    for (CMapChunk* chunk : s_hdTested) {
+        HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::CullChunksTested);
+
+        if (planes.Inside(chunk->m_bbox) && !CWorldOcclusion::QueryVolumes(&chunk->m_sphere) && !CWorldOcclusion::QueryBuffer(&chunk->m_bbox, 0)) {
+            HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::CullChunksKept);
+            s_hdKept.push_back(chunk);
+            HdFetch(chunk->m_hdCull);
+            HdFetch(chunk->m_header);
+            if (const CMapRenderChunk* renderChunk = chunk->m_renderChunk) {
+                HdFetch(renderChunk);
+                HdFetch(&renderChunk->m_chunkBuf);
+            }
+        }
+    }
+
+    HdCullDoodads(planes);
+
+    C3Vector corner(0.0f, 0.0f, 0.0f);
+    const bool occlude = (CWorld::enables & Enable_Culling) && index < 63;
+    const uint32_t count = static_cast<uint32_t>(s_hdKept.size());
+
+    for (uint32_t i = 0; i < count; ++i) {
+        if (i + 6 < count) {
+            const CMapRenderChunk* ahead = s_hdKept[i + 6]->m_renderChunk;
+            if (ahead && ahead->m_chunkBuf) HdFetch(ahead->m_chunkBuf);
+        }
+        if (i + 3 < count) {
+            const CMapRenderChunk* ahead = s_hdKept[i + 3]->m_renderChunk;
+            if (ahead && ahead->m_chunkBuf) {
+                HdFetch(&ahead->m_chunkBuf->m_block->m_bufLink);
+                HdFetch(&ahead->m_chunkBuf->m_vertexBuf->m_hasData);
+                HdFetch(&ahead->m_chunkBuf->m_indexBuf->m_hasData);
+            }
+        }
+        CMapChunk* chunk = s_hdKept[i];
+
+        if (planes.stack.Inside(chunk->m_bbox2) && !CWorldOcclusion::QueryBuffer(&chunk->m_bbox2, 0)) {
+            if (chunk->m_header->m_holes != 0xFFFF) {
+                CWorldScene::s_chunksRendered++;
+                chunk->RenderPrep();
+
+                CMapRenderChunk* renderChunk = chunk->m_renderChunk;
+
+                if (renderChunk) {
+                    uint32_t layerCount = (renderChunk->m_unkFlags & 8) ? renderChunk->m_layersCount : 0;
+                    uint32_t variant = 0;
+
+                    if (layerCount) {
+                        uint32_t flags = renderChunk->m_renderFlags;
+                        variant = (flags & 1) ? ((flags & 4) | 2) >> 1 : (flags >> 1) & 2;
+                    }
+
+                    CWorldScene::sortTable.m_renderChunkList[4 * layerCount + variant].LinkToTail(chunk->m_renderChunk);
+                }
+            }
+
+            if (occlude) {
+                if (chunk->m_header->m_holes) {
+                    CWorldScene::sortTable.m_table[index].m_holedChunkList.LinkToTail(chunk);
+                } else {
+                    chunk->GetVertexPosition(CMapChunk::cornerVertexIndex[CMapChunk::nearCornerIndex], &corner);
+
+                    int32_t bucket = 0;
+                    float distance = CWorldScene::DistanceToCamPlaneXY(&corner);
+
+                    if (distance <= 0.0f || (bucket = CMath::fint_(distance * 0.029999999f - 0.5f)) < 64) {
+                        CWorldScene::sortTable.m_table[bucket].m_holedChunkList.LinkToTail(chunk);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The heights CMapChunk::ClipBufferUpdate reads for the entry's chunks.
+static void HdOcclusionFetch(CSortEntry* entry) {
+    const uint32_t row = CWorldScene::s_activeWorldView.x > CWorldScene::camTarget.x ? 136u : 0u;
+    const uint32_t column = CWorldScene::s_activeWorldView.y > CWorldScene::camTarget.y ? 8u : 0u;
+    for (CMapChunk* chunk = entry->m_holedChunkList.Head(); chunk; chunk = entry->m_holedChunkList.Next(chunk)) {
+        const float* heights = chunk->m_height;
+        if (CWorldScene::s_occlusionFarDepth <= chunk->m_distToCamera) continue;
+        HdFetch(heights + row);
+        HdFetch(heights + row + 8);
+        for (uint32_t i = 0; i < 9; ++i) HdFetch(heights + column + 17u * i);
     }
 }
 
 // VERIFY: 1b6761ad manual
 // OFFSET: 0x00799D40
 void CWorldScene::CullChunks(CSortEntry* entry, uint32_t index) {
+    if (HdTri2() && HD::GpuFixed::B4()) { // Claude TRI2
+        HdCullChunks(entry, index);
+        return;
+    }
+
     C3Vector corner(0.0f, 0.0f, 0.0f);
     int32_t occlude = (CWorld::enables & Enable_Culling) && index < 63;
 
@@ -4044,21 +4689,19 @@ void CWorldScene::CullChunks(CSortEntry* entry, uint32_t index) {
     while (chunk) {
         CMapChunk* next = entry->m_mapChunkList.Next(chunk);
         chunk->m_sortListLink.Unlink();
+        if (next && HD::GpuFixed::B4()) HdCullFetch(next, entry->m_mapChunkList.Next(next)); // Claude B4
 
         HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::CullChunksTested);
 
-        if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(chunk->m_bbox) && !CWorldOcclusion::QueryVolumes(&chunk->m_sphere) && !CWorldOcclusion::QueryBuffer(&chunk->m_bbox, 0)) {
+        if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(chunk->m_bbox) && !HD::CataMirrorOutside(chunk->m_bbox) /* Claude LV31 */ && !CWorldOcclusion::QueryVolumes(&chunk->m_sphere) && !CWorldOcclusion::QueryBuffer(&chunk->m_bbox, 0)) {
             HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::CullChunksKept);
-            uint64_t hdPerf = HD::CataRenderPerf::Begin();
-            CWorldScene::CullDoodadsExterior(&chunk->m_doodadDefLinkList, CWorldView::GetFadeLevelForDistance(chunk->m_distToCamera));
-            HD::CataRenderPerf::End(HD::CataRenderPerf::Stage::CullChunkDoodads, hdPerf);
+            if (HD::GpuFixed::B4()) HdCullDoodadsExterior(chunk, CWorldView::GetFadeLevelForDistance(chunk->m_distToCamera));   // Claude B4
+            else CWorldScene::CullDoodadsExterior(&chunk->m_doodadDefLinkList, CWorldView::GetFadeLevelForDistance(chunk->m_distToCamera));
 
             if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(chunk->m_bbox2) && !CWorldOcclusion::QueryBuffer(&chunk->m_bbox2, 0)) {
                 if (chunk->m_header->m_holes != 0xFFFF) {
                     CWorldScene::s_chunksRendered++;
-                    hdPerf = HD::CataRenderPerf::Begin();
                     chunk->RenderPrep();
-                    HD::CataRenderPerf::End(HD::CataRenderPerf::Stage::CullChunkPrep, hdPerf);
 
                     CMapRenderChunk* renderChunk = chunk->m_renderChunk;
 
@@ -4148,7 +4791,7 @@ void CWorldScene::CullMapObjDefGroups(CSortEntry* entry, CRect* rect, uint32_t i
 
         CMapObjDef* mapObjDef = static_cast<CMapObjDef*>(group->m_parentLinkList.Head()->m_ref);
 
-        if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(group->m_bbox) && !CWorldOcclusion::QueryVolumes(&group->m_sphere) && !CWorldOcclusion::QueryBuffer(&group->m_bbox, 0)) {
+        if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(group->m_bbox) && !HD::CataMirrorOutside(group->m_bbox) /* Claude LV31 */ && !CWorldOcclusion::QueryVolumes(&group->m_sphere) && !CWorldOcclusion::QueryBuffer(&group->m_bbox, 0)) {
             mapObjDef->CullMapObjDefGroupFromExterior(group, rect, 0);
             CWorldScene::AddDoodadDefs(&group->m_doodadDefLinkList, index);
         }

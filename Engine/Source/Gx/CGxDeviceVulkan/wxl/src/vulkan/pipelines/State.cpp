@@ -100,16 +100,19 @@ namespace wxlvk::vk::pipelines::detail
             if (p != VK_NULL_HANDLE) d.DestroyDescriptorPool(device, p, nullptr);
             p = VK_NULL_HANDLE;
         }
-        for (auto& slot : s.poolSpill)
-            for (VkDescriptorPool& p : slot)
-            {
+        for (auto& slot : s.poolSpill)   // Claude RING1: grown on demand
+        {
+            for (VkDescriptorPool p : slot)
                 if (p != VK_NULL_HANDLE) d.DestroyDescriptorPool(device, p, nullptr);
-                p = VK_NULL_HANDLE;
-            }
-        if (s.ringSpillPool != VK_NULL_HANDLE) d.DestroyDescriptorPool(device, s.ringSpillPool, nullptr);
-        s.ringSpillPool = VK_NULL_HANDLE;
-        for (auto& slot : s.ringSpillSets)
-            for (VkDescriptorSet& set : slot) set = VK_NULL_HANDLE;
+            slot.clear();
+        }
+        for (auto& slot : s.ringSpillPools)   // their sets go with them
+        {
+            for (VkDescriptorPool p : slot)
+                if (p != VK_NULL_HANDLE) d.DestroyDescriptorPool(device, p, nullptr);
+            slot.clear();
+        }
+        for (auto& slot : s.ringSpillSets) slot.clear();
         // The pool frees its sets.
         if (s.regsPool != VK_NULL_HANDLE) d.DestroyDescriptorPool(device, s.regsPool, nullptr);
         s.regsPool = VK_NULL_HANDLE;
@@ -118,6 +121,8 @@ namespace wxlvk::vk::pipelines::detail
         if (s.bonesPool != VK_NULL_HANDLE) d.DestroyDescriptorPool(device, s.bonesPool, nullptr);
         s.bonesPool = VK_NULL_HANDLE;
         for (VkDescriptorSet& set : s.bonesSets) set = VK_NULL_HANDLE;
+
+        DropTable(d, device);   // Claude B3
 
         for (uint32_t i = 0; i < s.layoutCount; ++i)
         {
@@ -128,6 +133,7 @@ namespace wxlvk::vk::pipelines::detail
             if(l.motionWindBones)d.DestroyPipelineLayout(device,l.motionWindBones,nullptr);
 #endif
             if (l.bones != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.bones, nullptr);
+            if (l.table != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.table, nullptr);   // Claude B3
             if (l.wind != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.wind, nullptr);
             if (l.windBones != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.windBones, nullptr);
             if (l.windShadow != VK_NULL_HANDLE) d.DestroyPipelineLayout(device, l.windShadow, nullptr);
@@ -153,8 +159,11 @@ namespace wxlvk::vk::pipelines::detail
     void DropRing()
     {
         for (memory::Buffer& b : s.ring) memory::DestroyBuffer(b); // a zeroed buffer is a no-op
-        for (auto& slot : s.ringSpill)
+        for (auto& slot : s.ringSpill)   // Claude RING1: grown on demand
+        {
             for (memory::Buffer& b : slot) memory::DestroyBuffer(b);
+            slot.clear();
+        }
         for (memory::Buffer& b : s.boneRing) memory::DestroyBuffer(b);
         for (uint32_t& c : s.boneCursor) c = 0;
         s.bonesReady = false;

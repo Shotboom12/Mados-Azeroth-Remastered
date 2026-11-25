@@ -14,7 +14,7 @@
 #include "WoW/Source/Ui/WorldFrame.h"
 #include "WoW/Source/WorldClient/World.h"
 #ifdef WOWDECOMP_LUMEN
-// HD 2026-11-02, kit commun R1 lot G1: Seyris wind model (GPLv3, hd/seyris), read only of map, area and weather.
+// Claude 2026-11-02, kit commun R1 lot G1: Seyris wind model (GPLv3, hd/seyris), read only of map, area and weather.
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/seyris/SxCore.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/WorldClient/Map.h"

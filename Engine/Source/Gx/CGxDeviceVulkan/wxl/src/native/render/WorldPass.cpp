@@ -25,7 +25,7 @@
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanBloom.h" // HD: hdBloom
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanGrade.h" // HD: hdGrade
 #ifdef WOWDECOMP_LUMEN
-#include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdLumenBridge.h" // HD 2026-11-02 kit R1 lot L1: R2 snapshot
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdLumenBridge.h" // Claude 2026-11-02 kit R1 lot L1: R2 snapshot
 #endif
 #ifdef WOWDECOMP_FSR
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRuntime.h" // HD: FSR statuses (step A)
@@ -62,7 +62,7 @@ namespace
         HD::VulkanBloom::Resize(); // HD: hdBloom / hdRays
         HD::VulkanGrade::Resize(); // HD: hdGrade
 #ifdef WOWDECOMP_LUMEN
-        HD::LumenBridge::Frame(); // HD 2026-11-02 kit R1 lot L1: R2 snapshot at the render size, nothing when every hdLv* case is off
+        HD::LumenBridge::Frame(); // Claude 2026-11-02 kit R1 lot L1: R2 snapshot at the render size, nothing when every hdLv* case is off
 #endif
         wxlvk::native::present::NoteWorld(true);   // the G-buffer class may be taken from here to AfterOpaqueWorld
         wxlvk::native::render::jitter::BeginWorld();

@@ -9,6 +9,7 @@
 #include "Engine/Source/Base/CDataAllocator.h"
 #include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/ConsoleBase/Types.h" // HD lot LV8: CATEGORY_GRAPHICS
 #include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
@@ -33,7 +34,9 @@
 #include "WoW/Source/WorldClient/WorldParam.h"
 #include "Engine/Source/Gxu/Gxu.h"
 #include "WoW/Source/Ui/WorldFrame.h"
-#include "WoW/Source/WorldClient/HD/HdForever.h" // HD: hdForever cvar
+#include "WoW/Source/WorldClient/HD/HdForever.h"
+#include "WoW/Source/WorldClient/HD/HdArLight.h" // AR1: the world light tables, ours
+#include "WoW/Source/WorldClient/HD/HdWorldLightingFrame.h"
 #include "WoW/Source/WorldClient/HD/HdTime.h" // HD: hdTime cvar
 #include "Engine/Source/Model2/HdExtraLamps.h"
 
@@ -272,34 +275,28 @@ static C3Vector GetLightPosition(const LightRec* const* light) {
 // VERIFY: 28940a59 auto
 // OFFSET: 0x007EB180
 const LightParamsRec* DayNight::GetLightParams(const LightRec* light, int32_t param) {
-    return HD::ForeverLightParams(light, param, g_lightParamsDB.GetRecord(light->m_lightParamsID[param])); // HD: hdForever cvar (was: return g_lightParamsDB.GetRecord(...))
+    if (!light || param < 0 || param >= 8) return nullptr;
+    const LightParamsRec* metadata = HD::ArLight::Params(light->m_lightParamsID[param]); // AR1: was g_lightParamsDB
+    if (!metadata && param != 0) metadata = HD::ArLight::Params(light->m_lightParamsID[0]);
+    return HD::ForeverLightParams(light, param, metadata);
 }
 
 // VERIFY: 731bfb93 auto
 // OFFSET: 0x007EBF90
 float DayNight::CalcIndividualColorFromDBRec(float time, const LightParamsRec* params, int32_t band) {
-    LightFloatBandRec rec;
-    g_lightFloatBandDB.GetRecord(band + 6 * HD::RealLightParamsId(params) - 5, &rec); // HD: hdForever cvar (was: params->m_id)
-    return DayNight::InterpFloatBand(&rec, time, band);
+    const int32_t metadata = HD::RealLightParamsId(params);
+    if (metadata <= 0) return HD::DefaultLightFloatBand(band);
+    const LightFloatBandRec* rec = HD::ArLight::FloatBand(metadata, band); // AR1: was g_lightFloatBandDB
+    if (!rec) return HD::DefaultLightFloatBand(band);
+    return DayNight::InterpFloatBand(rec, time, band);
 }
 
 // VERIFY: bab367f3 auto
 // OFFSET: 0x007EBFF0
 void DayNight::LoadLightingBands(float time, CurrentLight* light, const LightParamsRec* params) {
-    light->m_diffuse = DayNight::LoadLightIntBand(time, params, 0);
-    light->m_ambient = DayNight::LoadLightIntBand(time, params, 1);
-    light->m_skyColors[0] = DayNight::LoadLightIntBand(time, params, 2);
-    light->m_skyColors[1] = DayNight::LoadLightIntBand(time, params, 3);
-    light->m_skyColors[2] = DayNight::LoadLightIntBand(time, params, 4);
-    light->m_skyColors[3] = DayNight::LoadLightIntBand(time, params, 5);
-    light->m_skyColors[4] = DayNight::LoadLightIntBand(time, params, 6);
-    light->m_skyColors[5] = DayNight::LoadLightIntBand(time, params, 7);
+    if (!params) params = HD::DefaultLightMetadata();
+    HD::LoadWorldLightFor(light, params, time, {light->m_diffuse, light->m_ambient, light->m_skyColors, light->m_sunCloudColors});
     light->m_shadowOpacity = DayNight::LoadLightIntBand(time, params, 8);
-    light->m_sunCloudColors[0] = DayNight::LoadLightIntBand(time, params, 9);
-    light->m_sunCloudColors[1] = DayNight::LoadLightIntBand(time, params, 10);
-    light->m_sunCloudColors[2] = DayNight::LoadLightIntBand(time, params, 11);
-    light->m_sunCloudColors[3] = DayNight::LoadLightIntBand(time, params, 12);
-    light->m_sunCloudColors[4] = DayNight::LoadLightIntBand(time, params, 13);
     light->m_waterColors[0] = DayNight::LoadLightIntBand(time, params, 14);
     light->m_waterColors[1] = DayNight::LoadLightIntBand(time, params, 15);
     light->m_waterColors[2] = DayNight::LoadLightIntBand(time, params, 16);
@@ -339,19 +336,7 @@ void DayNight::BlendColors(CurrentLight* dst, const CurrentLight* src, float t) 
         t = 1.0f;
     }
 
-    dst->m_diffuse = DayNight::InterpColor(dst->m_diffuse, src->m_diffuse, t);
-    dst->m_ambient = DayNight::InterpColor(dst->m_ambient, src->m_ambient, t);
-    dst->m_skyColors[0] = DayNight::InterpColor(dst->m_skyColors[0], src->m_skyColors[0], t);
-    dst->m_skyColors[1] = DayNight::InterpColor(dst->m_skyColors[1], src->m_skyColors[1], t);
-    dst->m_skyColors[2] = DayNight::InterpColor(dst->m_skyColors[2], src->m_skyColors[2], t);
-    dst->m_skyColors[3] = DayNight::InterpColor(dst->m_skyColors[3], src->m_skyColors[3], t);
-    dst->m_skyColors[4] = DayNight::InterpColor(dst->m_skyColors[4], src->m_skyColors[4], t);
-    dst->m_skyColors[5] = DayNight::InterpColor(dst->m_skyColors[5], src->m_skyColors[5], t);
-    dst->m_sunCloudColors[0] = DayNight::InterpColor(dst->m_sunCloudColors[0], src->m_sunCloudColors[0], t);
-    dst->m_sunCloudColors[1] = DayNight::InterpColor(dst->m_sunCloudColors[1], src->m_sunCloudColors[1], t);
-    dst->m_sunCloudColors[2] = DayNight::InterpColor(dst->m_sunCloudColors[2], src->m_sunCloudColors[2], t);
-    dst->m_sunCloudColors[3] = DayNight::InterpColor(dst->m_sunCloudColors[3], src->m_sunCloudColors[3], t);
-    dst->m_sunCloudColors[4] = DayNight::InterpColor(dst->m_sunCloudColors[4], src->m_sunCloudColors[4], t);
+    HD::BlendWorldLightFor(dst, src, t, {dst->m_diffuse, dst->m_ambient, dst->m_skyColors, dst->m_sunCloudColors}, {src->m_diffuse, src->m_ambient, src->m_skyColors, src->m_sunCloudColors});
     dst->m_waterColors[0] = DayNight::InterpColor(dst->m_waterColors[0], src->m_waterColors[0], t);
     dst->m_waterColors[1] = DayNight::InterpColor(dst->m_waterColors[1], src->m_waterColors[1], t);
     dst->m_waterColors[2] = DayNight::InterpColor(dst->m_waterColors[2], src->m_waterColors[2], t);
@@ -695,27 +680,15 @@ float DayNight::InterpTable(const C2Vector* table, uint32_t count, float t) {
 void DayNight::BlendOutputs(CurrentLight* dst, const CurrentLight* src, float t) {
     CImVector color;
 
-    DayNight::ColorLerpBytes(&color, &dst->m_ambient, &src->m_ambient, t);
-    dst->m_ambient = color;
-    DayNight::ColorLerpBytes(&color, &dst->m_diffuse, &src->m_diffuse, t);
-    dst->m_diffuse = color;
+    HD::BlendWorldLightFor(dst, src, t, {dst->m_diffuse, dst->m_ambient, dst->m_skyColors, dst->m_sunCloudColors}, {src->m_diffuse, src->m_ambient, src->m_skyColors, src->m_sunCloudColors});
     DayNight::ColorLerpBytes(&color, &dst->m_shadowOpacity, &src->m_shadowOpacity, t);
     dst->m_shadowOpacity = color;
 
-    for (int32_t i = 0; i < 6; i++) {
-        DayNight::ColorLerpBytes(&color, &dst->m_skyColors[i], &src->m_skyColors[i], t);
-        dst->m_skyColors[i] = color;
-    }
 
     dst->m_fogEnd = src->m_fogEnd < dst->m_fogEnd ? dst->m_fogEnd - (dst->m_fogEnd - src->m_fogEnd) * t : dst->m_fogEnd + (src->m_fogEnd - dst->m_fogEnd) * t;
     dst->m_fogStartMul = src->m_fogStartMul < dst->m_fogStartMul ? dst->m_fogStartMul - (dst->m_fogStartMul - src->m_fogStartMul) * t : dst->m_fogStartMul + (src->m_fogStartMul - dst->m_fogStartMul) * t;
     dst->m_fogRate = src->m_fogRate < dst->m_fogRate ? dst->m_fogRate - (dst->m_fogRate - src->m_fogRate) * t : dst->m_fogRate + (src->m_fogRate - dst->m_fogRate) * t;
     dst->m_highlightSky = src->m_highlightSky < dst->m_highlightSky ? dst->m_highlightSky - (dst->m_highlightSky - src->m_highlightSky) * t : dst->m_highlightSky + (src->m_highlightSky - dst->m_highlightSky) * t;
-
-    for (int32_t i = 0; i < 5; i++) {
-        DayNight::ColorLerpBytes(&color, &dst->m_sunCloudColors[i], &src->m_sunCloudColors[i], t);
-        dst->m_sunCloudColors[i] = color;
-    }
 
     for (int32_t i = 0; i < 4; i++) {
         DayNight::ColorLerpBytes(&color, &dst->m_waterColors[i], &src->m_waterColors[i], t);
@@ -845,6 +818,7 @@ DayNight::CurrentLight& DayNight::CurrentLight::operator=(const CurrentLight& so
     this->m_skyboxes[2].m_weight = source.m_skyboxes[2].m_weight;
     this->m_cloudTypeId = source.m_cloudTypeId;
     this->m_cloudWeight = source.m_cloudWeight;
+    HD::CopyWorldLightFor(this, &source);
     return *this;
 }
 
@@ -1017,6 +991,7 @@ void DayNight::InitMoonGlare() {
 // VERIFY: 38c6efb3 manual
 // OFFSET: 0x007EE360
 DayNight::CurrentLight::CurrentLight() {
+    HD::ForgetWorldLightFor(this); // a reused stack address is not an old light
     this->m_skyboxes[0].m_weight = 0.0f;
     this->m_skyboxes[1].m_weight = 0.0f;
     this->m_skyboxes[0].m_id = 0;
@@ -1214,7 +1189,7 @@ void DayNight::SetPlanets() {
     float cosPhi = CMath::cos_(phi);
     float x = cosPhi * sinTheta;
     float y = sinTheta * sinPhi;
-    if (HD::SunFollowsLight()) {
+    { // AR1: the sun always sits where the world light comes from (the original sun path is gone)
         const float w=HD::DayNightSmoothingEnabled()?HD::DayNightBlendWeight():((info.m_dayProgression>=.2013889f&&info.m_dayProgression<=.9236111f)?1.f:0.f);
         const auto dir=HD::DayNightMath::Blend({x,y,cosTheta},{-info.m_light1.m_dir.x,-info.m_light1.m_dir.y,-info.m_light1.m_dir.z},w);
         x=float(dir.x);y=float(dir.y);cosTheta=float(dir.z);
@@ -2133,6 +2108,28 @@ void DayNight::DoAreaLights(CurrentLight* light, int32_t underwater) {
     }
 }
 
+// HD lot LV8 (Claude 2026-11-13): hdFogEndMin = shortest distance (yards) at which the outdoor fog of Eastern Kingdoms
+// and Kalimdor (maps 0 and 1) may close. Light.dbc gives each zone its own fog end (Arathi 278-444, Elwynn 444-500,
+// Mulgore 1333): a short one is a white wall that follows the camera. Only the end is raised (never past the far clip);
+// the zone's fog colour, its start ratio and the bands Lumenveil reads (m_bands) are unchanged. 0 = original 3.3.5.
+static CVar* s_hdFogEndMin = nullptr;
+static float HdFogEndFloor(float end, float farClip) {
+    if (!s_hdFogEndMin) {
+        s_hdFogEndMin = CVar::Register("hdFogEndMin", "HD (Claude LV8): outdoor fog of Eastern Kingdoms and Kalimdor never closes before this many yards (view distance), capped by the far clip; 0 = original zone distances", 1, "1000", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    }
+    if (!s_hdFogEndMin || (DayNight::s_mapId != 0 && DayNight::s_mapId != 1)) {
+        return end;
+    }
+    float floorEnd = s_hdFogEndMin->m_floatValue;
+    if (!(floorEnd > 0.0f) || !std::isfinite(floorEnd)) {
+        return end;
+    }
+    if (floorEnd > farClip) {
+        floorEnd = farClip;
+    }
+    return floorEnd > end ? floorEnd : end;
+}
+
 // VERIFY: 729edd43 manual
 // OFFSET: 0x007F16F0
 void DayNight::UpdateFog() {
@@ -2152,6 +2149,8 @@ void DayNight::UpdateFog() {
         if (info.m_bands.m_fogEnd < end) {
             end = info.m_bands.m_fogEnd;
         }
+
+        end = HdFogEndFloor(end, info.m_farClip); // HD lot LV8: hdFogEndMin
 
         info.m_fog.m_end = end;
         info.m_fog.m_color = info.m_bands.m_skyColors[5];
@@ -2622,6 +2621,8 @@ DayNight::DNOverrideSky* DayNight::GetOverrideSky(const char* path, uint32_t fla
 // OFFSET: 0x007F3230
 void DayNight::SetColors() {
     DNInfo& info = DayNight::g_dnInfo;
+    const float worldProgression = info.m_dayProgression * 2880.0f;
+    HD::WorldLightUpdate worldUpdate(HD::DayNightBandTime(worldProgression, CMath::fint_(worldProgression - 0.5f)));
     float liquidDepth = 0.0f;
     int32_t liquidStatus = World::SceneCamLiquidStatus(&liquidDepth);
     const LiquidTypeRec* liquid = liquidStatus ? g_liquidTypeDB.GetRecord(liquidStatus) : nullptr;
@@ -2639,7 +2640,7 @@ void DayNight::SetColors() {
     if (DayNight::g_areaLights.m_count) {
         if (liquidStatus && liquidLight) {
             if (liquid) {
-                const LightParamsRec* params = g_lightParamsDB.GetRecord(liquid->m_lightID);
+                const LightParamsRec* params = HD::ArLight::Params(liquid->m_lightID); // AR1: was g_lightParamsDB
                 float progression = info.m_dayProgression * 2880.0f;
                 DayNight::CalcColors(HD::DayNightBandTime(progression, CMath::fint_(progression - 0.5f)), &info.m_bands, params);
             }
@@ -2682,7 +2683,7 @@ void DayNight::SetColors() {
                 info.m_bands.m_skyboxes[1].m_weight = light.m_skyboxes[1].m_weight;
                 info.m_bands.m_skyboxes[2].m_weight = light.m_skyboxes[2].m_weight;
 
-                const LightSkyboxRec* skybox = g_lightSkyboxDB.GetRecord(override->m_lightSkyboxID);
+                const LightSkyboxRec* skybox = HD::ArLight::Skybox(override->m_lightSkyboxID); // AR1: was g_lightSkyboxDB
 
                 if (skybox) {
                     info.m_skybox = DayNight::GetOverrideSky(skybox->m_name, skybox->m_flags);
@@ -2712,6 +2713,9 @@ void DayNight::SetColors() {
         info.m_bands.m_waterShallowAlpha = 0.5f;
     }
 
+    // Publish the SAME selected/overridden/blended value for all receivers.
+    HD::PublishWorldLightFor(&info.m_bands, {info.m_bands.m_diffuse, info.m_bands.m_ambient, info.m_bands.m_skyColors, info.m_bands.m_sunCloudColors});
+    worldUpdate.Finish();
     DayNight::SetLightColors();
 
     if (liquidStatus && liquid && liquid->m_maxDarkenDepth > 0.0f) {
@@ -2790,7 +2794,7 @@ void DayNight::SetColors() {
             continue;
         }
 
-        const LightSkyboxRec* skybox = g_lightSkyboxDB.GetRecord(blend->m_id);
+        const LightSkyboxRec* skybox = HD::ArLight::Skybox(blend->m_id); // AR1: was g_lightSkyboxDB
 
         if (!skybox) {
             continue;
@@ -2815,7 +2819,7 @@ void DayNight::SetColors() {
     }
 
     info.m_curve0 = DayNight::InterpTable(s_curveTable0, 4, info.m_dayProgression);
-    HD::ExtraLamps::SetNight(info.m_curve0); // HD: added lamps lit at night only
+    HD::ExtraLamps::SetNight(HD::ExtraLamps::NightAtDay(info.m_dayProgression)); // HD: lamps lit at night only; Claude 2026-11-05 lot J2: by the clock, 21:30-22:00 (was m_curve0, 20:30-21:30)
     info.m_curve1 = DayNight::InterpTable(s_curveTable1, 2, info.m_dayProgression);
 }
 

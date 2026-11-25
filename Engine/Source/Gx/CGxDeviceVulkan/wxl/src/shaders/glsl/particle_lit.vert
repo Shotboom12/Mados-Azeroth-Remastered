@@ -93,15 +93,38 @@ void main()
     n.z = dot(regs.v[33].xyz, inNormal);
     n = normalize(n);
 
-    // dp3_sat r0.x, -c12, r1: c12 points INTO the scene, so the lambert term is against -c12,
-    // saturated. mad_sat r0.xyz, r0.x, c10, c11: N.L * diffuse + ambient, saturated. mov r0.w, c0.x.
-    // mad_sat o1, v2, r0, c29: vertex colour * lighting + emissive, saturated -- so alpha is
-    // saturate(colour.a * 1 + emissive.a). No 2x scaling anywhere (that is the Mod2x family).
-    float ndl = clamp(dot(-regs.v[12].xyz, n), 0.0, 1.0);
+    // HD lot FE2 (Claude, 2026-11-10): WoW For Ever's lit particle light instead of the 3.3.5 one.
+    // Source: For Ever's pixel shader particle_mod (shaders.zip, pixel/dx_5_0/particle_mod.bls, variant 0),
+    // lighting mode 1, its instructions kept in order (For Ever registers in the comments):
+    //   dp3 r1.w, N, -cb8[3]                      N.L, cb8[3] = sun direction INTO the scene (here c12)
+    //   hemi = mix(horizon, sky, up) for up >= 0  the 3.3.5 particle normal is the batch's "up", so up = 1
+    //                                             and hemi = the sky ambient (here c11)
+    //   (a, b) = (1.233286, 0.456263)             For Ever's linear-light pair (cb5[172].y > 0)
+    //   amb = hemi*b + (0.5*N.L + 0.5) * (hemi*a - hemi*b)      wrapped sun over the ambient
+    //   dp3_sat r6.w, N, -cb8[3]; dir = r6.w * cb8[6] * fade    sun (here c10), fade 1 (cb8[5].z = 0)
+    //   light = probe + amb + dir                 probe = For Ever's 3D ambient volume (t24), not in the
+    //                                             3.3.5 data: left out (0)
+    //   colour = tex_lin * vcol_lin * light, back to gamma at the end of the frame.
+    // For Ever works in linear light (^2.2) and encodes to gamma (^1/2.2) at the end. The normal and the
+    // light are the same for the whole batch, so per vertex = per pixel, and
+    //   (tex^2.2 * vcol^2.2 * light)^(1/2.2) = tex * vcol * light^(1/2.2):
+    // the pixel shader (Combiners_Mod, texture * vertex colour) stays as it is and the vertex colour
+    // carries light^(1/2.2). c10 and c11 are the client's gamma colours (For Ever's own colours when
+    // hdForeverLight is 1), taken to linear first. No 0..1 clamp of the light (For Ever has none);
+    // alpha keeps the shipped saturate(colour.a + emissive.a).
+    float ndl = dot(-regs.v[12].xyz, n);
+    vec3 sky = pow(max(regs.v[11].xyz, vec3(0.0)), vec3(2.2));
+    vec3 sun = pow(max(regs.v[10].xyz, vec3(0.0)), vec3(2.2));
+    vec3 hemiB = sky * 0.456263;
+    vec3 hemiA = sky * 1.233286;
+    vec3 amb = (0.5 * ndl + 0.5) * (hemiA - hemiB) + hemiB;
+    vec3 dir = clamp(ndl, 0.0, 1.0) * sun;
+    vec3 light = amb + dir;
     vec4 lit;
-    lit.xyz = clamp(ndl * regs.v[10].xyz + regs.v[11].xyz, 0.0, 1.0);
+    lit.xyz = pow(max(light, vec3(0.0)), vec3(1.0 / 2.2));
     lit.w   = 1.0;
-    vColor  = clamp(inColor * lit + regs.v[29], 0.0, 1.0);
+    vColor  = inColor * lit + regs.v[29];
+    vColor.a = clamp(vColor.a, 0.0, 1.0);
 
     // (u, v, 1) against the two texture-matrix columns c6.xyw / c7.xyw.
     vec3 t = vec3(inUV, 1.0);

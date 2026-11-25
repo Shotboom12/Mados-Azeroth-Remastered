@@ -26,6 +26,8 @@ class CShaderEffect;
 namespace HD {
     // Starts compiling our MapObj shaders on a background thread (once; called from CMapObj::Initialize).
     void MapObjShadersStart();
+    // Claude BLZ1: called at the end of CWorld::LoadMap (under the loading screen): returns once the compile is over.
+    void MapObjShadersWait();
 
     // Called in CMapObj::SelectWorldShaders just before CShaderEffect::SetShaders, every batch: gives the vertex and
     // pixel shader about to be bound our code or Blizzard's (always both together), to match hdWmoLight, and sets

@@ -2,7 +2,7 @@
 // HdBloom.cpp formulas and HDR intermediate formats, isolated from water/fog/grade modules.
 #include "HdVulkanBloom.h"
 #if defined(WOWDECOMP_LUMEN) && !defined(HD_BLOOM_STANDALONE)
-#include "lumen/LvClient.h" // HD 2026-11-02 kit R1 lot L1: R2 boundary (point 7)
+#include "lumen/LvClient.h" // Claude 2026-11-02 kit R1 lot L1: R2 boundary (point 7)
 namespace {bool LumenComposedShafts(uint64_t s){return HD::Lumen::Client::ComposedShafts(s);}bool LumenNeedsAfterSpells(){return HD::Lumen::Client::NeedsAfterSpells();}}
 #else
 namespace {bool LumenComposedShafts(uint64_t){return false;}bool LumenNeedsAfterSpells(){return false;}} // WOWDECOMP_LUMEN OFF: exactly the old bloom
@@ -124,6 +124,9 @@ bool Effect::Record(const WXL_VkStageContext& ctx,const Settings& settings){
     auto&slot=s->slots[ctx.frameSlot];if(slot.serial==ctx.serial || slot.serial>ctx.completedSerial){s->error="bloom slot in flight/duplicate";return false;}
     if(!std::isfinite(settings.threshold)||!std::isfinite(settings.strength)||!std::isfinite(settings.rayStrength)){s->error="bloom non-finite settings";return false;}
     Settings config=settings;config.threshold=Sat(config.threshold);config.strength=std::clamp(config.strength,0.0f,5.0f);config.rayStrength=std::clamp(config.rayStrength,0.0f,5.0f);config.debug=std::clamp(config.debug,0,3);
+    // Claude 2026-11-05 lot B1: a halo of strength 0 adds exactly nothing (composite: light 0 + scene*(1-0) = scene, alpha kept),
+    // so its 11 passes are skipped. Rays and the debug views keep their own path; the after-spells boundary is untouched.
+    if(config.strength<=0.0f && config.debug==0)config.bloom=false;
     bool readableDepth=ctx.depthView && (ctx.depthLayout==VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || ctx.depthLayout==VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL || ctx.depthLayout==VK_IMAGE_LAYOUT_GENERAL);
     Post post;bool havePost=BuildPost(ctx,config,post);bool rays=config.rays && readableDepth && havePost && (post.visible>.001f || config.debug>0);
     if(!config.bloom && !rays){s->error=config.rays?"bloom skipped: rays need forward scene depth and visible sun":"bloom off";return false;}

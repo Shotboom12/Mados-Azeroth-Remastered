@@ -1,3 +1,4 @@
+#include "WoW/Source/WorldClient/HD/HdCataWater.h" // Claude BLZ1
 #include "Liquid.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -126,6 +127,7 @@ Liquid::CMaterialWaterFFP* Liquid::CMaterialWaterFFP::Create() {
 // VERIFY: a882be97 manual
 // OFFSET: 0x008A5590
 void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, Liquid::IWaveManager* waveManager, const C3Vector& cameraPos, const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
+    if (HD::CataWaterRender(environment, geomFactory, cameraPos, transform, bounds, settings)) return; // Claude BLZ1: Vulkan never draws the 3.3.5 material
     CGxTex* texture1 = settings->GetTexture(0, settings->GetInt(1));
 
     if (!texture1) {
@@ -205,6 +207,7 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
 // VERIFY: b899ce66 manual
 // OFFSET: 0x008A5900
 void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, Liquid::IWaveManager* waveManager, const C3Vector& cameraPos, const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
+    if (HD::CataWaterRender(environment, geomFactory, cameraPos, transform, bounds, settings)) return; // Claude BLZ1: Vulkan never draws the 3.3.5 material
     CGxTex* texture1 = settings->GetTexture(0, settings->GetInt(1));
 
     if (!texture1) {
@@ -284,6 +287,7 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
 // VERIFY: 556f1caa manual
 // OFFSET: 0x008A5C70
 void Liquid::CMaterialWaterFFP::Render(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, Liquid::IWaveManager* waveManager, const C3Vector& cameraPos, const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
+    if (HD::CataWaterRender(environment, geomFactory, cameraPos, transform, bounds, settings)) return; // Claude BLZ1: Vulkan never draws the 3.3.5 material
     CGxTex* texture1 = settings->GetTexture(0, settings->GetInt(1));
 
     if (!texture1) {

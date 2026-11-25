@@ -1,8 +1,10 @@
 #include "WoW/Source/WorldClient/HD/HdSky.h"
+#include "WoW/Source/WorldClient/HD/HdTerrain.h" // AR1: HD::LightModeOf
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <thread>
 #include <vector>
 #include <windows.h>
@@ -14,6 +16,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gx/Types.h"
 #include "WoW/Source/WorldClient/HD/HdGxShader.h"
+#include "WoW/Source/WorldClient/HD/HdShaderBuild.h" // Claude BLZ1
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 
@@ -128,7 +131,6 @@ float4 CloudPS(CloudVertex i, float2 vpos : VPOS) : COLOR0 {
     const char* const kEntry[Sh_Count] = { "SkyVS", "SkyPS", "CloudVS", "CloudPS" };
     const char* const kName[Sh_Count] = { "HdSky:SkyVS", "HdSky:SkyPS", "HdSky:CloudVS", "HdSky:CloudPS" };
 
-    typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 
     std::atomic<int32_t> s_state(StateIdle);
     std::vector<uint8_t> s_code[Sh_Count]; // written by the compile thread before s_state = StateReady
@@ -154,7 +156,7 @@ float4 CloudPS(CloudVertex i, float2 vpos : VPOS) : COLOR0 {
         if (registered) return;
         registered = true;
         HD::ShaderCVars(); // HD: hdShaderDump
-        s_sky = CVar::Register("hdSky", "HD: 1 = WoW Forever sky and clouds, 2 = our shaders with the 3.3.5 look, 3 = test view, 0 = Blizzard sky", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        s_sky = CVar::Register("hdSky", "Azeroth Remastered: 1 = our sky and clouds, 3 = test view. No other value (AR1)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_glow = CVar::Register("hdSkyGlow", "HD: sun glow strength above the horizon (0 = off)", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_glowHorizon = CVar::Register("hdSkyGlowHorizon", "HD: sun glow strength at and below the horizon", 1, "0.8", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_glowSize = CVar::Register("hdSkyGlowSize", "HD: sun glow cone half-angle in degrees", 1, "50", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -177,40 +179,45 @@ float4 CloudPS(CloudVertex i, float2 vpos : VPOS) : COLOR0 {
         return cvar ? Clamp(cvar->m_floatValue, lo, hi) : fallback;
     }
 
-    // Compile thread: the four entry points, all or nothing.
+    // Compile thread: the four entry points, all or nothing (Claude BLZ1: from HD\ShaderCache when it holds them,
+    // else compiled; the world load waits for it, HD::SkyShadersWait).
     void CompileAll() {
-        ULONGLONG start = GetTickCount64();
-        HMODULE module = LoadLibraryA("d3dcompiler_47.dll");
-        D3DCompileFn compile = module ? reinterpret_cast<D3DCompileFn>(GetProcAddress(module, "D3DCompile")) : nullptr;
-        if (!compile) {
-            snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: d3dcompiler_47.dll not found, Blizzard sky kept");
+        std::vector<HD::ShaderBuild::Job> jobs;
+        for (int32_t i = 0; i < Sh_Count; i++) {
+            bool vertex = i == Sh_SkyVS || i == Sh_CloudVS;
+            HD::ShaderBuild::Job job;
+            job.source = kShader;
+            job.name = "HdSky";
+            job.entry = kEntry[i];
+            job.profile = vertex ? "vs_3_0" : "ps_3_0";
+            job.out = &s_code[i];
+            job.what = kEntry[i];
+            job.index = i;
+            jobs.push_back(job);
+        }
+        if (!HD::ShaderBuild::Build("HdSky", jobs, s_threadInfo, sizeof(s_threadInfo))) {
+            HD::ShaderBuild::Error(s_threadInfo);
             s_state.store(StateFailed);
             return;
         }
         for (int32_t i = 0; i < Sh_Count; i++) {
             bool vertex = i == Sh_SkyVS || i == Sh_CloudVS;
-            ID3DBlob* code = nullptr;
-            ID3DBlob* errors = nullptr;
-            HRESULT hr = compile(kShader, strlen(kShader), "HdSky", nullptr, nullptr, kEntry[i], vertex ? "vs_3_0" : "ps_3_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
-            if (FAILED(hr) || !code) {
-                snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: shader %s: %s", kEntry[i], errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown");
-                if (errors) errors->Release();
-                if (code) code->Release();
-                s_state.store(StateFailed);
-                return;
-            }
-            if (errors) errors->Release();
-            const uint8_t* bytes = static_cast<const uint8_t*>(code->GetBufferPointer());
-            s_code[i].assign(bytes, bytes + code->GetBufferSize());
-            HD::ShaderDump("HdSky", !vertex, i, 0, bytes, code->GetBufferSize()); // HD: hdShaderDump
-            code->Release();
+            HD::ShaderDump("HdSky", !vertex, i, 0, &s_code[i][0], s_code[i].size()); // HD: hdShaderDump
         }
-        snprintf(s_threadInfo, sizeof(s_threadInfo), "%d shaders compiled in %u ms", static_cast<int>(Sh_Count), static_cast<uint32_t>(GetTickCount64() - start));
         s_state.store(StateReady);
     }
 
     // Our shaders, made once. They live in the device's own shader list, so the device releases them and makes them
     // again from their code like its own (device reset or re-creation).
+    // Claude BLZ1: our sky could not be drawn: an ERROR in hdSkyInfo and Logs\HdErreurs.txt (once per text).
+    void SkyError(const char* text) {
+        SetInfo(text);
+        static std::string s_last;
+        if (s_last == text) return;
+        s_last = text;
+        HD::ShaderBuild::Error(text);
+    }
+
     bool EnsureShaders() {
         if (s_shaders[Sh_Count - 1]) return true;
         if (s_shadersFailed) return false;
@@ -218,10 +225,10 @@ float4 CloudPS(CloudVertex i, float2 vpos : VPOS) : COLOR0 {
         if (state == StateIdle) {
             int32_t expected = StateIdle;
             if (s_state.compare_exchange_strong(expected, StateCompiling)) std::thread(CompileAll).detach();
-            SetInfo("compiling (Blizzard sky until done)");
+            SkyError("ERROR: sky drawn before its shaders were started (HD::SkyShadersWait not called)");
             return false;
         }
-        if (state == StateCompiling) return false;
+        if (state == StateCompiling) { SkyError("ERROR: sky drawn before its shaders finished compiling"); return false; }
         if (state == StateFailed) {
             s_shadersFailed = true;
             SetInfo(s_threadInfo);
@@ -242,8 +249,8 @@ float4 CloudPS(CloudVertex i, float2 vpos : VPOS) : COLOR0 {
             shader->m_loaded = 0;
             if (!shader->Valid()) {
                 char text[300];
-                snprintf(text, sizeof(text), "ERROR: the device refused shader %s, Blizzard sky kept", kEntry[i]);
-                SetInfo(text);
+                snprintf(text, sizeof(text), "ERROR: the device refused shader %s (sky)", kEntry[i]);
+                SkyError(text);
                 s_shadersFailed = true;
                 return false;
             }
@@ -281,20 +288,22 @@ float4 CloudPS(CloudVertex i, float2 vpos : VPOS) : COLOR0 {
     }
 }
 
+void HD::SkyShadersWait() {
+    RegisterCVars();
+    int32_t expected = StateIdle;
+    if (s_state.compare_exchange_strong(expected, StateCompiling)) std::thread(CompileAll).detach();
+    HD::ShaderBuild::Wait(s_state, StateCompiling);
+}
+
 bool HD::SkyBeginDraw(int32_t pass) {
     RegisterCVars();
-    int32_t mode = s_sky ? s_sky->m_intValue : 0;
-    if (mode <= 0) {
-        SetInfo("off (Blizzard sky)");
-        return false;
-    }
+    const int32_t mode = HD::LightModeOf(s_sky); // AR1: 1 or 3, never the Blizzard / 3.3.5 sky
     if (!HD::ShaderSwapDevice()) { // HD: D3D9, or Vulkan through the translated modules
-        SetInfo("off: needs gxApi d3d9 or vulkan");
+        SkyError("ERROR: sky shaders need gxApi d3d9 or vulkan");
         return false;
     }
     if (!EnsureShaders()) return false;
 
-    bool forever = mode != 2;
     bool test = mode == 3;
     DayNight::DNInfo& info = DayNight::g_dnInfo;
 
@@ -306,13 +315,13 @@ bool HD::SkyBeginDraw(int32_t pass) {
     // Forever's terms. hdSky 2: all off, and an empty glow cone (start cosine 2), so the output is the dome colour
     // (and the texture x colour for the clouds) exactly.
     float storm = 1.0f - Clamp(info.m_stormBlend, 0.0f, 1.0f);
-    float glow = forever ? CVarValue(s_glow, 0.35f, 0.0f, 4.0f) * fade * storm : 0.0f;
-    float glowHorizon = forever ? CVarValue(s_glowHorizon, 0.8f, 0.0f, 4.0f) * fade * storm : 0.0f;
+    float glow = CVarValue(s_glow, 0.35f, 0.0f, 4.0f) * fade * storm;
+    float glowHorizon = CVarValue(s_glowHorizon, 0.8f, 0.0f, 4.0f) * fade * storm;
     float glowCos = cosf(CVarValue(s_glowSize, 50.0f, 1.0f, 179.0f) * 0.017453292f);
     if (glowCos > 0.999f) glowCos = 0.999f;
     if (glow <= 0.0f && glowHorizon <= 0.0f) glowCos = 2.0f;
-    float cloudSun = forever ? CVarValue(s_cloudSun, 1.0f, 0.0f, 8.0f) * fade : 0.0f;
-    float dither = forever ? CVarValue(s_dither, 1.0f, 0.0f, 8.0f) * (1.0f / 255.0f) : 0.0f;
+    float cloudSun = CVarValue(s_cloudSun, 1.0f, 0.0f, 8.0f) * fade;
+    float dither = CVarValue(s_dither, 1.0f, 0.0f, 8.0f) * (1.0f / 255.0f);
     if (pass == HD::SkyPass_Dome) s_frame = (s_frame + 1) & 63; // Forever moves its noise every frame
 
     const CImVector& sun = info.m_bands.m_sunCloudColors[0];      // sun and moon colour (band 9): the glow colour
@@ -341,9 +350,7 @@ bool HD::SkyBeginDraw(int32_t pass) {
     GxRsSet(GxRs_PixelShader, s_shaders[clouds ? Sh_CloudPS : Sh_SkyPS]);
 
     char text[300];
-    if (!forever) {
-        snprintf(text, sizeof(text), "on, 3.3.5 look (hdSky 2), %s", s_threadInfo);
-    } else {
+    {
         snprintf(text, sizeof(text), "on%s, glow %.2f / %.2f (horizon), %.0f deg around the %s (x%.1f), cloud sun %.2f, dither %.1f/255, %s",
                  test ? " (test view)" : "", CVarValue(s_glow, 0.35f, 0.0f, 4.0f), CVarValue(s_glowHorizon, 0.8f, 0.0f, 4.0f),
                  CVarValue(s_glowSize, 50.0f, 1.0f, 179.0f), moon ? "moon" : "sun", fade * storm,

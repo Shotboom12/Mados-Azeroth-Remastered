@@ -59,6 +59,9 @@ class CMapChunkMapObjDefLink {
     /* 0014 */ TSLink<CMapChunkMapObjDefLink> m_ownerLink;
 };
 
+struct HdCullList;
+void HdCullListFree(HdCullList* list);
+
 class CMapChunk : public CMapBaseObj {
     public:
     static float s_geoToTex;
@@ -108,6 +111,9 @@ class CMapChunk : public CMapBaseObj {
     /* 013C */ CWSoundEmitter* m_soundEmitters;
     /* 0140 */ CBitArray m_deepBits;
     /* 014C */ CBitArray m_fishableBits;
+    HdCullList* m_hdCull = nullptr;   // Claude B4: its doodads as CWorldScene::CullDoodadsExterior reads them (World.cpp)
+    uint32_t m_hdCullGen = 0, m_hdCullLinkGen = 0, m_hdCullCount = 0, m_hdCullKey = 0xFFFFFFFFu;   // what m_hdCull was made for
+    uint32_t m_hdLinkGen = 0;         // Claude B4: moves when a doodad is linked to it or unlinked (the lists made from its doodads)
 
     virtual void SelectLights(CM2Lighting* lighting);
 

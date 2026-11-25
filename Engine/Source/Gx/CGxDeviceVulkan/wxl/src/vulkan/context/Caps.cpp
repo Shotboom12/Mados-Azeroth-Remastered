@@ -107,6 +107,8 @@ namespace wxlvk::vk::context::detail
             { kCapMultiview, "multiview" },
             { kCapLayerFromVertex, "gl_Layer from the vertex stage" },
             { kCapMultiViewport, "multi-viewport" },
+            { kCapVertexStores, "vertex stage stores (ANIM1)" },
+            { kCapTextureTable, "texture table (B3)" },
 #ifdef WOWDECOMP_FSR
             { kCapComputeDerivatives, "compute derivatives (FSR)" },
             { kCapTimeline, "timeline semaphores (FSR)" },
@@ -181,6 +183,7 @@ namespace wxlvk::vk::context::detail
         if (have.multiDrawIndirect) offered |= kCapMultiDrawIndirect;
         if (have.drawIndirectFirstInstance) offered |= kCapIndirectFirstInstance;
         if (have.multiViewport) offered |= kCapMultiViewport;
+        if (have.vertexPipelineStoresAndAtomics) offered |= kCapVertexStores;   // Claude ANIM1
         if (v11) offered |= kCapSpirv13;
         if (v12) offered |= kCapSpirv15;
 
@@ -264,6 +267,32 @@ namespace wxlvk::vk::context::detail
                 std::snprintf(c.driverInfo, sizeof c.driverInfo, "%s", drv.driverInfo);
             }
         }
+        // Claude B3: the terrain's texture table (pipelines/Table.cpp): every feature it needs, and room for it.
+        if (v12 && features2 && properties2)
+        {
+            VkPhysicalDeviceDescriptorIndexingFeatures   di  = {};
+            VkPhysicalDeviceDescriptorIndexingProperties dip = {};
+            di.sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+            dip.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES;
+            VkPhysicalDeviceFeatures2 all = {};
+            all.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            all.pNext = &di;
+            features2(g.physical, &all);
+            VkPhysicalDeviceProperties2 limits = {};
+            limits.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            limits.pNext = &dip;
+            properties2(g.physical, &limits);
+            constexpr uint32_t kRoom = 8192u + 64u;   // the table and a draw's own samplers
+            if (di.shaderSampledImageArrayNonUniformIndexing && di.descriptorBindingSampledImageUpdateAfterBind
+                && di.descriptorBindingPartiallyBound && di.descriptorBindingUpdateUnusedWhilePending
+                && di.runtimeDescriptorArray
+                && dip.maxPerStageDescriptorUpdateAfterBindSamplers >= kRoom
+                && dip.maxPerStageDescriptorUpdateAfterBindSampledImages >= kRoom
+                && dip.maxPerStageUpdateAfterBindResources >= kRoom
+                && dip.maxDescriptorSetUpdateAfterBindSamplers >= kRoom
+                && dip.maxDescriptorSetUpdateAfterBindSampledImages >= kRoom)
+                offered |= kCapTextureTable;
+        }
         if (HasExtension(exts, VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME)) offered |= kCapLayerFromVertex;
         // The budget's query (vkGetPhysicalDeviceMemoryProperties2) is 1.1 core: on a 1.0 instance it would need the
         // KHR instance extension, which only WXL_HOST asks for. A 1.0 device estimates instead (MemoryHeaps).
@@ -284,6 +313,7 @@ namespace wxlvk::vk::context::detail
         core(kCapMultiDrawIndirect, features.multiDrawIndirect);
         core(kCapIndirectFirstInstance, features.drawIndirectFirstInstance);
         core(kCapMultiViewport, features.multiViewport);
+        core(kCapVertexStores, features.vertexPipelineStoresAndAtomics);   // Claude ANIM1
 
         // The chain, in front of the caller's (WXL_HOST's timeline struct when it is on). Separate structs, never the
         // VkPhysicalDeviceVulkan11/12Features aggregates: those may not stand beside the individual ones the host link
@@ -296,6 +326,18 @@ namespace wxlvk::vk::context::detail
             chain.multiview.pNext     = head;
             head = &chain.multiview;
             asked |= kCapMultiview;
+        }
+        if (offered & kCapTextureTable)   // Claude B3
+        {
+            chain.indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+            chain.indexing.shaderSampledImageArrayNonUniformIndexing    = VK_TRUE;
+            chain.indexing.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            chain.indexing.descriptorBindingPartiallyBound              = VK_TRUE;
+            chain.indexing.descriptorBindingUpdateUnusedWhilePending    = VK_TRUE;
+            chain.indexing.runtimeDescriptorArray                       = VK_TRUE;
+            chain.indexing.pNext = head;
+            head = &chain.indexing;
+            asked |= kCapTextureTable;
         }
         const uint32_t any16 = kCapStorage16 | kCapUniform16 | kCapPush16 | kCapInputOutput16;
         if (offered & any16)

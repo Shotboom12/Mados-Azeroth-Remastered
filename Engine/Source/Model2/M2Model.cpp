@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <cstdio> // Claude TRI1
 #include <new>
+#include <vector> // HD (Claude) S5
 #include <xmmintrin.h>
 #if defined(_MSC_VER)
 #include <malloc.h>
@@ -17,6 +19,8 @@
 #include <alloca.h>
 #endif
 #include "Engine/Source/Model2/M2Model.h"
+#include "Engine/Source/Model2/HdM2Count.h" // Claude RPROF1
+#include <chrono>
 #include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/Base/ObjectAlloc.h"
 #include "Engine/Source/Base/SIMD.h"
@@ -34,6 +38,7 @@
 #include "Engine/Source/Services/RibbonEmitter.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
+#include "Engine/Source/ShaderEffect/ShadowCache.h" // Claude INST1 (proof)
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C33Matrix.h"
 #include "Engine/Source/Tempest/CAaRect.h"
@@ -67,11 +72,33 @@ CM2ModelCall::CM2ModelCall() {
 // VERIFY: 35d86a94 auto
 // OFFSET: 0x00823D50
 void CModelBatchList::Add(CM2Model* model, uint32_t batchIndex) {
-    if (this->m_count < this->m_maxCount) {
-        this->m_batches[this->m_count].m_model = model;
-        this->m_batches[this->m_count].m_batchIndex = batchIndex;
-        this->m_batches[this->m_count++].m_count = 1;
+    if (this->m_count >= this->m_maxCount && !(this->m_grows && this->Grow())) {
+        return; // a fixed list keeps the original behaviour: full, the batch is not added
     }
+    this->m_batches[this->m_count].m_model = model;
+    this->m_batches[this->m_count].m_batchIndex = batchIndex;
+    this->m_batches[this->m_count++].m_count = 1;
+}
+
+// Claude BANDE1: doubles an owned list, the batches kept in order.
+bool CModelBatchList::Grow() {
+    const uint32_t capacity = this->m_maxCount ? this->m_maxCount * 2u : 0x2000u;
+    if (capacity <= this->m_maxCount || capacity > 0x4000000u) {
+        return false;
+    }
+    CModelBatch* grown = static_cast<CModelBatch*>(SMemAlloc(sizeof(CModelBatch) * capacity, __FILE__, __LINE__, 0));
+    if (!grown) {
+        return false;
+    }
+    if (this->m_count) {
+        std::memcpy(grown, this->m_batches, sizeof(CModelBatch) * this->m_count);
+    }
+    if (this->m_batches) {
+        SMemFree(this->m_batches, __FILE__, __LINE__, 0);
+    }
+    this->m_batches = grown;
+    this->m_maxCount = capacity;
+    return true;
 }
 
 // VERIFY: d951ddda manual
@@ -2546,7 +2573,9 @@ void CM2Model::AnimateST() {
         if (visible && HD::ExtraLamps::HideLight(this->m_shared, this, i, data->m_lights.m_count)) visible = 0; // HD: hdExtraLampsObjects
 
         // HD: our added lamp light is lit at night only (hdExtraLampsDay): colour from its tracks times the night
-        float night = HD::ExtraLamps::LightScale(this->m_shared, i, data->m_lights.m_count);
+        float night = HD::ExtraLamps::LightScale(this->m_shared, i, data->m_lights.m_count, this);
+        // Claude J1: the Blizzard lights of outdoor map decor (lamps, torches, fires) are lit at night only, same fade
+        if (night < 0.0f && (this->m_fFlags & 0x8000)) night = HD::ExtraLamps::DoodadLightScale(this);
         if (night >= 0.0f) {
             float dir = light->m_diffuseIntensityTrack.m_currentValue * this->m_effectiveAlpha * night;
             float amb = light->m_ambientIntensityTrack.m_currentValue * this->m_effectiveAlpha * night;
@@ -2557,6 +2586,7 @@ void CM2Model::AnimateST() {
 
         light->m_light.SetVisible(visible);
         light->m_light.m_stamp = this->m_scene->m_frameStamp;
+        HD::ExtraLamps::NoteDoodadLight(&light->m_light, (this->m_fFlags & 0x8000) != 0); // Claude LV15: hdLampStable
 #ifdef WOWDECOMP_VULKAN
         HD::Lamp::Native::Track(&light->m_light,reinterpret_cast<uintptr_t>(this));
 #endif
@@ -2929,6 +2959,40 @@ void CM2Model::RenderModelBatchesForProjectedTexture() {
     }
 }
 
+namespace HD::ShadowWorld {
+    State g_state;
+
+    bool WorldSection(const CM2Model* model, const M2SkinSection* section) {
+        if (!g_state.active || !g_state.isWorld || model->m_optGeo || section->m_boneCount != 1) {
+            return false;
+        }
+        M2Data* data = model->m_shared->m_data;
+        return section->m_boneComboIndex < data->m_boneCombos.m_count && data->m_boneCombos[section->m_boneComboIndex] == 0;
+    }
+}
+
+// Claude INST1: the hardware-instanced sun-shadow draw (see RenderBatchShadowMap). The device reads these two round
+// its Draw (wxl draw/Reader.cpp -> Cmd::instanceCount / instanceRows). hdShadowInstancing 0: the CPU copies, as before.
+thread_local uint32_t g_hdM2InstCount = 0;
+thread_local uint32_t g_hdM2InstRows = 0;
+int g_hdShadowInstancing = 1;   // hdShadowInstancing (hd/lumen/LvClient.cpp)
+bool HdVkShadowInstancingReady(); // wxl vulkan/pipelines/Build.cpp
+
+static bool HdShadowInstancing(const CM2Model* model, const M2SkinSection* section) {
+    if (!g_hdShadowInstancing || HD::ShadowWorld::g_state.active || model->m_optGeo) return false;
+    // hdShadowInstancing 2 (the proof, with hdShadowFarCheck 3): the reference band the shadow cache draws first takes the
+    // CPU copies, the band itself the instancing, and ShadowCache.cpp compares the two maps texel for texel.
+    if (g_hdShadowInstancing == 2 && CShadowCache::IsDrawingSplitReference()) return false;
+    if (section->m_boneInfluences < 1 || section->m_boneCount < 1 || section->m_boneCount > 75) return false;
+    if (!g_theGxDevicePtr || g_theGxDevicePtr->m_api != GxApi_Vulkan || !CShaderEffect::s_enableShaders) return false;
+    // CPU copy i points at vertex copy i only when the copies share one vertex range (SetIndices' sharedVertices).
+    const CM2Shared* shared = model->m_shared;
+    if (!((shared->m_cache->m_flags & 8) || (shared->m_data->m_bones.m_count == 1 && (shared->m_cache->m_flags & 0x40)))) return false;
+    static int ready = -1;
+    if (ready < 0) ready = HdVkShadowInstancingReady() ? 1 : 0;
+    return ready == 1;
+}
+
 // VERIFY: be5156ea manual
 // OFFSET: 0x00829BA0
 void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CModelBatchList& list, uint32_t index, M2SkinSection* section, M2SkinSection* prevSection) {
@@ -2956,6 +3020,68 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
     }
 
     uint32_t total = list.m_batches[index].m_count;
+
+    // Claude INST1: a run of several models of one section, drawn by the GPU's instancing (one draw, `now` copies)
+    // instead of the CPU's copies (CM2Shared::SetVertices: vertex copy i is copy 0 with its bone indices + i *
+    // boneCount, index copy i points at vertex copy i). Copy i of the module's .inst twin reads the palette
+    // 3 * boneCount * i rows further: the same registers and the same math as CPU copy i, bit for bit. Only the
+    // 256-row register file bounds a draw (c31 .. c255), not the 16-bit index pool, so a run takes
+    // 75 / boneCount models per draw instead of m_maxInstances.
+    if (total > 1 && HdShadowInstancing(this, section)) {
+        CM2Shared* shared = this->m_shared;
+        if (shared->SetIndices() && shared->SetVertices(0)) {
+            const uint32_t perDraw = (256 - 31) / (3 * section->m_boneCount);
+            CGxBatch gxBatch;
+            gxBatch.m_primType = GxPrim_Triangles;
+            gxBatch.m_start = section->m_indexStart;
+            gxBatch.m_count = section->m_indexCount;
+            gxBatch.m_minIndex = 0;
+            gxBatch.m_maxIndex = static_cast<uint16_t>(shared->m_skinData->m_vertices.m_count - 1);
+            for (uint32_t done = 0; done < total; done += perDraw) {
+                const uint32_t now = total - done < perDraw ? total - done : perDraw;
+                const uint64_t hdT0 = HDM2Count::on ? HDM2Count::NowNs() : 0;
+                float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
+                uint32_t registers = 0;
+                for (uint32_t n = 0; n < now; n++) {
+                    CM2Model* model = list.m_batches[done + index + n].m_model;
+                    for (uint32_t i = 0; i < section->m_boneCount; i++) {
+                        const C44Matrix& bone = model->m_boneMatrices[shared->m_data->m_boneCombos[i + section->m_boneComboIndex]];
+                        constants[0] = bone.a0;
+                        constants[1] = bone.b0;
+                        constants[2] = bone.c0;
+                        constants[3] = bone.d0;
+                        constants[4] = bone.a1;
+                        constants[5] = bone.b1;
+                        constants[6] = bone.c1;
+                        constants[7] = bone.d1;
+                        constants[8] = bone.a2;
+                        constants[9] = bone.b2;
+                        constants[10] = bone.c2;
+                        constants[11] = bone.d2;
+                        constants += 12;
+                        registers++;
+                    }
+                }
+                g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, 3 * registers);
+                if (!prevSection || section->m_boneInfluences != prevSection->m_boneInfluences) {
+                    CShaderEffect::SetDefaultShaders(section->m_boneInfluences);
+                }
+                const uint64_t hdT1 = HDM2Count::on ? HDM2Count::NowNs() : 0;
+                g_hdM2InstCount = now;
+                g_hdM2InstRows = 3 * section->m_boneCount;
+                g_theGxDevicePtr->Draw(&gxBatch, 1);
+                g_hdM2InstCount = 0;
+                g_hdM2InstRows = 0;
+                if (HDM2Count::on) {
+                    HDM2Count::Add(HDM2Count::ShadowConstNs, hdT1 - hdT0);
+                    HDM2Count::Add(HDM2Count::ShadowDrawNs, HDM2Count::NowNs() - hdT1);
+                    HDM2Count::Add(HDM2Count::ShadowDraws);
+                }
+            }
+            return;
+        }
+    }
+
     uint32_t instances = this->m_shared->AllocInstances(total);
 
     if (instances > total) {
@@ -2974,10 +3100,82 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
     gxBatch.m_minIndex = 0;
     gxBatch.m_maxIndex = 0;
 
+    // Claude CACHE1d: the camera-independent draw (see HD::ShadowWorld in M2Model.h). The models of this run are
+    // drawn in two groups, each with its own c14..c16: first those drawn origin-relative, then the others exactly
+    // as below (same bone constants, same light matrix as the original draw).
+    if (HD::ShadowWorld::g_state.active) {
+        auto& sw = HD::ShadowWorld::g_state;
+        const bool sectionWorld = HD::ShadowWorld::WorldSection(this, section);
+        thread_local std::vector<CM2Model*> group;
+        for (int32_t phase = sectionWorld ? 0 : 1; phase < 2; ++phase) {
+            group.clear();
+            for (uint32_t n = 0; n < total; n++) {
+                CM2Model* model = list.m_batches[index + n].m_model;
+                const bool world = sectionWorld && sw.isWorld(model);
+                if (world == (phase == 0)) group.push_back(model);
+            }
+            if (group.empty()) continue;
+            if (sw.current != phase) {
+                g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 14, phase == 0 ? sw.light : sw.camera, 3);
+                sw.current = phase;
+            }
+            C44Matrix toOrigin;
+            toOrigin.d0 = -sw.origin.x;
+            toOrigin.d1 = -sw.origin.y;
+            toOrigin.d2 = -sw.origin.z;
+            const uint32_t count = static_cast<uint32_t>(group.size());
+            for (uint32_t done = 0; done < count; done += instances) {
+                const uint32_t now = count - done < instances ? count - done : instances;
+                const uint64_t hdT0 = HDM2Count::on ? HDM2Count::NowNs() : 0; // Claude RPROF1
+                float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
+                uint32_t registers = 0;
+                for (uint32_t n = 0; n < now; n++) {
+                    CM2Model* model = group[done + n];
+                    const uint32_t bones = phase == 0 ? 1 : section->m_boneCount;
+                    for (uint32_t i = 0; i < bones; i++) {
+                        const C44Matrix bone = phase == 0 ? model->m_worldTransform * toOrigin
+                            : model->m_boneMatrices[this->m_shared->m_data->m_boneCombos[i + section->m_boneComboIndex]];
+                        constants[0] = bone.a0;
+                        constants[1] = bone.b0;
+                        constants[2] = bone.c0;
+                        constants[3] = bone.d0;
+                        constants[4] = bone.a1;
+                        constants[5] = bone.b1;
+                        constants[6] = bone.c1;
+                        constants[7] = bone.d1;
+                        constants[8] = bone.a2;
+                        constants[9] = bone.b2;
+                        constants[10] = bone.c2;
+                        constants[11] = bone.d2;
+                        constants += 12;
+                        registers++;
+                    }
+                }
+                g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, 3 * registers);
+
+                if (!prevSection || section->m_boneInfluences != prevSection->m_boneInfluences) {
+                    CShaderEffect::SetDefaultShaders(section->m_boneInfluences);
+                }
+
+                gxBatch.m_count = now * section->m_indexCount;
+                gxBatch.m_maxIndex = static_cast<uint16_t>(now * this->m_shared->m_skinData->m_vertices.m_count - 1);
+                const uint64_t hdT1 = HDM2Count::on ? HDM2Count::NowNs() : 0; // Claude RPROF1
+                g_theGxDevicePtr->Draw(&gxBatch, 1);
+                if (HDM2Count::on) {
+                    HDM2Count::Add(HDM2Count::ShadowConstNs, hdT1 - hdT0);
+                    HDM2Count::Add(HDM2Count::ShadowDrawNs, HDM2Count::NowNs() - hdT1);
+                    HDM2Count::Add(HDM2Count::ShadowDraws);
+                }
+            }
+        }
+        return;
+    }
+
     for (uint32_t done = 0; done < total; done += instances) {
         if (done + instances > total) {
             instances = total - done;
         }
+        const uint64_t hdT0 = HDM2Count::on ? HDM2Count::NowNs() : 0; // Claude RPROF1
 
         if (total > 1 || !prevSection || section->m_boneComboIndex != prevSection->m_boneComboIndex) {
             float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
@@ -3014,8 +3212,18 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
 
         gxBatch.m_count = instances * section->m_indexCount;
         gxBatch.m_maxIndex = static_cast<uint16_t>(instances * this->m_shared->m_skinData->m_vertices.m_count - 1);
+        const uint64_t hdT1 = HDM2Count::on ? HDM2Count::NowNs() : 0; // Claude RPROF1
         g_theGxDevicePtr->Draw(&gxBatch, 1);
+        if (HDM2Count::on) {
+            HDM2Count::Add(HDM2Count::ShadowConstNs, hdT1 - hdT0);
+            HDM2Count::Add(HDM2Count::ShadowDrawNs, HDM2Count::NowNs() - hdT1);
+            HDM2Count::Add(HDM2Count::ShadowDraws);
+        }
     }
+}
+
+uint64_t HDM2Count::NowNs() { // Claude RPROF1
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 // VERIFY: ef747db8 manual
@@ -3763,6 +3971,9 @@ CM2Model::CM2Model() {
     HD::Fsr::Rigid::Forget(this);
 #endif
     this->m_scaleSq = 0.0f;
+    this->unused_007C = 0; // Claude CACHE1e: shadow world stamp (ShadowQuery.cpp)
+    this->unused_02EC = 0;
+    this->unused_0016 = 0;
     this->m_refCount = 1;
     this->m_fFlags = (this->m_fFlags & 0xFF800000) | 0x340;
     this->m_flags = 0;
@@ -6617,6 +6828,7 @@ CM2Model::~CM2Model() {
     HD::Fsr::Rigid::Forget(this);
 #endif
     HD::ExtraLamps::SetObjectModel(this, false); // HD
+    HD::ExtraLamps::SetInteriorModel(this, false); // Claude J1
     CM2Model* model30 = this->m_model30;
 
     if (model30 && model30->m_refCount-- == 1) {
@@ -7020,10 +7232,120 @@ static bool CanCombineBatches(const CModelBatch& a, const CModelBatch& b) {
     return sectionA->m_boneInfluences == sectionB->m_boneInfluences;
 }
 
+// HD (Claude) S5, 5 nov 2026: same order, less memory chasing. SModelBatchLessThan reads model -> optGeo/shared ->
+// batches -> skin section for both sides of EVERY comparison (about 2 n log n chases). Here each batch's four sort
+// fields are read once, the same std::sort runs over (fields, batch) records with the same comparison on the
+// fields, and the batches are written back: std::sort's moves depend only on the comparison results, so the
+// batches come out in exactly the same order as before, ties included.
+namespace {
+    struct SModelBatchSortKey {
+        uint16_t influences;
+        uintptr_t optGeo;
+        uintptr_t shared;
+        uint32_t batchIndex;
+        CModelBatch batch;
+    };
+
+    struct SModelBatchSortKeyLess {
+        bool operator()(const SModelBatchSortKey& a, const SModelBatchSortKey& b) const {
+            if (a.influences != b.influences) return a.influences < b.influences;
+            if (a.optGeo != b.optGeo) return a.optGeo < b.optGeo;
+            if (a.shared != b.shared) return a.shared < b.shared;
+            return a.batchIndex < b.batchIndex;
+        }
+    };
+}
+
+// Claude TRI1 (22 nov 2026): the sun band lists are the same from one frame to the next 95 to 99.7 % of the time
+// (MESB1). Optimize's result depends only on its keys (each batch and the four fields read for it: CanCombineBatches
+// compares exactly those fields), so when every key is the same as the last time this list was optimized, the
+// result is the same too and is copied back instead of sorted again. hdShadowSortMemo 0 = always sorted (original);
+// 2 = proof: sorted anyway and compared with the kept result (Logs\preuve-soleil.txt).
+int g_hdShadowSortMemo = 1; // hd/lumen/LvClient.cpp
+namespace {
+    struct HdSortMemoKey {
+        CM2Model* model;
+        uintptr_t optGeo;
+        uintptr_t shared;
+        uint32_t batchIndex;
+        uint32_t count;
+        uint32_t influences;
+        bool operator==(const HdSortMemoKey& o) const {
+            return model == o.model && optGeo == o.optGeo && shared == o.shared && batchIndex == o.batchIndex && count == o.count && influences == o.influences;
+        }
+    };
+    struct HdSortMemoSlot {
+        const CModelBatch* list = nullptr;
+        std::vector<HdSortMemoKey> in;
+        std::vector<CModelBatch> out;
+        uint64_t used = 0;
+    };
+    thread_local HdSortMemoSlot t_hdSortMemo[8];
+    thread_local uint64_t t_hdSortMemoClock = 0;
+    uint64_t s_hdSortProofRuns = 0, s_hdSortProofBad = 0, s_hdSortProofBatches = 0; // main thread (shadow pass)
+}
+
 // VERIFY: 01820d35 manual
 // OFFSET: 0x00832DD0
 void CModelBatchList::Optimize() {
-    std::sort(this->m_batches, this->m_batches + this->m_count, SModelBatchLessThan());
+    thread_local std::vector<SModelBatchSortKey> keys;
+    keys.resize(this->m_count);
+
+    // Claude TRI1: the slot of this list (same array as last time), else the oldest.
+    const int memo = g_hdShadowSortMemo;
+    HdSortMemoSlot* slot = nullptr;
+    bool same = false;
+    if (memo) {
+        HdSortMemoSlot* oldest = &t_hdSortMemo[0];
+        for (HdSortMemoSlot& s : t_hdSortMemo) {
+            if (s.list == this->m_batches) { slot = &s; break; }
+            if (s.used < oldest->used) oldest = &s;
+        }
+        if (!slot) { slot = oldest; slot->list = this->m_batches; slot->in.clear(); }
+        slot->used = ++t_hdSortMemoClock;
+        same = slot->in.size() == this->m_count;
+    }
+
+    for (uint32_t i = 0; i < this->m_count; i++) {
+        const CModelBatch& batch = this->m_batches[i];
+        CM2Model* model = batch.m_model;
+        M2SkinSection* section;
+
+        if (model->m_optGeo) {
+            section = &model->m_optGeo->m_skinSections[model->m_optGeo->m_batches[batch.m_batchIndex].m_skinSectionIndex];
+        } else {
+            section = &model->m_shared->m_skinSections[model->m_shared->m_skinData->m_batches[batch.m_batchIndex].m_skinSectionIndex];
+        }
+
+        SModelBatchSortKey& key = keys[i];
+        key.influences = section->m_boneInfluences;
+        key.optGeo = reinterpret_cast<uintptr_t>(model->m_optGeo);
+        key.shared = reinterpret_cast<uintptr_t>(model->m_shared);
+        key.batchIndex = batch.m_batchIndex;
+        key.batch = batch;
+        if (same) { // Claude TRI1
+            const HdSortMemoKey k{ batch.m_model, key.optGeo, key.shared, batch.m_batchIndex, batch.m_count, key.influences };
+            same = slot->in[i] == k;
+        }
+    }
+
+    if (same && memo == 1) { // Claude TRI1: the kept result
+        std::memcpy(this->m_batches, slot->out.data(), this->m_count * sizeof(CModelBatch));
+        return;
+    }
+    if (slot && !same) { // Claude TRI1: the keys of this sort, for next time
+        slot->in.resize(this->m_count);
+        for (uint32_t i = 0; i < this->m_count; i++) {
+            const SModelBatchSortKey& key = keys[i];
+            slot->in[i] = HdSortMemoKey{ key.batch.m_model, key.optGeo, key.shared, key.batch.m_batchIndex, key.batch.m_count, key.influences };
+        }
+    }
+
+    std::sort(keys.begin(), keys.end(), SModelBatchSortKeyLess());
+
+    for (uint32_t i = 0; i < this->m_count; i++) {
+        this->m_batches[i] = keys[i].batch;
+    }
 
     for (uint32_t i = 0; i < this->m_count; i += this->m_batches[i].m_count) {
         CModelBatch* batch = &this->m_batches[i];
@@ -7038,6 +7360,22 @@ void CModelBatchList::Optimize() {
         }
 
         batch->m_count = j - i;
+    }
+
+    if (slot) { // Claude TRI1
+        if (same) { // memo 2: the proof
+            ++s_hdSortProofRuns;
+            s_hdSortProofBatches += this->m_count;
+            if (std::memcmp(this->m_batches, slot->out.data(), this->m_count * sizeof(CModelBatch)) != 0) ++s_hdSortProofBad;
+            if ((s_hdSortProofRuns % 2000) == 0) {
+                if (FILE* f = std::fopen("Logs\\preuve-soleil.txt", "a")) {
+                    std::fprintf(f, "PREUVE tri garde (TRI1) : %llu tris refaits sur des cles identiques, %llu batchs compares, %llu resultats differents\n",
+                        (unsigned long long)s_hdSortProofRuns, (unsigned long long)s_hdSortProofBatches, (unsigned long long)s_hdSortProofBad);
+                    std::fclose(f);
+                }
+            }
+        }
+        slot->out.assign(this->m_batches, this->m_batches + this->m_count);
     }
 }
 
@@ -7809,6 +8147,377 @@ void CM2Model::GatherModelBatchesShadowMap(CModelBatchList& untextured, CModelBa
     for (CM2Model* child = this->m_attachList; child; child = child->m_attachNext) {
         child->GatherModelBatchesShadowMap(untextured, textured);
     }
+}
+
+// Claude PARQ2 (17 nov 2026): GatherModelBatchesShadowMap in two halves, for the parallel sun gathers.
+// HdPrepareShadowGather = only what it writes into the models (InitializeLoaded, AnimateSM), behind the same tests, for the
+// model and its attached children, in the same order. HdCollectShadowBatches = the same tests and the batch choice, which
+// only read, and the same Adds in the same order. Prepare then Collect does what GatherModelBatchesShadowMap does: Collect
+// reads what Prepare wrote, and a second Prepare in the same frame writes the same values again (the shadow passes animate
+// nothing in between). Prepare runs on the main thread in the original order; Collect may run on a worker.
+void CM2Model::HdPrepareShadowGather() {
+    if (HdIsInvisibleMarker(this->m_shared)) {
+        return;
+    }
+
+    if (!(this->m_fFlags & 1)) {
+        if (!(this->m_flags & 0x20)) {
+            return;
+        }
+
+        uint32_t sharedFlags = this->m_shared->m_flags;
+
+        if (!(sharedFlags & 1) || !(sharedFlags & 2)) {
+            return;
+        }
+
+        this->InitializeLoaded();
+    }
+
+    this->AnimateSM();
+
+    for (CM2Model* child = this->m_attachList; child; child = child->m_attachNext) {
+        child->HdPrepareShadowGather();
+    }
+}
+
+void CM2Model::HdCollectShadowBatches(CModelBatchList& untextured, CModelBatchList& textured) {
+    if (HdIsInvisibleMarker(this->m_shared)) {
+        return;
+    }
+
+    if (!(this->m_fFlags & 1)) {
+        if (!(this->m_flags & 0x20)) {
+            return;
+        }
+
+        uint32_t sharedFlags = this->m_shared->m_flags;
+
+        if (!(sharedFlags & 1) || !(sharedFlags & 2)) {
+            return;
+        }
+        // (InitializeLoaded: done by HdPrepareShadowGather)
+    }
+    // (AnimateSM: done by HdPrepareShadowGather)
+
+    M2SkinProfile* skin = this->m_shared->m_skinData;
+    bool optimized = this->m_optGeo != nullptr;
+    uint32_t count = optimized ? this->m_optGeo->m_batchCount : skin->m_batches.m_count;
+
+    for (uint32_t i = 0; i < count; i++) {
+        M2Batch* batch;
+
+        if (optimized) {
+            batch = &this->m_optGeo->m_batches[i];
+        } else {
+            batch = &skin->m_batches[i];
+
+            if (!this->m_skinSections[batch->m_skinSectionIndex]) {
+                continue;
+            }
+        }
+
+        if (batch->m_shader == 0x8000 || (batch->m_flags & 4) || batch->m_materialLayer) {
+            continue;
+        }
+
+        M2Data* data = this->m_shared->m_data;
+        M2Material* material = &data->m_materials[batch->m_materialIndex];
+
+        if ((material->m_flags & 0x40) || (!(material->m_flags & 0x80) && material->m_blendMode > 1)) {
+            continue;
+        }
+
+        float alpha = this->m_alpha;
+
+        if (batch->m_colorIndex < data->m_colors.m_count) {
+            alpha *= this->m_colors[batch->m_colorIndex].m_alphaTrack.m_currentValue;
+        }
+
+        if (batch->m_textureCount) {
+            alpha *= this->m_textureWeights[data->m_textureWeightCombos[batch->m_textureWeightComboIndex]].m_currentValue;
+        }
+
+        if (alpha >= 0.55000001f) {
+            (material->m_blendMode ? textured : untextured).Add(this, i);
+        }
+    }
+
+    for (CM2Model* child = this->m_attachList; child; child = child->m_attachNext) {
+        child->HdCollectShadowBatches(untextured, textured);
+    }
+}
+
+// Claude voie B (23 nov 2026): see M2Model.h. The same batch choice as HdCollectShadowBatches with the alpha AnimateSM
+// would give (m_baseAlpha * m_fadeAlpha = 1, then the colour and texture weight values, which AnimateSM does not change
+// when their tracks are not animated), and the same section tests as INST1 (HdShadowInstancing) for every batch taken.
+int g_hdGpuFixedReason = 0;   // Claude voie B (diagnostic): which test refused the last model
+
+// Claude voie B (23 nov 2026): see M2Model.h. The static part of HdCollectShadowBatches' batch choice (the alpha test is
+// made every frame by the draw itself), and HdShadowInstancing's section tests for every batch it could take.
+bool CM2Model::HdGpuFixedCpuOk() const {
+    const CM2Shared* shared = this->m_shared;
+    if (!shared || !shared->m_data || !shared->m_skinData || !shared->m_skinSections || !shared->m_cache || HdIsInvisibleMarker(shared)) { g_hdGpuFixedReason = 16; return false; }
+    if (!(this->m_fFlags & 1) || this->m_optGeo || this->m_attachParent || this->m_attachList) { g_hdGpuFixedReason = 17; return false; }
+    if (!this->m_bones || !this->m_boneMatrices || !this->m_skinSections) { g_hdGpuFixedReason = 18; return false; }
+    if (!((shared->m_cache->m_flags & 8) || (shared->m_data->m_bones.m_count == 1 && (shared->m_cache->m_flags & 0x40)))) { g_hdGpuFixedReason = 19; return false; }
+    const M2Data* data = shared->m_data;
+    const M2SkinProfile* skin = shared->m_skinData;
+    for (uint32_t i = 0; i < skin->m_batches.m_count; i++) {
+        const M2Batch* batch = &skin->m_batches[i];
+        if (batch->m_shader == 0x8000 || (batch->m_flags & 4) || batch->m_materialLayer) continue;
+        const M2Material* material = &data->m_materials[batch->m_materialIndex];
+        if ((material->m_flags & 0x40) || (!(material->m_flags & 0x80) && material->m_blendMode > 1)) continue;
+        const M2SkinSection* section = &shared->m_skinSections[batch->m_skinSectionIndex];
+        if (section->m_boneCount < 1 || section->m_boneCount > 75 || section->m_boneInfluences < 1
+            || uint32_t(section->m_boneComboIndex) + section->m_boneCount > data->m_boneCombos.m_count) { g_hdGpuFixedReason = 20; return false; }
+    }
+    return true;
+}
+
+// Claude B4: AnimateMT's time of bone 0 and of the loops, read only.
+bool CM2Model::HdGpuAnimFrame(uint32_t* words) const {
+    if (this->m_lastAnimTime || (this->m_fFlags & 0x1000)) return false;
+    const M2Data* data = this->m_shared->m_data;
+    const M2ModelBoneSeq& seq = this->m_bones[0].m_sequence;
+    if (seq.m_sequenceIndex >= data->m_sequences.m_count || this->m_bones[0].m_secondarySequence.m_sequenceIndex != 0xFFFF) return false;
+    const M2Sequence* sequence = &data->m_sequences[seq.m_sequenceIndex];
+    uint32_t now = this->m_scene->m_time;
+    uint32_t time;
+    if ((sequence->m_flags & 1) && static_cast<int32_t>(seq.m_endTime - now) <= 0) {
+        int32_t elapsed = seq.m_endTime - seq.m_startTime;
+        int32_t current = static_cast<int32_t>(elapsed * seq.m_speed) + seq.m_startOffset;
+        if (current < 0) time = 0;
+        else if (static_cast<uint32_t>(current) > sequence->m_duration) time = sequence->m_duration;
+        else time = current;
+    } else {
+        if ((sequence->m_flags & 1) && static_cast<int32_t>(seq.m_startTime - now) > 0) now = seq.m_startTime;
+        const uint32_t duration = sequence->m_duration;
+        time = 0;
+        if (duration) {
+            int32_t elapsed = now - seq.m_startTime;
+            time = static_cast<uint32_t>(static_cast<int32_t>(elapsed * seq.m_speed) + seq.m_startOffset) % duration;
+        }
+    }
+    words[0] = time;
+    words[1] = seq.m_sequenceIndex;
+    for (uint32_t i = 0; i < data->m_loops.m_count; i++) {
+        const uint32_t length = data->m_loops[i].m_length;
+        words[2 + i] = length ? (this->m_scene->m_time - this->m_loopOrigin) % length : 0;
+    }
+    return true;
+}
+
+namespace {
+    // A track as GpuFixedCull.comp reads it: type | (1 + loop) << 8, times' sequences, keys' sequences, then (place, count)
+    // of each, the times, the keys. `words` = words a key (2: M2CompQuat, 3: C3Vector).
+    bool HdAnimTrack(const M2TrackBase& t, const M2Array<M2Array<uint32_t> >& keysAny, uint32_t words, uint32_t loops,
+                     std::vector<uint32_t>& rec, std::vector<uint32_t>& relocs) {
+        const uint32_t nTimes = t.m_sequenceTimes.m_count, nKeys = keysAny.m_count;
+        const bool loop = t.m_loopIndex != 0xFFFF;
+        if (!nTimes || !nKeys || (loop && (t.m_loopIndex >= loops || nKeys != 1)) || (!loop && nTimes != nKeys)) return false;
+        const uint32_t start = static_cast<uint32_t>(rec.size());
+        rec.push_back((t.m_trackType ? 1u : 0u) | (loop ? (1u + t.m_loopIndex) << 8 : 0u));
+        rec.push_back(nTimes);
+        rec.push_back(nKeys);
+        rec.resize(start + 3u + 2u * (nTimes + nKeys), 0u);
+        for (uint32_t s = 0; s < nTimes; s++) {
+            const M2Array<uint32_t>& a = t.m_sequenceTimes[s];
+            if (a.m_count > 1 && a[0] != 0) return false;
+            for (uint32_t k = 1; k < a.m_count; k++) if (a[k] <= a[k - 1]) return false;
+            relocs.push_back(start + 3u + 2u * s);
+            rec[start + 3u + 2u * s] = static_cast<uint32_t>(rec.size());
+            rec[start + 4u + 2u * s] = a.m_count;
+            for (uint32_t k = 0; k < a.m_count; k++) rec.push_back(a[k]);
+        }
+        for (uint32_t s = 0; s < nKeys; s++) {
+            const M2Array<uint32_t>& a = keysAny[s];
+            const uint32_t times = t.m_sequenceTimes[s < nTimes ? s : 0].m_count;
+            if (a.m_count && (times > 1 ? a.m_count < times : a.m_count < 1)) return false;
+            relocs.push_back(start + 3u + 2u * (nTimes + s));
+            rec[start + 3u + 2u * (nTimes + s)] = static_cast<uint32_t>(rec.size());
+            rec[start + 4u + 2u * (nTimes + s)] = a.m_count;
+            const uint32_t* raw = a.Data();
+            for (uint32_t k = 0; k < a.m_count * words; k++) {
+                uint32_t w;
+                memcpy(&w, raw + k, sizeof w);
+                rec.push_back(w);
+            }
+        }
+        return true;
+    }
+
+    // 0: no track, 1: its value never moves, 2: it moves. (With one key, m_uint90 only chooses between evaluating it again
+    // and keeping the same value: evaluated always here.)
+    uint32_t HdAnimKind(const M2TrackBase& t) {
+        const uint32_t n = t.m_sequenceTimes.m_count;
+        if (!n) return 0;
+        return n > 1 || t.m_sequenceTimes[0].m_count > 0 ? 2u : 1u;
+    }
+}
+
+bool CM2Model::HdGpuAnimRecord(const uint16_t* batches, uint32_t count, std::vector<uint32_t>& rec, std::vector<uint32_t>& relocs,
+                               std::vector<uint16_t>& slots) const {
+    const CM2Shared* shared = this->m_shared;
+    const M2Data* data = shared->m_data;
+    const uint32_t bones = data->m_bones.m_count;
+    rec.clear();
+    relocs.clear();
+    slots.assign(bones, 0xFFFF);
+    if (!bones || bones >= 0xFFFF) { g_hdGpuFixedReason = 28; return false; }
+    // Lamps, particles and ribbons read what Animate leaves in the model: animated by the CPU.
+    if (data->m_lights.m_count || data->m_particles.m_count || data->m_ribbons.m_count) { g_hdGpuFixedReason = 28; return false; }
+    for (uint32_t s = 0; s < data->m_sequences.m_count; s++)
+        if (data->m_sequences[s].m_flags & 0x10) { g_hdGpuFixedReason = 29; return false; }   // keys loaded later
+    std::vector<uint8_t> need(bones, 0);
+    for (uint32_t b = 0; b < count; b++) {
+        const M2SkinSection& section = shared->m_skinSections[shared->m_skinData->m_batches[batches[b]].m_skinSectionIndex];
+        for (uint32_t k = 0; k < section.m_boneCount; k++) {
+            const uint16_t bone = data->m_boneCombos[section.m_boneComboIndex + k];
+            if (bone >= bones) { g_hdGpuFixedReason = 20; return false; }
+            need[bone] = 1;
+        }
+    }
+    for (uint32_t i = bones; i-- > 0;) {
+        if (!need[i]) continue;
+        const uint16_t parent = data->m_bones[i].m_parentIndex;
+        if (parent == 0xFFFF) continue;
+        if (parent >= i) { g_hdGpuFixedReason = 28; return false; }
+        need[parent] = 1;
+    }
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < bones; i++) if (need[i]) slots[i] = static_cast<uint16_t>(n++);
+    rec.assign(1u + 8u * n, 0u);
+    rec[0] = n;
+    for (uint32_t i = 0; i < bones; i++) {
+        if (!need[i]) continue;
+        const M2CompBone& bd = data->m_bones[i];
+        const M2ModelBone& bone = this->m_bones[i];
+        const uint32_t flags = bd.m_flags | bone.m_flags;
+        if (flags & 0x78) { g_hdGpuFixedReason = 25; return false; }
+        if (bd.m_parentIndex != 0xFFFF && (flags & 7)) { g_hdGpuFixedReason = 31; return false; }
+        if ((flags & 0x80) && bone.m_proceduralTransform) { g_hdGpuFixedReason = 31; return false; }
+        if (i && (bone.m_sequence.m_sequenceIndex != 0xFFFF || bone.m_secondarySequence.m_sequenceIndex != 0xFFFF)) { g_hdGpuFixedReason = 30; return false; }
+        const uint32_t at = 1u + 8u * slots[i];
+        rec[at] = bd.m_parentIndex == 0xFFFF ? 0xFFFFFFFFu : slots[bd.m_parentIndex];
+        memcpy(&rec[at + 5u], &bd.m_pivot, 12u);
+        if (!(flags & 0x280)) continue;
+        const uint32_t rot = HdAnimKind(bd.m_rotationTrack), scl = HdAnimKind(bd.m_scaleTrack), trn = HdAnimKind(bd.m_translationTrack);
+        rec[at + 1u] = 1u | rot << 1 | scl << 3 | trn << 5;
+        const uint32_t loops = data->m_loops.m_count;
+        struct { uint32_t kind, slot, words, constWords; const M2TrackBase* t; const void* keys; const void* value; } tracks[3] = {
+            { rot, 2u, 2u, 4u, &bd.m_rotationTrack, &bd.m_rotationTrack.m_sequenceKeys, &bone.m_rotation.m_currentValue },
+            { scl, 3u, 3u, 3u, &bd.m_scaleTrack, &bd.m_scaleTrack.m_sequenceKeys, &bone.m_scale.m_currentValue },
+            { trn, 4u, 3u, 3u, &bd.m_translationTrack, &bd.m_translationTrack.m_sequenceKeys, &bone.m_translation.m_currentValue } };
+        for (const auto& t : tracks) {
+            if (!t.kind) continue;
+            relocs.push_back(at + t.slot);
+            rec[at + t.slot] = static_cast<uint32_t>(rec.size());
+            if (t.kind == 1) {
+                for (uint32_t k = 0; k < t.constWords; k++) {
+                    uint32_t w;
+                    memcpy(&w, static_cast<const uint8_t*>(t.value) + 4u * k, 4u);
+                    rec.push_back(w);
+                }
+            } else if (!HdAnimTrack(*t.t, *static_cast<const M2Array<M2Array<uint32_t> >*>(t.keys), t.words, loops, rec, relocs)) {
+                g_hdGpuFixedReason = 30;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool CM2Model::HdGpuFixedBatches(uint16_t* batches, uint8_t* textured, CTexture** textures, uint16_t* influences, uint32_t max,
+                                 uint32_t& count, uint16_t* bones) const {
+    count = 0;
+    g_hdGpuFixedReason = 0;
+    const CM2Shared* shared = this->m_shared;
+    if (!shared || !shared->m_data || !shared->m_skinData || !shared->m_skinSections || !shared->m_cache || HdIsInvisibleMarker(shared)) { g_hdGpuFixedReason = 1; return false; }
+    // (2 flags, 23 optimised geometry, 24 attached, 25 billboards: the registry's log)
+    if (!(this->m_fFlags & 1)) { g_hdGpuFixedReason = 2; return false; }
+    if (this->m_optGeo) { g_hdGpuFixedReason = 23; return false; }
+    if (this->m_attachParent || this->m_attachList) { g_hdGpuFixedReason = 24; return false; }
+    if (bones ? !shared->m_billboardBoneCount || (this->m_fFlags & 0x1000) != 0 : shared->m_billboardBoneCount != 0) { g_hdGpuFixedReason = 25; return false; }
+    if (this->m_baseAlpha != 1.0f || this->m_fadeAlpha != 1.0f || !this->m_bones || !this->m_boneMatrices || !this->m_skinSections) { g_hdGpuFixedReason = 3; return false; }
+    if (!((shared->m_cache->m_flags & 8) || (shared->m_data->m_bones.m_count == 1 && (shared->m_cache->m_flags & 0x40)))) { g_hdGpuFixedReason = 4; return false; }
+    M2Data* data = shared->m_data;
+    if (!data->m_bones.m_count) { g_hdGpuFixedReason = 5; return false; }
+    // Bone 0 is world * view in AnimateSM, and in the full Animate when it has no parent, no animation and no billboard.
+    const M2CompBone& bone0 = data->m_bones[0];
+    if (!bones && (bone0.m_parentIndex != 0xFFFF || ((bone0.m_flags | this->m_bones[0].m_flags) & (0x280 | 0x78)) || this->m_bones[0].m_proceduralTransform)) { g_hdGpuFixedReason = 6; return false; }
+    // AnimateSM animates the colour alphas and texture weights under these tests. Claude voie B (23 nov 2026): a moving
+    // track is accepted when the batch choice it feeds (alpha >= 0.55) can never change: the range of every value it can
+    // take (its keys in every sequence, linear in between, 1 where a sequence has none, the blend of two sequences staying
+    // in that range) lies wholly on one side of the threshold, with a margin for the float rounding.
+    auto moving = [this](const M2TrackBase& t) {
+        const uint32_t n = t.m_sequenceTimes.m_count;
+        return n > 1 || (n == 1 && t.m_sequenceTimes[0].m_count > this->m_uint90);
+    };
+    auto range = [](const M2Track<fixed16>& t, float& lo, float& hi) {
+        lo = 1.0f; hi = 1.0f;                                        // a sequence without keys gives the default, 1
+        bool any = false;
+        auto add = [&](float v) { if (!any) { lo = hi = v; any = true; } else { if (v < lo) lo = v; if (v > hi) hi = v; } };
+        for (uint32_t s = 0; s < t.m_sequenceKeys.m_count; s++) {
+            const M2Array<fixed16>& keys = t.m_sequenceKeys[s];
+            if (!keys.m_count) { add(1.0f); continue; }
+            for (uint32_t k = 0; k < keys.m_count; k++) add(keys[k].m_value * 0.000030518509f);
+        }
+    };
+    M2SkinProfile* skin = shared->m_skinData;
+    for (uint32_t i = 0; i < skin->m_batches.m_count; i++) {
+        M2Batch* batch = &skin->m_batches[i];
+        if (!this->m_skinSections[batch->m_skinSectionIndex]) continue;
+        if (batch->m_shader == 0x8000 || (batch->m_flags & 4) || batch->m_materialLayer) continue;
+        M2Material* material = &data->m_materials[batch->m_materialIndex];
+        if ((material->m_flags & 0x40) || (!(material->m_flags & 0x80) && material->m_blendMode > 1)) continue;
+        float cLo = 1.0f, cHi = 1.0f, wLo = 1.0f, wHi = 1.0f;
+        bool varies = false;
+        if (batch->m_colorIndex < data->m_colors.m_count) {
+            const M2Track<fixed16>& t = data->m_colors[batch->m_colorIndex].m_alpha;
+            if (moving(t)) { range(t, cLo, cHi); varies = true; }
+            else cLo = cHi = this->m_colors[batch->m_colorIndex].m_alphaTrack.m_currentValue;
+        }
+        if (batch->m_textureCount) {
+            const uint16_t w = data->m_textureWeightCombos[batch->m_textureWeightComboIndex];
+            const M2Track<fixed16>& t = data->m_textureWeights[w].m_weight;
+            if (moving(t)) { range(t, wLo, wHi); varies = true; }
+            else wLo = wHi = this->m_textureWeights[w].m_currentValue;
+        }
+        if (!varies) {
+            float alpha = this->m_baseAlpha * this->m_fadeAlpha;
+            if (batch->m_colorIndex < data->m_colors.m_count) alpha *= cLo;
+            if (batch->m_textureCount) alpha *= wLo;
+            if (!(alpha >= 0.55000001f)) continue;
+        } else {
+            const float b = this->m_baseAlpha * this->m_fadeAlpha;
+            const float p[4] = { b * cLo * wLo, b * cLo * wHi, b * cHi * wLo, b * cHi * wHi };
+            float lo = p[0], hi = p[0];
+            for (int k = 1; k < 4; k++) { if (p[k] < lo) lo = p[k]; if (p[k] > hi) hi = p[k]; }
+            if (hi < 0.5499f) continue;                                          // never drawn
+            if (!(lo >= 0.5501f)) { g_hdGpuFixedReason = cHi != cLo ? 7 : 8; return false; }   // may change: CPU path
+        }
+        const M2SkinSection* section = &shared->m_skinSections[batch->m_skinSectionIndex];
+        if (bones ? section->m_boneCount < 1 || section->m_boneCount > 75 || section->m_boneInfluences < 1
+                    || uint32_t(section->m_boneComboIndex) + section->m_boneCount > data->m_boneCombos.m_count
+                  : section->m_boneCount != 1 || section->m_boneInfluences < 1 || section->m_boneComboIndex >= data->m_boneCombos.m_count
+                    || data->m_boneCombos[section->m_boneComboIndex] != 0)
+            { g_hdGpuFixedReason = 9; return false; }
+        CTexture* texture = nullptr;
+        if (material->m_blendMode) {
+            // RenderBatchShadowMap draws nothing without its texture: such a batch is left out, as the CPU leaves it.
+            const uint16_t textureIndex = data->m_textureCombos[batch->m_textureComboIndex];
+            if (textureIndex >= data->m_textures.m_count || !this->m_textures || !(texture = this->m_textures[textureIndex])) continue;
+        }
+        if (count == max) { g_hdGpuFixedReason = 10; return false; }
+        batches[count] = static_cast<uint16_t>(i);
+        textured[count] = material->m_blendMode ? 1 : 0;
+        textures[count] = texture;
+        influences[count] = section->m_boneInfluences;
+        if (bones) bones[count] = section->m_boneCount;
+        ++count;
+    }
+    return true;
 }
 
 // VERIFY: ad015f89 manual

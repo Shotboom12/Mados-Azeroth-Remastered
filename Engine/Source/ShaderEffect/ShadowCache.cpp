@@ -1,6 +1,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio> // Claude LT2
+#include <cstring>
+extern void (*g_hdShadowTrace)(const char*,float); // Claude LT2
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
@@ -10,6 +13,18 @@
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/Tempest/CFrustum.h"
 #include "Engine/Source/Tempest/CImVector.h"
+
+#ifdef WOWDECOMP_VULKAN
+namespace wxlvk::native::impl {
+    bool SunShadowLayersSupported(void* device, void* sourceColour, void* sourceDepth,
+                                  void* destColour, void* destDepth, uint64_t* sourceIdentity);
+    bool CopySunShadowLayers(void* device, void* sourceColour, void* sourceDepth,
+                             void* destColour, void* destDepth);
+    bool CompareSunShadowTargets(void* device, void* held, void* reference, uint64_t& count,
+                                 uint64_t& different, uint64_t& nonFinite, float& maxDelta, uint64_t* detail = nullptr);
+    void SetSunShadowCompareDump(const char* prefix); // Claude CACHE1c: next comparison also writes both images
+}
+#endif
 
 // HD: texture metadata is a sidecar: keep the original x64/x86 CShadowBand layout unchanged.
 namespace {
@@ -24,6 +39,98 @@ namespace {
     float s_refreshDegrees=.5f;
     int32_t s_nextSunBand=0;
     bool s_texelSnap=true;
+    // Claude 2026-11-04 lot S3 (hdShadowFarEvery): cascaded mode only. The 640 yd cascade (band 2) is gathered, queried and
+    // drawn every N frames; between them it keeps its texture, its centre (m_lastPos) and the sun it was drawn with, so
+    // the matrices PostUpdate builds still match the texture. 1 = every frame, the original path.
+    int32_t s_farEvery=1;uint32_t s_farCounter=0;bool s_farValid=false;C3Vector s_farSun;
+#ifdef WOWDECOMP_VULKAN
+    // GPT CACHE1: the reference is private to the proof and never published to samplers.
+    CTexture* s_farCheckTexture = nullptr;
+    CTexture* s_staticCheckColour = nullptr;
+    CTexture* s_staticCheckDepth = nullptr;
+    CTexture* s_mergedCheckDepth = nullptr;
+    int32_t s_farCheckMode = 0;
+    uint32_t s_farHeldSamples = 0;
+    bool s_drawFarReference = false;
+    bool s_splitCheckFrame = false;
+    bool s_drawingSplitReference = false;
+    int32_t s_shadowLayerPass = 0;
+    bool s_hdSunQuery = false;    // Claude voie B
+    bool s_hdSunRender = false;   // Claude voie B
+    struct StaticShadowLayer {
+        CTexture* colour = nullptr;
+        CTexture* depth = nullptr;
+        C3Vector sun{0.0f, 0.0f, 0.0f};
+        C3Vector center;
+        C3Vector direction;
+        uint64_t key = 0;
+        uint64_t images = 0;
+        bool valid = false;
+        bool hasSun = false;
+        int32_t pending = 4; // GPT CACHE1b: why the layer must be rebuilt (1 sun, 4 settings), 0 = nothing special
+        C44Matrix view;          // Claude CACHE1c: camera view when the layer was drawn (diagnostic of a failure)
+        uint32_t builtFrame = 0; // Claude CACHE1c: s_staticCheckFrame when the layer was drawn
+    };
+    StaticShadowLayer s_staticLayers[3];
+    int32_t s_staticShow = 0;
+    bool s_staticKeepOnFailure = false; // hdShadowStaticCheck 2: log failures but keep the cache on (diagnostic)
+    int32_t s_lastStaticCause = 0;
+    // GPT CACHE1b: running totals for the summary line of the proof (Logs\preuve-soleil.txt).
+    struct StaticProof {
+        uint64_t bands = 0, texels = 0, different = 0, nonFinite = 0, reused = 0, built[5] = {};
+        double maxYards = 0.0;
+    } s_staticProof;
+    CTexture* s_staticWorkingDepth = nullptr;
+    // Claude CACHE1c: the reference of the previous check of each band, to see whether the original pass itself
+    // changes when only the camera turns (same centre, sun and key).
+    CTexture* s_prevReference[3] = {};
+    struct PrevReferenceInfo { bool valid = false; C3Vector center, sun; uint64_t key = 0; C44Matrix view; };
+    PrevReferenceInfo s_prevReferenceInfo[3];
+    ShadowStaticKeyCallback s_staticKey = nullptr;
+    ShadowStaticStatsCallback s_staticStats = nullptr;
+    bool s_staticEnabled = false;
+    bool s_staticActive = false;
+    bool s_collectStatic = false;
+    bool s_drawStatic = false;
+    bool s_staticCheck = false;
+    bool s_staticRejected = false;
+    float s_staticDegrees = 0.01f;
+    double s_staticChordSquared = 0.0;
+    int32_t s_staticMap = 0;
+    uint32_t s_staticCheckFrame = 0;
+
+    void InvalidateStaticLayers() {
+        for (auto& layer : s_staticLayers) {
+            layer.valid = false;
+            layer.hasSun = false;
+            layer.pending = 4;
+        }
+    }
+
+    void ReleaseStaticLayers() {
+        for (auto& layer : s_staticLayers) {
+            if (layer.colour) HandleClose(reinterpret_cast<HOBJECT>(layer.colour));
+            if (layer.depth) HandleClose(reinterpret_cast<HOBJECT>(layer.depth));
+            layer = StaticShadowLayer{};
+        }
+        if (s_staticWorkingDepth) HandleClose(reinterpret_cast<HOBJECT>(s_staticWorkingDepth));
+        s_staticWorkingDepth = nullptr;
+    }
+
+    void UpdateStaticSun(StaticShadowLayer& layer) {
+        const C3Vector& sun = CShadowCache::s_sunDir;
+        const double dx = double(sun.x) - layer.sun.x;
+        const double dy = double(sun.y) - layer.sun.y;
+        const double dz = double(sun.z) - layer.sun.z;
+        if (!layer.hasSun || s_staticDegrees == 0.0f || dx*dx + dy*dy + dz*dz > s_staticChordSquared) {
+            layer.sun = sun;
+            layer.hasSun = true;
+            layer.valid = false;
+            layer.pending = 1;
+        }
+    }
+#endif
+    void HdTrace3(const char*x,const char*y,const char*z,const C3Vector&v); // Claude LT2
     // HD: the light-space axes GxuXformCreateLookAtXXX builds for a shadow band (z toward the light's travel,
     // x = cross(up, z), y = cross(z, x)). False when degenerate.
     bool LightAxes(const C3Vector& sun,const C3Vector& up,double* x,double* y){
@@ -45,10 +152,19 @@ namespace {
     }
     void ResetSunBands(){for(auto& b:s_sunBands)b=SunBandState{};s_nextSunBand=0;}
     const C3Vector& ReadSun(int32_t i){
+#ifdef WOWDECOMP_VULKAN
+        if (s_staticActive && s_staticLayers[i].hasSun) return s_staticLayers[i].sun;
+#endif
+        if(i==2&&s_farEvery>1&&s_farValid&&CShadowCache::GetShadowMode()>=SHADOW_VERY_HIGH)return s_farSun; // Claude 2026-11-04 lot S3
         auto& b=CShadowCache::s_extShadowBands[i];auto& meta=s_sunBands[i];
         return s_sunCache&&meta.valid[b.m_current]?meta.texture[b.m_current]:CShadowCache::s_sunDir;
     }
-    const C3Vector& RenderSun(int32_t i){return s_sunCache&&s_sunBands[i].building?s_sunBands[i].rendering:CShadowCache::s_sunDir;}
+    const C3Vector& RenderSun(int32_t i){
+#ifdef WOWDECOMP_VULKAN
+        if (s_staticActive && s_staticLayers[i].hasSun) return s_staticLayers[i].sun;
+#endif
+        return s_sunCache&&s_sunBands[i].building?s_sunBands[i].rendering:CShadowCache::s_sunDir;
+    }
     bool SunChanged(const C3Vector& a,const C3Vector& b){
         // Directions supplied by PreUpdate are normalized. Chord distance avoids acos precision loss.
         const double x=double(a.x)-b.x,y=double(a.y)-b.y,z=double(a.z)-b.z;
@@ -74,6 +190,117 @@ void CShadowCache::ConfigureSunCache(bool enabled,float degrees){
 }
 C3Vector CShadowCache::BandSunDirection(int32_t band){return band>=0&&band<3?ReadSun(band):s_sunDir;}
 void CShadowCache::ConfigureTexelSnap(bool enabled){s_texelSnap=enabled;}
+void CShadowCache::ConfigureFarEvery(int32_t every){every=every<1?1:(every>8?8:every);if(every!=s_farEvery){s_farEvery=every;s_farCounter=0;s_farValid=false;}} // Claude 2026-11-04 lot S3
+
+void CShadowCache::ConfigureFarCheck(int32_t mode) {
+#ifdef WOWDECOMP_VULKAN
+    if (mode < 0 || mode > 4) mode = 0;
+    if (mode == s_farCheckMode) return;
+
+    s_farCheckMode = mode;
+    s_farHeldSamples = 0;
+    s_drawFarReference = false;
+    s_splitCheckFrame = false;
+    if (mode != 4) {
+        CTexture** const layers[] = { &s_staticCheckColour, &s_staticCheckDepth, &s_mergedCheckDepth };
+        for (CTexture** layer : layers) {
+            if (*layer) HandleClose(reinterpret_cast<HOBJECT>(*layer));
+            *layer = nullptr;
+        }
+    }
+    if (!mode && s_farCheckTexture) {
+        HandleClose(reinterpret_cast<HOBJECT>(s_farCheckTexture));
+        s_farCheckTexture = nullptr;
+    }
+#else
+    (void)mode;
+#endif
+}
+
+// Claude voie B (23 nov 2026): see ShadowCache.h.
+bool CShadowCache::HdSunQuery() {
+#ifdef WOWDECOMP_VULKAN
+    return s_hdSunQuery;
+#else
+    return false;
+#endif
+}
+
+bool CShadowCache::HdSunRender() {
+#ifdef WOWDECOMP_VULKAN
+    return s_hdSunRender;
+#else
+    return false;
+#endif
+}
+
+bool CShadowCache::IsSplitCheckFrame() {
+#ifdef WOWDECOMP_VULKAN
+    return s_splitCheckFrame;
+#else
+    return false;
+#endif
+}
+
+bool CShadowCache::IsDrawingSplitReference() {
+#ifdef WOWDECOMP_VULKAN
+    return s_drawingSplitReference;
+#else
+    return false;
+#endif
+}
+
+int32_t CShadowCache::ShadowLayerPass() {
+#ifdef WOWDECOMP_VULKAN
+    return s_shadowLayerPass;
+#else
+    return 0;
+#endif
+}
+
+void CShadowCache::ConfigureStaticLayers(bool enabled, float degrees, bool check, int32_t mapId,
+    ShadowStaticKeyCallback key, ShadowStaticStatsCallback stats, int32_t show, bool keepOnFailure) {
+#ifdef WOWDECOMP_VULKAN
+    if (!std::isfinite(degrees)) degrees = 0.01f;
+    if (degrees < 0.0f) degrees = 0.0f;
+    if (degrees > 1.0f) degrees = 1.0f;
+    if (s_staticEnabled && !enabled) ReleaseStaticLayers();
+    if (s_staticMap != mapId || s_staticDegrees != degrees || s_staticEnabled != enabled)
+        InvalidateStaticLayers();
+    if (s_staticDegrees != degrees || s_staticEnabled != enabled) {
+        const double chord = 2.0 * std::sin(double(degrees) * 0.008726646259971648);
+        s_staticChordSquared = chord * chord;
+    }
+    if (!enabled) s_staticRejected = false;
+    if (check != s_staticCheck) s_staticCheckFrame = 0;
+    s_staticEnabled = enabled;
+    s_staticDegrees = degrees;
+    s_staticCheck = check;
+    s_staticMap = mapId;
+    s_staticKey = key;
+    s_staticStats = stats;
+    s_staticShow = show < 0 || show > 2 ? 0 : show;
+    s_staticKeepOnFailure = keepOnFailure;
+#else
+    (void)enabled; (void)degrees; (void)check; (void)mapId; (void)key; (void)stats; (void)show;
+#endif
+}
+
+bool CShadowCache::IsCollectingStaticLayers() {
+#ifdef WOWDECOMP_VULKAN
+    return s_collectStatic;
+#else
+    return false;
+#endif
+}
+
+bool CShadowCache::IsDrawingStaticLayers() {
+#ifdef WOWDECOMP_VULKAN
+    return s_drawStatic;
+#else
+    return false;
+#endif
+}
 void CShadowCache::BandTexelPhase(int32_t band,float* u,float* v){
     *u=*v=-1.0f;if(band<0||band>2)return;auto& b=s_extShadowBands[band];
     const double texel=BandTexel(b.m_radius);double x[3],y[3];if(!(texel>0)||!LightAxes(ReadSun(band),b.m_dir,x,y))return;
@@ -166,6 +393,7 @@ CShadowBand CShadowCache::s_extDynShadow;
 
 // STATIC: 0x00D43290
 CShadowBand CShadowCache::s_extShadowBands[3];
+int32_t CShadowCache::s_failBox[4] = {}; // Claude CACHE1d
 
 // STATIC: 0x00D43348
 C4Vector CShadowCache::s_shadowMatrices[12];
@@ -342,6 +570,10 @@ int32_t CShadowCache::SetShadowMode(EShadowMode mode) {
 // VERIFY: b392dedb manual
 // OFFSET: 0x00874240
 void CShadowCache::Destroy() {
+#ifdef WOWDECOMP_VULKAN
+    ReleaseStaticLayers();
+    ConfigureFarCheck(0);
+#endif
     if (CShadowCache::s_extDynShadow.m_textures[0]) {
         HandleClose(reinterpret_cast<HOBJECT>(CShadowCache::s_extDynShadow.m_textures[0]));
         CShadowCache::s_extDynShadow.m_textures[0] = nullptr;
@@ -525,6 +757,14 @@ void CShadowCache::SetShadowMapDetailDoodad() {
 // VERIFY: 2396207d manual
 // OFFSET: 0x00874890
 void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos, CFrustum& frustum, int32_t useCullFrustum) {
+#ifdef WOWDECOMP_VULKAN
+    s_drawFarReference = false;
+    s_splitCheckFrame = false;
+    const bool staticActive = s_staticEnabled && !s_staticRejected && s_staticKey && s_farEvery == 1 && !s_farCheckMode
+        && !CShaderEffect::s_usePcfFiltering && GetShadowMode() == SHADOW_VERY_HIGH;
+    if (staticActive != s_staticActive) InvalidateStaticLayers();
+    s_staticActive = s_collectStatic = staticActive;
+#endif
     uint32_t frame = 0;
     const int32_t sunBand=s_sunCache&&GetShadowMode()<SHADOW_VERY_HIGH?PickSunBand(pos):-1;
 
@@ -632,9 +872,29 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
         }
     } else {
         frame = CShadowCache::s_frameCounter;
+        // Claude 2026-11-04 lot S3: on a held frame band 2 is left out (m_lastBand stays 1: not queried, not drawn).
+        const bool hdFarHold = s_farEvery > 1 && s_farValid && (++s_farCounter % static_cast<uint32_t>(s_farEvery)) != 0;
+        if(g_hdShadowTrace){g_hdShadowTrace("sh.farHold",hdFarHold?1.f:0.f);g_hdShadowTrace("sh.farValid",s_farValid?1.f:0.f);g_hdShadowTrace("sh.farEvery",float(s_farEvery)); // Claude LT2
+         HdTrace3("sh.sun.x","sh.sun.y","sh.sun.z",CShadowCache::s_sunDir);HdTrace3("sh.farSun.x","sh.farSun.y","sh.farSun.z",s_farSun);
+         for(int b=0;b<3;++b){char k[3][24];for(int c=0;c<3;++c)std::snprintf(k[c],24,"sh.b%d.last.%c",b,'x'+c);HdTrace3(k[0],k[1],k[2],CShadowCache::s_extShadowBands[b].m_lastPos);}}
 
+#ifdef WOWDECOMP_VULKAN
+        s_drawFarReference = hdFarHold && (s_farCheckMode == 1 || s_farCheckMode == 2)
+            && !CShaderEffect::s_usePcfFiltering
+            && (s_farHeldSamples++ % 60 == 0);
+        s_splitCheckFrame = s_farEvery == 1 && s_farCheckMode >= 3 && !CShaderEffect::s_usePcfFiltering
+            && (s_farHeldSamples++ % 120 == 0);
+        const bool skipFarBand = hdFarHold && !s_drawFarReference;
+#else
+        const bool skipFarBand = hdFarHold;
+#endif
         for (uint32_t i = 0; i < 3; i++) {
+            if (i == 2 && skipFarBand) break;
             CShadowBand& band = CShadowCache::s_extShadowBands[i];
+#ifdef WOWDECOMP_VULKAN
+            if (s_staticActive) UpdateStaticSun(s_staticLayers[i]);
+#endif
+            const C3Vector sun = RenderSun(i);
 
             data.m_textureIndex[i] = 0;
             data.m_active[i] = 0;
@@ -655,7 +915,15 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
             band.m_pos.x = floor(invCell * band.m_pos.x) * cell;
             band.m_pos.y = floor(band.m_pos.y * invCell) * cell;
             band.m_pos.z = floor(band.m_pos.z * invCell) * cell;
-            band.m_pos = SnapToTexels(band.m_pos, RenderSun(i), band.m_dir, band.m_radius); // HD: hdShadowTexelSnap
+            band.m_pos = SnapToTexels(band.m_pos, sun, band.m_dir, band.m_radius); // HD: hdShadowTexelSnap
+
+            C3Vector querySun = sun;
+#ifdef WOWDECOMP_VULKAN
+            if (i == 2 && s_drawFarReference && s_farCheckMode == 1) {
+                band.m_pos = band.m_lastPos;
+                querySun = s_farSun;
+            }
+#endif
 
             data.m_pos[i] = band.m_pos;
 
@@ -669,7 +937,7 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
             data.m_texBounds[i][2] = 0.0f;
             data.m_texBounds[i][3] = 1.0f;
 
-            CShadowCache::s_frustumCallback(data.m_frustums[i], data.m_matrices[i], band.m_dir, data, i, RenderSun(i));
+            CShadowCache::s_frustumCallback(data.m_frustums[i], data.m_matrices[i], band.m_dir, data, i, querySun);
             data.m_frustums[i].Extents(data.m_extents[i]);
 
             data.m_useCullFrustum[i] = useCullFrustum;
@@ -682,27 +950,181 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
             frustum = data.m_frustums[i];
             frustum.InvertPlanes();
 
-            band.m_lastPos = band.m_pos;
+#ifdef WOWDECOMP_VULKAN
+            if (i != 2 || !s_drawFarReference)
+#endif
+                band.m_lastPos = band.m_pos;
             data.m_active[i] = 1;
             data.m_lastBand = i;
             useCullFrustum = 1;
         }
     }
 
+#ifdef WOWDECOMP_VULKAN
+    s_hdSunQuery = !s_staticActive;   // Claude voie B
+#endif
     CShadowCache::s_queryCallback(data, frame);
+#ifdef WOWDECOMP_VULKAN
+    s_hdSunQuery = false;
+#endif
 }
 
 // VERIFY: bfe3e321 manual
 // OFFSET: 0x00874FB0
+#ifdef WOWDECOMP_VULKAN
+static CGxTex* ShadowCheckTarget(CTexture*& texture, uint32_t size, EGxTexFormat format) {
+    if (!texture) {
+        CGxTexFlags flags(GxTex_Nearest, 0, 0, 0, 0, 0, 1, 0, 0, 0);
+        flags.m_renderTarget = 1;
+        texture = TextureCreate(GxTex_2d, size, size, 0, format, format,
+            flags, nullptr, ShadowCacheTextureCallback, "ShadowCheck", 0);
+    }
+    return texture ? TextureGetGxTex(texture, 1, nullptr) : nullptr;
+}
+
+// GPT CACHE1: persistent copies live in each band. The destination depth can be reused
+// across bands because draws and copies use the same ordered wxl command stream.
+static bool RenderCachedShadowBand(CShadowCacheQueryData& data, int32_t bandIndex, CGxTex* target,
+                                  CShadowBand& band, const C3Vector& sun) {
+    uint64_t key = 0;
+    if (s_staticRejected || !target || !s_staticKey(bandIndex, key)) {
+        s_staticLayers[bandIndex].valid = false;
+        return false;
+    }
+    auto* device = g_theGxDevicePtr;
+    CGxTex* oldDepth = nullptr;
+    device->DeviceGetRenderTarget(GxBuffers_Depth, oldDepth);
+    if (oldDepth) return false;
+
+    auto& layer = s_staticLayers[bandIndex];
+    const uint32_t size = CShadowCache::s_shadowSize;
+    CGxTex* colour = ShadowCheckTarget(layer.colour, size, GxTex_R32F);
+    CGxTex* depth = ShadowCheckTarget(layer.depth, size, GxTex_D24X8);
+    CGxTex* workingDepth = ShadowCheckTarget(s_staticWorkingDepth, size, GxTex_D24X8);
+    uint64_t images = 0;
+    if (!wxlvk::native::impl::SunShadowLayersSupported(device, colour, depth, target, workingDepth, &images)) {
+        layer.valid = false;
+        return false;
+    }
+
+    const auto sameVector = [](const C3Vector& a, const C3Vector& b) {
+        return a.x == b.x && a.y == b.y && a.z == b.z;
+    };
+    const bool reused = layer.valid && layer.images == images && layer.key == key && sameVector(layer.center, data.m_pos[bandIndex])
+        && sameVector(layer.direction, band.m_dir);
+    const auto render = CShadowCache::s_renderCallback;
+    s_drawingSplitReference = s_drawStatic = true;
+    // GPT CACHE1b: first cause found wins, in the order sun, targets or settings, band centre, content.
+    int32_t cause = 0;
+    if (!reused) {
+        cause = layer.pending ? layer.pending
+            : layer.images != images ? 4
+            : (!sameVector(layer.center, data.m_pos[bandIndex]) || !sameVector(layer.direction, band.m_dir)) ? 2 : 3;
+        layer.valid = false;
+        s_shadowLayerPass = 1;
+        device->DeviceSetRenderTarget(GxBuffers_Depth, depth, 0);
+        if (render(data, bandIndex, colour, nullptr, band.m_dir, sun)) {
+            layer.key = key;
+            layer.images = images;
+            layer.center = data.m_pos[bandIndex];
+            layer.direction = band.m_dir;
+            layer.valid = true;
+            layer.pending = 0;
+            {
+                CGxMatrixStack& stack = device->m_xforms[GxXform_View];
+                layer.view = stack.m_mtx[stack.m_level];
+                layer.builtFrame = s_staticCheckFrame;
+            }
+        }
+    }
+    bool rendered = false;
+    if (layer.valid && wxlvk::native::impl::CopySunShadowLayers(device, colour, depth, target, workingDepth)) {
+        if (s_staticShow == 1) {
+            rendered = true; // diagnostic: the static layer alone
+        } else {
+            // Show 2 draws the dynamic casters on a cleared target (pass 3); normally they go over the copy (pass 2).
+            s_shadowLayerPass = s_staticShow == 2 ? 3 : 2;
+            device->DeviceSetRenderTarget(GxBuffers_Depth, workingDepth, 0);
+            rendered = render(data, bandIndex, target, nullptr, band.m_dir, sun) != 0;
+        }
+    }
+    device->DeviceSetRenderTarget(GxBuffers_Depth, oldDepth, 0);
+    s_shadowLayerPass = 0;
+    s_drawingSplitReference = s_drawStatic = false;
+    if (rendered) {
+        s_lastStaticCause = cause;
+        if (reused) ++s_staticProof.reused; else ++s_staticProof.built[cause];
+        if (s_staticStats) s_staticStats(reused ? 0 : cause);
+    }
+    if (!rendered) layer.valid = false;
+    return rendered;
+}
+#endif
+
 void CShadowCache::RenderBands(CShadowCacheQueryData& data) {
     EShadowMode mode = CShadowCache::GetShadowMode();
+#ifdef WOWDECOMP_VULKAN
+    s_collectStatic = false;
+    const bool checkStatic = s_staticActive && s_staticCheck && (s_staticCheckFrame++ % 120 == 0);
+#endif
 
+#ifdef WOWDECOMP_VULKAN
+    s_hdSunRender = !s_staticActive;   // Claude voie B
+#endif
     for (int32_t i = 0; i <= data.m_lastBand; i++) {
         if (!data.m_active[i]) {
             continue;
         }
+        HDShadowDiag::Zone(i);   // Claude GPU0 (mesure)
 
         CShadowBand& band = CShadowCache::s_extShadowBands[i];
+#ifdef WOWDECOMP_VULKAN
+        if (i == 2 && s_drawFarReference) {
+            const C3Vector referenceSun = s_farCheckMode == 1 ? s_farSun : RenderSun(i);
+            CGxTex* reference = ShadowCheckTarget(s_farCheckTexture, s_shadowSize, GxTex_R32F);
+            CGxTex* held = TextureGetGxTex(band.m_textures[0], 1, nullptr);
+            uint64_t count = 0, different = 0, nonFinite = 0;
+            float maxDelta = 0.0f;
+            const bool compared = reference && held
+                && s_renderCallback(data, i, reference, nullptr, band.m_dir, referenceSun)
+                && wxlvk::native::impl::CompareSunShadowTargets(g_theGxDevicePtr, held, reference,
+                    count, different, nonFinite, maxDelta);
+            if (FILE* log = std::fopen("Logs\\preuve-soleil.txt", "a")) {
+                if (compared) {
+                    std::fprintf(log,
+                        "PREUVE bande soleil (CACHE1) : image gardee %u, mode %d, %llu texels compares, "
+                        "%llu differents, %llu non finis, ecart max R32F %.9g\n",
+                        static_cast<unsigned>(s_farHeldSamples), s_farCheckMode,
+                        static_cast<unsigned long long>(count), static_cast<unsigned long long>(different),
+                        static_cast<unsigned long long>(nonFinite), maxDelta);
+                    C44Matrix scale, translate;
+                    scale.Scale(C3Vector(1.0f, -1.0f, s_shadowScale));
+                    const float halfTexel = 0.5f / s_textureSize[0];
+                    translate.Translate(C3Vector(halfTexel, halfTexel, 0.0f));
+                    auto writeProjection = [&](const char* name, C3Vector center, const C3Vector& sun) {
+                        C44Matrix matrix;
+                        s_matrixCallback(center, band.m_radius, matrix, band.m_dir, i, sun);
+                        matrix = matrix * scale * translate;
+                        std::fprintf(log,
+                            "  %s centre=(%.9g %.9g %.9g) soleil=(%.9g %.9g %.9g) "
+                            "l9=(%.9g %.9g %.9g %.9g) l10=(%.9g %.9g %.9g %.9g) l11=(%.9g %.9g %.9g %.9g)\n",
+                            name, center.x, center.y, center.z, sun.x, sun.y, sun.z,
+                            matrix.a0, matrix.b0, matrix.c0, matrix.d0,
+                            matrix.a1, matrix.b1, matrix.c1, matrix.d1,
+                            matrix.a2, matrix.b2, matrix.c2, matrix.d2);
+                    };
+                    writeProjection("gardee", band.m_lastPos, s_farSun);
+                    writeProjection("controle", data.m_pos[i], referenceSun);
+                } else {
+                    std::fprintf(log, "PREUVE bande soleil (CACHE1) : comparaison indisponible (mode %d)\n",
+                        s_farCheckMode);
+                }
+                std::fclose(log);
+            }
+            band.m_pos = band.m_lastPos;
+            continue;
+        }
+#endif
         CGxTex* colorTarget = nullptr;
         CGxTex* target;
 
@@ -720,7 +1142,257 @@ void CShadowCache::RenderBands(CShadowCacheQueryData& data) {
             target = TextureGetGxTex(band.m_textures[data.m_textureIndex[i]], 1, nullptr);
         }
 
-        const int32_t rendered=CShadowCache::s_renderCallback(data, i, target, colorTarget, band.m_dir, RenderSun(i));
+#ifdef WOWDECOMP_VULKAN
+        CGxTex* splitReference = s_splitCheckFrame
+            ? ShadowCheckTarget(s_farCheckTexture, s_shadowSize, GxTex_R32F) : nullptr;
+        bool splitDrawn = false;
+        if (target && splitReference && s_farCheckMode == 3) {
+            s_drawingSplitReference = true;
+            splitDrawn = s_renderCallback(data, i, splitReference, nullptr, band.m_dir, RenderSun(i)) != 0;
+            s_drawingSplitReference = false;
+        }
+        if (target && splitReference && s_farCheckMode == 4) {
+            auto* device = g_theGxDevicePtr;
+            CGxTex* fixedColour = ShadowCheckTarget(s_staticCheckColour, s_shadowSize, GxTex_R32F);
+            CGxTex* fixedDepth = ShadowCheckTarget(s_staticCheckDepth, s_shadowSize, GxTex_D24X8);
+            CGxTex* mergedDepth = ShadowCheckTarget(s_mergedCheckDepth, s_shadowSize, GxTex_D24X8);
+            CGxTex* oldDepth = nullptr;
+            device->DeviceGetRenderTarget(GxBuffers_Depth, oldDepth);
+            if (!oldDepth && wxlvk::native::impl::SunShadowLayersSupported(
+                    device, fixedColour, fixedDepth, splitReference, mergedDepth, nullptr)) {
+                s_drawingSplitReference = true;
+                s_shadowLayerPass = 1;
+                device->DeviceSetRenderTarget(GxBuffers_Depth, fixedDepth, 0);
+                const bool fixedDrawn = s_renderCallback(data, i, fixedColour, nullptr, band.m_dir, RenderSun(i)) != 0;
+                if (fixedDrawn && wxlvk::native::impl::CopySunShadowLayers(
+                        device, fixedColour, fixedDepth, splitReference, mergedDepth)) {
+                    s_shadowLayerPass = 2;
+                    device->DeviceSetRenderTarget(GxBuffers_Depth, mergedDepth, 0);
+                    splitDrawn = s_renderCallback(data, i, splitReference, nullptr, band.m_dir, RenderSun(i)) != 0;
+                }
+                device->DeviceSetRenderTarget(GxBuffers_Depth, oldDepth, 0);
+                s_shadowLayerPass = 0;
+                s_drawingSplitReference = false;
+            }
+        }
+#endif
+        const uint64_t hdPerf=HDShadowDiag::PerfBegin(); // Claude 2026-11-04 lot S1
+#ifdef WOWDECOMP_VULKAN
+        const bool renderedFromLayers = s_staticActive && !colorTarget
+            && RenderCachedShadowBand(data, i, target, band, RenderSun(i));
+#else
+        constexpr bool renderedFromLayers = false;
+#endif
+        const int32_t rendered = renderedFromLayers ? 1
+            : s_renderCallback(data, i, target, colorTarget, band.m_dir, RenderSun(i));
+        HDShadowDiag::PerfEnd(2+i,hdPerf);
+#ifdef WOWDECOMP_VULKAN
+        if (checkStatic && renderedFromLayers) {
+            CGxTex* original = ShadowCheckTarget(s_farCheckTexture, s_shadowSize, GxTex_R32F);
+            uint64_t count = 0, different = 0, nonFinite = 0, detail[6] = {};
+            float maxDelta = 0.0f;
+            // Claude CACHE1d: the reference draws everything fresh in one pass, in the order of the composition
+            // (buildings, fixed models, then the mobile casters): two casters at the same depth to the 24-bit depth
+            // test keep the same winner, so what is compared is the reuse of the layer alone.
+            s_drawingSplitReference = true;
+            const bool referenceDrawn = original && s_renderCallback(data, i, original, nullptr, band.m_dir, RenderSun(i));
+            s_drawingSplitReference = false;
+            const bool compared = referenceDrawn
+                && wxlvk::native::impl::CompareSunShadowTargets(g_theGxDevicePtr, target, original,
+                    count, different, nonFinite, maxDelta, detail);
+            // Claude CACHE1c: the original pass against itself two seconds earlier, when the band centre, the sun and
+            // the casters (key) are unchanged: different = the original shadow map changes with the camera alone.
+            if (compared && original) {
+                auto& info = s_prevReferenceInfo[i];
+                uint64_t keyNow = 0;
+                const bool haveKey = s_staticKey && s_staticKey(i, keyNow);
+                CGxMatrixStack& stack = g_theGxDevicePtr->m_xforms[GxXform_View];
+                const C44Matrix viewNow = stack.m_mtx[stack.m_level];
+                CGxTex* previous = ShadowCheckTarget(s_prevReference[i], s_shadowSize, GxTex_R32F);
+                const C3Vector sunNow = RenderSun(i);
+                const bool sameKey = haveKey && info.key == keyNow;
+                const bool same = info.valid && haveKey
+                    && info.center.x == data.m_pos[i].x && info.center.y == data.m_pos[i].y && info.center.z == data.m_pos[i].z
+                    && info.sun.x == sunNow.x && info.sun.y == sunNow.y && info.sun.z == sunNow.z;
+                if (same && previous) {
+                    uint64_t c = 0, d = 0, n = 0;
+                    float m = 0.0f;
+                    if (wxlvk::native::impl::CompareSunShadowTargets(g_theGxDevicePtr, original, previous, c, d, n, m)) {
+                        const float a[9] = { info.view.a0, info.view.a1, info.view.a2, info.view.b0, info.view.b1,
+                            info.view.b2, info.view.c0, info.view.c1, info.view.c2 };
+                        const float b[9] = { viewNow.a0, viewNow.a1, viewNow.a2, viewNow.b0, viewNow.b1, viewNow.b2,
+                            viewNow.c0, viewNow.c1, viewNow.c2 };
+                        double turn = 0.0;
+                        for (int k = 0; k < 9; ++k) turn = std::max(turn, std::fabs(double(a[k]) - b[k]));
+                        if (FILE* log = std::fopen("Logs\\preuve-soleil.txt", "a")) {
+                            std::fprintf(log, "REFERENCE bande %d : passe d'origine contre elle-meme 120 images plus tot "
+                                "(meme centre et soleil, liste fixe %s) : %llu differents, ecart max %.9g yd, camera tournee de %.6g\n",
+                                i, sameKey ? "identique" : "changee", static_cast<unsigned long long>(d), double(m) * 4000.0, turn);
+                            std::fclose(log);
+                        }
+                    }
+                }
+                if (previous && haveKey) {
+                    g_theGxDevicePtr->DeviceCopyTex(original, 0, previous, 0);
+                    info.valid = true;
+                    info.key = keyNow;
+                    info.center = data.m_pos[i];
+                    info.sun = sunNow;
+                    info.view = viewNow;
+                }
+            }
+            const double deltaYards = double(maxDelta) * 4000.0;
+            // GPT CACHE1b: a texel that differs by one float step is the camera rounding the plan accepts (measured:
+            // 4 texels in 184 million, 0.00024 yd at most), so only a real error (>= 0.001 yd or non finite) rejects.
+            const bool rejected = compared && (nonFinite || deltaYards >= 0.001);
+            // Claude CACHE1c: on a failure, draw the static layer again now and compare it with the kept one.
+            // Same: the kept layer is still right and the error is in the dynamic pass or the composition.
+            // Different: what the layer holds changed without the key seeing it (the camera, or a caster).
+            bool freshCompared = false;
+            uint64_t freshCount = 0, freshDifferent = 0, freshNonFinite = 0, freshDetail[6] = {};
+            float freshDelta = 0.0f;
+            bool oldMatrixCompared = false;
+            uint64_t oldCount = 0, oldDifferent = 0, oldNonFinite = 0;
+            float oldDelta = 0.0f;
+            double viewRotation = 0.0, viewTranslation = 0.0;
+            uint32_t layerAge = 0;
+            if (rejected && s_staticLayers[i].valid) {
+                auto* device = g_theGxDevicePtr;
+                auto& layer = s_staticLayers[i];
+                CGxMatrixStack& stack = device->m_xforms[GxXform_View];
+                const C44Matrix& now = stack.m_mtx[stack.m_level];
+                const float a[16] = { layer.view.a0, layer.view.a1, layer.view.a2, layer.view.a3, layer.view.b0,
+                    layer.view.b1, layer.view.b2, layer.view.b3, layer.view.c0, layer.view.c1, layer.view.c2,
+                    layer.view.c3, layer.view.d0, layer.view.d1, layer.view.d2, layer.view.d3 };
+                const float b[16] = { now.a0, now.a1, now.a2, now.a3, now.b0, now.b1, now.b2, now.b3,
+                    now.c0, now.c1, now.c2, now.c3, now.d0, now.d1, now.d2, now.d3 };
+                for (int k = 0; k < 16; ++k) {
+                    const double d = std::fabs(double(a[k]) - b[k]);
+                    if (k >= 12) { if (d > viewTranslation) viewTranslation = d; }
+                    else if (d > viewRotation) viewRotation = d;
+                }
+                layerAge = s_staticCheckFrame - layer.builtFrame;
+                CGxTex* freshColour = ShadowCheckTarget(s_staticCheckColour, s_shadowSize, GxTex_R32F);
+                CGxTex* freshDepth = ShadowCheckTarget(s_staticCheckDepth, s_shadowSize, GxTex_D24X8);
+                CGxTex* kept = layer.colour ? TextureGetGxTex(layer.colour, 1, nullptr) : nullptr;
+                CGxTex* oldDepth = nullptr;
+                device->DeviceGetRenderTarget(GxBuffers_Depth, oldDepth);
+                if (freshColour && freshDepth && kept && !oldDepth) {
+                    // First the layer again with the light matrix (c14..c16) of the kept layer (pass 4 = pass 1 with
+                    // that matrix): equal to the kept layer = that matrix is the only thing the turn changed.
+                    s_drawingSplitReference = s_drawStatic = true;
+                    s_shadowLayerPass = 4;
+                    device->DeviceSetRenderTarget(GxBuffers_Depth, freshDepth, 0);
+                    const bool drawnOld = s_renderCallback(data, i, freshColour, nullptr, band.m_dir, RenderSun(i)) != 0;
+                    device->DeviceSetRenderTarget(GxBuffers_Depth, oldDepth, 0);
+                    oldMatrixCompared = drawnOld && wxlvk::native::impl::CompareSunShadowTargets(device, freshColour, kept,
+                        oldCount, oldDifferent, oldNonFinite, oldDelta, nullptr);
+                    s_shadowLayerPass = 1;
+                    device->DeviceSetRenderTarget(GxBuffers_Depth, freshDepth, 0);
+                    const bool drawn = s_renderCallback(data, i, freshColour, nullptr, band.m_dir, RenderSun(i)) != 0;
+                    device->DeviceSetRenderTarget(GxBuffers_Depth, oldDepth, 0);
+                    s_shadowLayerPass = 0;
+                    s_drawingSplitReference = s_drawStatic = false;
+                    static uint32_t s_dumps = 0;
+                    if (s_dumps < 4) {
+                        char prefix[64];
+                        std::snprintf(prefix, sizeof(prefix), "Logs\\ombre-%u-bande%d", s_dumps++, i);
+                        wxlvk::native::impl::SetSunShadowCompareDump(prefix); // a = redrawn now, b = kept layer
+                    }
+                    freshCompared = drawn && wxlvk::native::impl::CompareSunShadowTargets(device, freshColour, kept,
+                        freshCount, freshDifferent, freshNonFinite, freshDelta, freshDetail);
+                }
+            }
+            if (rejected) {
+                g_theGxDevicePtr->DeviceCopyTex(original, 0, target, 0);
+                if (!s_staticKeepOnFailure) s_staticRejected = true;
+                s_staticLayers[i].valid = false; // the layer that gave a wrong band is never reused
+                s_staticLayers[i].pending = 3;
+            }
+            if (FILE* log = std::fopen("Logs\\preuve-soleil.txt", "a")) {
+                if (compared) {
+                    std::fprintf(log, "PREUVE cache soleil (CACHE1) : bande %d, %llu texels compares, "
+                        "%llu differents, %llu non finis, ecart max %.9g yd%s\n", i,
+                        static_cast<unsigned long long>(count), static_cast<unsigned long long>(different),
+                        static_cast<unsigned long long>(nonFinite), deltaYards,
+                        rejected ? (s_staticKeepOnFailure ? " (ECHEC, calque jete, cache garde pour le diagnostic)"
+                                                           : " (cache desactive apres comparaison)") : "");
+                    if (rejected) {
+                        // GPT CACHE1b: what failed, to find the cause: was the layer reused or just rebuilt, which side is
+                        // nearer, and where on the map the differing texels are (texel box).
+                        std::fprintf(log, "  DIAGNOSTIC bande %d : calque %s (cause %d), carte composee plus proche sur %llu texels, "
+                            "reference plus proche sur %llu, boite des texels differents x %llu..%llu y %llu..%llu\n", i,
+                            s_lastStaticCause ? "reconstruit" : "reutilise", s_lastStaticCause,
+                            static_cast<unsigned long long>(detail[0]), static_cast<unsigned long long>(detail[1]),
+                            static_cast<unsigned long long>(detail[2]), static_cast<unsigned long long>(detail[3]),
+                            static_cast<unsigned long long>(detail[4]), static_cast<unsigned long long>(detail[5]));
+                        if (freshCompared) {
+                            std::fprintf(log, "  DIAGNOSTIC bande %d : calque fixe redessine maintenant contre calque garde : "
+                                "%llu differents, ecart max %.9g yd, boite x %llu..%llu y %llu..%llu ; "
+                                "calque dessine il y a %u images ; camera depuis : rotation %.6g, translation vue %.6g\n", i,
+                                static_cast<unsigned long long>(freshDifferent), double(freshDelta) * 4000.0,
+                                static_cast<unsigned long long>(freshDetail[2]), static_cast<unsigned long long>(freshDetail[3]),
+                                static_cast<unsigned long long>(freshDetail[4]), static_cast<unsigned long long>(freshDetail[5]),
+                                layerAge, viewRotation, viewTranslation);
+                            if (oldMatrixCompared)
+                                std::fprintf(log, "  DIAGNOSTIC bande %d : calque redessine avec la matrice lumiere (c14..c16) du calque garde : "
+                                    "%llu differents, ecart max %.9g yd\n", i,
+                                    static_cast<unsigned long long>(oldDifferent), double(oldDelta) * 4000.0);
+                        } else {
+                            std::fprintf(log, "  DIAGNOSTIC bande %d : calque fixe pas redessine (calque deja invalide ou cible absente)\n", i);
+                        }
+                        std::fflush(log);
+                        uint64_t unused = 0;
+                        for (int k = 0; k < 4; ++k) CShadowCache::s_failBox[k] = static_cast<int32_t>(detail[2 + k]); // Claude CACHE1d
+                        if (s_staticKey) s_staticKey(-1 - i, unused); // the query side adds its own line (lists, groups)
+                    }
+                    // GPT CACHE1b: running summary in the format asked for by the plan (section 5, P5).
+                    ++s_staticProof.bands;
+                    s_staticProof.texels += count;
+                    s_staticProof.different += different;
+                    s_staticProof.nonFinite += nonFinite;
+                    if (deltaYards > s_staticProof.maxYards) s_staticProof.maxYards = deltaYards;
+                    std::fprintf(log, "PREUVE cache soleil (CACHE1) : %llu bandes, %llu texels compares, "
+                        "%llu differents, %llu non finis, ecart max %.9g yd, calques reutilises %llu, "
+                        "redessines %llu (causes : soleil %llu, centre %llu, liste %llu, reglages %llu)\n",
+                        static_cast<unsigned long long>(s_staticProof.bands),
+                        static_cast<unsigned long long>(s_staticProof.texels),
+                        static_cast<unsigned long long>(s_staticProof.different),
+                        static_cast<unsigned long long>(s_staticProof.nonFinite), s_staticProof.maxYards,
+                        static_cast<unsigned long long>(s_staticProof.reused),
+                        static_cast<unsigned long long>(s_staticProof.built[1] + s_staticProof.built[2]
+                            + s_staticProof.built[3] + s_staticProof.built[4]),
+                        static_cast<unsigned long long>(s_staticProof.built[1]),
+                        static_cast<unsigned long long>(s_staticProof.built[2]),
+                        static_cast<unsigned long long>(s_staticProof.built[3]),
+                        static_cast<unsigned long long>(s_staticProof.built[4]));
+                } else {
+                    std::fprintf(log, "PREUVE cache soleil (CACHE1) : bande %d, comparaison indisponible\n", i);
+                }
+                std::fclose(log);
+            }
+        }
+        if (s_splitCheckFrame) {
+            uint64_t count = 0, different = 0, nonFinite = 0;
+            float maxDelta = 0.0f;
+            const bool compared = splitDrawn && rendered
+                && wxlvk::native::impl::CompareSunShadowTargets(g_theGxDevicePtr, target, splitReference,
+                    count, different, nonFinite, maxDelta);
+            if (FILE* log = std::fopen("Logs\\preuve-soleil.txt", "a")) {
+                if (compared) {
+                    std::fprintf(log,
+                        "PREUVE composition soleil (CACHE1) : mode %d, bande %d, %llu texels compares, "
+                        "%llu differents, %llu non finis, ecart max R32F %.9g\n", s_farCheckMode, i,
+                        static_cast<unsigned long long>(count), static_cast<unsigned long long>(different),
+                        static_cast<unsigned long long>(nonFinite), maxDelta);
+                } else {
+                    std::fprintf(log, "PREUVE composition soleil (CACHE1) : mode %d, bande %d, comparaison indisponible\n",
+                        s_farCheckMode, i);
+                }
+                std::fclose(log);
+            }
+        }
+#endif
         if(s_sunCache&&rendered){
             auto& meta=s_sunBands[i];
             if(mode<SHADOW_VERY_HIGH){
@@ -733,11 +1405,20 @@ void CShadowCache::RenderBands(CShadowCacheQueryData& data) {
                 }
             }else{meta.texture[0]=s_sunDir;meta.valid[0]=true;}
         }
+        if(i==2&&mode>=SHADOW_VERY_HIGH){s_farValid=rendered!=0;s_farSun=RenderSun(2);s_farCounter=0;} // Claude 2026-11-04 lot S3
+        if(g_hdShadowTrace){char k[24];std::snprintf(k,sizeof k,"sh.b%d.drawn",i);g_hdShadowTrace(k,rendered?1.f:-1.f);} // Claude LT2
     }
+    HDShadowDiag::Zone(-1);   // Claude GPU0 (mesure)
+#ifdef WOWDECOMP_VULKAN
+    s_hdSunRender = false;   // Claude voie B
+    s_splitCheckFrame = false;
+#endif
 }
 
 // VERIFY: 5c2fb76e manual
 // OFFSET: 0x008750B0
+void (*g_hdShadowTrace)(const char*,float)=nullptr; // Claude LT2: set by ShadowQuery to HD::LightTrace::Set
+namespace{void HdTrace3(const char*x,const char*y,const char*z,const C3Vector&v){if(g_hdShadowTrace){g_hdShadowTrace(x,v.x);g_hdShadowTrace(y,v.y);g_hdShadowTrace(z,v.z);}}}
 void CShadowCache::PostUpdate() {
     if (!CShadowCache::s_matrixCallback || !CShadowCache::s_frustumCallback || !CShadowCache::s_queryCallback || !CShadowCache::s_renderCallback) {
         return;
@@ -825,7 +1506,11 @@ CShadowCacheQueryData::CShadowCacheQueryData() {
 // VERIFY: e0449636 manual
 // OFFSET: 0x00875760
 void CShadowCache::ClearBandTextures() {
+#ifdef WOWDECOMP_VULKAN
+    InvalidateStaticLayers();
+#endif
     ResetSunBands(); // HD: metadata cannot outlive the textures it describes
+    s_farValid=false;s_farCounter=0; // Claude 2026-11-04 lot S3: a cleared band 2 is redrawn at once
     if (CShadowCache::s_shadowMode <= SHADOW_MEDIUM) {
         CShadowCache::s_needsRebuild = 0;
         return;
@@ -1057,6 +1742,7 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
 
     CShadowCacheQueryData data;
     CShadowCache::s_frameCounter++;
+    uint64_t hdPerfDyn=HDShadowDiag::PerfBegin(); // Claude 2026-11-04 lot S1: the dynamic part, up to the bands
 
     float radius = CShadowCache::s_extDynShadow.m_radius;
     data.m_radius[0] = radius;
@@ -1136,6 +1822,7 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
         CShadowCache::s_renderCallback(data, 0, target, colorTarget, CShadowCache::s_extDynShadow.m_dir, CShadowCache::s_sunDir);
     }
 
+    HDShadowDiag::PerfEnd(0,hdPerfDyn);
     if (mode > SHADOW_MEDIUM) {
         if (CShadowCache::s_needsRebuild) {
             CShadowCache::ClearBandTextures();
@@ -1154,7 +1841,9 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
                 data.m_useFrustum = 1;
             }
 
+            const uint64_t hdPerfGather=HDShadowDiag::PerfBegin(); // Claude 2026-11-04 lot S1
             CShadowCache::GatherBands(data, pos, frustum, useBandCull);
+            HDShadowDiag::PerfEnd(1,hdPerfGather);
             CShadowCache::RenderBands(data);
         }
     }

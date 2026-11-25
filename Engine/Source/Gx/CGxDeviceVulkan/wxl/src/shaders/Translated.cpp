@@ -30,6 +30,7 @@
 #include <windows.h>
 #include <wincrypt.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -44,7 +45,7 @@ namespace
     /// The most distinct (name, stage) records the registry holds. The client's archives hold 1578
     /// distinct records and ~3100 names; a session creates far fewer, since the engine asks for
     /// `count` permutations of a container and not the container. 2048 is the manifest's own bound.
-    constexpr uint32_t kMaxEntries = 2048;
+    constexpr uint32_t kMaxEntries = 16384;   // HD LV41 (Claude): was 2048, below the manifest's 2219 records
 
     /// Names whose Resolve() fell back to the manifest's name table, remembered so the fallback
     /// is logged once per name and not once per pipeline build.
@@ -79,6 +80,9 @@ namespace
         bool       fullLogged = false;
     };
     State s;
+
+    /// Claude 2026-11-05 lot SOL1: bumped at each (re-)resolution of a record (Generation()).
+    std::atomic<uint32_t> s_generation{0};
 
     /**
      * MD5 of a byte range as 32 lowercase hex characters, through the Win32 cryptographic
@@ -207,6 +211,7 @@ namespace
         }
         e->row   = row;
         e->known = row != nullptr;
+        s_generation.fetch_add(1, std::memory_order_relaxed); // Claude 2026-11-05 lot SOL1
 
         if (!hashed)
             wxl::ScriptMgr::Log(WXL_LOG_WARN,
@@ -286,6 +291,11 @@ namespace wxlvk::shaders::translated
     {
         if (!s.armed) return nullptr;
         return Register(shader, pixel);
+    }
+
+    uint32_t Generation()
+    {
+        return s_generation.load(std::memory_order_relaxed); // Claude 2026-11-05 lot SOL1
     }
 
     bool Known(const void* code, uint32_t size)

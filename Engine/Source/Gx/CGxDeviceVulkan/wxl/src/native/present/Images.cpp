@@ -107,6 +107,15 @@ namespace wxlvk::native::present::detail
         if (s.depthView != VK_NULL_HANDLE) d.DestroyImageView(s.device, s.depthView, nullptr);
         if (s.depthImage != VK_NULL_HANDLE) d.DestroyImage(s.device, s.depthImage, nullptr);
         memory::Free(s.depthBlock);
+        // HD LV27: the kept depth goes with the back depth.
+        if (s.depthSavedView != VK_NULL_HANDLE) d.DestroyImageView(s.device, s.depthSavedView, nullptr);
+        if (s.depthSaved != VK_NULL_HANDLE) d.DestroyImage(s.device, s.depthSaved, nullptr);
+        memory::Free(s.depthSavedBlock);
+        s.depthSavedView   = VK_NULL_HANDLE;
+        s.depthSaved       = VK_NULL_HANDLE;
+        s.depthSavedBlock  = memory::Block();
+        s.depthSavedLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        s.depthSavedValid  = false;
         if (s.backView != VK_NULL_HANDLE) d.DestroyImageView(s.device, s.backView, nullptr);
         if (s.backImage != VK_NULL_HANDLE) d.DestroyImage(s.device, s.backImage, nullptr);
         memory::Free(s.backBlock);
@@ -173,7 +182,9 @@ namespace wxlvk::native::present::detail
 
         // SAMPLED as well where the format allows it, so a post-process effect can read the scene's
         // depth (SceneDepth).
-        VkImageUsageFlags depthUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        // HD LV27: TRANSFER too, so the depth before the liquids can be kept and put back (SaveSceneDepth).
+        VkImageUsageFlags depthUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                                       | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         s.depthSampled = false;
         if (s.depthFormat != VK_FORMAT_UNDEFINED && h.iapi && h.iapi->GetPhysicalDeviceFormatProperties)
         {
@@ -192,6 +203,7 @@ namespace wxlvk::native::present::detail
             return false;
         }
         s.depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        s.depthExtent = render;   // HD LV27
         if (!s.modeLogged)
         {
             s.modeLogged = true;
@@ -373,7 +385,14 @@ namespace wxlvk::native::present::detail
             return false;
         }
         if (s.imagesInFlight[image] != VK_NULL_HANDLE && s.imagesInFlight[image] != slot.fence)
-            s.dapi->WaitForFences(s.device, 1, &s.imagesInFlight[image], VK_TRUE, UINT64_MAX);
+        {
+            const VkResult waited = s.dapi->WaitForFences(s.device, 1, &s.imagesInFlight[image], VK_TRUE, UINT64_MAX);
+            if (waited != VK_SUCCESS)
+            {
+                Fail("vkWaitForFences (swapchain image)", waited);
+                return false;
+            }
+        }
         s.imagesInFlight[image] = slot.fence;
         s.image      = image;
         s.acquired   = true;

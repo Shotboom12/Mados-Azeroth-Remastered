@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include "Engine/Source/Model2/M2Light.h"
+#include "Engine/Source/Model2/HdExtraLamps.h" // Claude LV15: hdLampStable
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxLight.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -83,6 +84,7 @@ CM2Light::CM2Light() {
 
 // INLINED
 CM2Light::~CM2Light() {
+    HD::ExtraLamps::ForgetLight(this); // Claude LV15
 #ifdef WOWDECOMP_VULKAN
     HD::Lamp::Native::Forget(this);
 #endif

@@ -15,29 +15,42 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "vulkan/pipelines/Internal.hpp"
+#include "shaders/Translated.hpp" // Claude 2026-11-05 lot SOL1
 
 namespace wxlvk::vk::pipelines::detail
 {
     /**
-     * The first draw of a pre-warmed entry: the sources it was built from (by the persisted md5s)
-     * against what Source() resolves for its key now, through the shaders this session created.
-     * Equal: the entry is the one a draw-time build would have made, and is kept. Different (a
-     * manifest or a name that moved since the list was written): the pipeline, never bound, is
-     * destroyed and the key built as any other, so a draw never runs on a module it would not have
-     * been given.
+     * The sources an entry was built from against what Source() resolves for its key now, through
+     * the shaders this session created. Equal: the entry is the one a draw-time build would make
+     * now, and is kept. Different: the key is built again, so a draw never runs on a module its
+     * shader names no longer give.
+     * - The first draw of a pre-warmed entry (the persisted md5s against a manifest or a name that
+     *   may have moved since the list was written): the old pipeline, never bound, is destroyed.
+     * - Claude PIPE1: a built entry, once per move of translated::Generation(). The HD terrain
+     *   shaders (HdTerrain.cpp) are compiled on a thread and put in with SetCode on the SAME
+     *   CGxShader, under the same name, some 45 s after the world loads: a key first drawn before
+     *   that kept Blizzard's modules for good (64 rows, no HD constants), the keys first drawn after
+     *   got the HD modules, and the ground showed both side by side (golden and pink chunks, Savage
+     *   Coast 20 nov). The old pipeline may sit in a frame still in flight: it is retired, and
+     *   destroyed by BeginFrame() once every slot has been waited on.
      *
-     * @param uint32 i : the entry
+     * @param uint32 i : the entry, pre-warmed or built (not a failed one: RetryFailed)
      */
-    void VerifyPrewarmed(uint32_t i)
+    void VerifySources(uint32_t i)
     {
         PipelineEntry& e = s.pipelines[i];
+        const bool prewarmed = e.prewarmed;
         e.prewarmed = false;
+        // Taken before Source(): a record resolved during the check moves it again, and the next
+        // draw checks again.
+        const uint32_t generation = wxlvk::shaders::translated::Generation(); // Claude 2026-11-05 lot SOL1
+        e.builtGeneration = generation;
         Sources     now;
         const char* why = "";
         if (Source(e.key, now.row, now.vr, now.pr, now.ffVertex, now.companion, why) && now.row == e.row
             && now.vr == e.vrec && now.pr == e.prec && now.ffVertex == e.ffVertex && now.companion == e.companion)
         {
-            ++s.stats.prewarmVerified;
+            if (prewarmed) ++s.stats.prewarmVerified;
             return;
         }
 
@@ -48,8 +61,13 @@ namespace wxlvk::vk::pipelines::detail
         QueryPerformanceCounter(&t1);
         s.buildTicks += static_cast<uint64_t>(t1.QuadPart - t0.QuadPart);
         ++s.buildCount;
-        ++s.stats.prewarmRebuilt;
-        if (e.pipeline != VK_NULL_HANDLE) s.dapi->DestroyPipeline(s.device, e.pipeline, nullptr);
+        if (prewarmed) ++s.stats.prewarmRebuilt;
+        else ++s.stats.sourcesRebuilt; // Claude PIPE1
+        if (e.pipeline != VK_NULL_HANDLE)
+        {
+            if (prewarmed) s.dapi->DestroyPipeline(s.device, e.pipeline, nullptr);
+            else s.retired.push_back({e.pipeline, kFrameSlots + 1}); // Claude PIPE1
+        }
         if (e.translated && s.translatedCount) --s.translatedCount;
         if (e.companion && s.companionCount) --s.companionCount;
         const Key          key  = e.key;
@@ -59,6 +77,7 @@ namespace wxlvk::vk::pipelines::detail
             e      = built;
             e.key  = key;
             e.pass = pass;
+            e.builtGeneration = generation; // Claude PIPE1
             if (e.translated) ++s.translatedCount;
             if (e.companion) ++s.companionCount;
         }
@@ -68,13 +87,76 @@ namespace wxlvk::vk::pipelines::detail
             e.key  = key;
             e.pass = pass;
             e.why  = why;
+            e.failedGeneration = generation; // Claude 2026-11-05 lot SOL1
             ++s.failedCount;
         }
         s.stats.pipelines = s.pipelineCount - s.failedCount;
         wxl::ScriptMgr::Log(WXL_LOG_DEBUG,
-                            "vulkan: pipelines: pre-warmed vs=\"%s\" ps=\"%s\" format=%u resolved to other "
-                            "sources at its first draw; rebuilt%s",
+                            "vulkan: pipelines: %s vs=\"%s\" ps=\"%s\" format=%u resolved to other "
+                            "sources; rebuilt%s",
+                            prewarmed ? "pre-warmed (first draw)" : "built (its shaders changed, PIPE1)",
                             key.vs, key.ps, key.vertexFormat, ok ? "" : " and failed (skipped like any failed key)");
+    }
+
+    /**
+     * Claude 2026-11-05 lot SOL1: a failed entry is built again once, when a shader record has been
+     * resolved to a module since its build was tried (translated::Generation() moved). The HD terrain
+     * shaders (hdTerrainLight) are swapped in shader by shader at their first use: a draw between the
+     * vertex swap and the pixel swap asked for a pair that does not link (the pixel module reads fog0,
+     * the Blizzard vertex module does not write it), the failure was remembered for good, and those
+     * terrain chunks were never drawn again (the ground missing, one launch in two or three). A key
+     * whose shaders have not changed is not built again: the same failure, the same cost as before.
+     *
+     * @param uint32 i : the entry, failed (no pipeline)
+     * @return bool built : true when the entry now has a pipeline
+     */
+    bool RetryFailed(uint32_t i)
+    {
+        PipelineEntry& e = s.pipelines[i];
+        const uint32_t generation = wxlvk::shaders::translated::Generation();
+        if (e.pipeline != VK_NULL_HANDLE || e.failedGeneration == generation) return false;
+        e.failedGeneration = generation;
+
+        PipelineEntry built;
+        const char*   why = "";
+        LARGE_INTEGER t0 = {}, t1 = {};
+        QueryPerformanceCounter(&t0);
+        const bool ok = Build(e.key, e.pass, built, why, nullptr);
+        QueryPerformanceCounter(&t1);
+        s.buildTicks += static_cast<uint64_t>(t1.QuadPart - t0.QuadPart);
+        ++s.buildCount;
+        ++s.stats.buildsAtDraw;
+        if (!ok)
+        {
+            e.why = why;
+            return false;
+        }
+
+        const Key          key  = e.key;
+        const VkRenderPass pass = e.pass;
+        e      = built;
+        e.key  = key;
+        e.pass = pass;
+        e.builtGeneration = generation; // Claude PIPE1
+        if (s.failedCount) --s.failedCount;
+        s.stats.pipelines = s.pipelineCount - s.failedCount;
+        if (e.translated) s.stats.translatedPipelines = ++s.translatedCount;
+        if (e.companion)  s.stats.companionPipelines  = ++s.companionCount;
+        if (e.gbuf)       ++s.stats.gbufferPipelines;
+        if (e.gbufNull)   ++s.stats.gbufferNullPipelines;
+        wxl::ScriptMgr::Log(WXL_LOG_INFO,
+                            "vulkan: pipelines: vs=\"%s\" ps=\"%s\" format=%u failed before and is built now, "
+                            "its shaders having changed since (lot SOL1)",
+                            key.vs, key.ps, key.vertexFormat);
+        return true;
+    }
+
+    /// Claude PIPE1: a pre-warmed entry at its first draw, or a built one whose shaders may have
+    /// changed since (translated::Generation() moved): VerifySources.
+    static bool NeedsCheck(const PipelineEntry& e)
+    {
+        return e.prewarmed
+            || (e.pipeline != VK_NULL_HANDLE && e.builtGeneration != wxlvk::shaders::translated::Generation());
     }
 
     /**
@@ -92,8 +174,8 @@ namespace wxlvk::vk::pipelines::detail
         if (s.pipelineLast < s.pipelineCount && s.pipelines[s.pipelineLast].pass == pass
             && SameKey(s.pipelines[s.pipelineLast].key, k))
         {
-            if (s.pipelines[s.pipelineLast].prewarmed) VerifyPrewarmed(s.pipelineLast);
-            if (s.pipelines[s.pipelineLast].pipeline == VK_NULL_HANDLE)
+            if (NeedsCheck(s.pipelines[s.pipelineLast])) VerifySources(s.pipelineLast); // Claude PIPE1
+            if (s.pipelines[s.pipelineLast].pipeline == VK_NULL_HANDLE && !RetryFailed(s.pipelineLast)) // Claude 2026-11-05 lot SOL1
             {
                 failed = s.pipelines[s.pipelineLast].why;
                 SkipUnsupported(k, "the build failed before (see the first line for this key)");
@@ -109,8 +191,8 @@ namespace wxlvk::vk::pipelines::detail
             if (s.pipelines[i].pass == pass && SameKey(s.pipelines[i].key, k))
             {
                 s.pipelineLast = i;
-                if (s.pipelines[i].prewarmed) VerifyPrewarmed(i);
-                if (s.pipelines[i].pipeline == VK_NULL_HANDLE)
+                if (NeedsCheck(s.pipelines[i])) VerifySources(i); // Claude PIPE1
+                if (s.pipelines[i].pipeline == VK_NULL_HANDLE && !RetryFailed(i)) // Claude 2026-11-05 lot SOL1
                 {
                     // A key whose build failed is remembered, not rebuilt per draw.
                     failed = s.pipelines[i].why;
@@ -140,6 +222,7 @@ namespace wxlvk::vk::pipelines::detail
 
         PipelineEntry built;
         const char*   why = "";
+        const uint32_t generation = wxlvk::shaders::translated::Generation(); // Claude 2026-11-05 lot SOL1
         LARGE_INTEGER t0 = {}, t1 = {};
         QueryPerformanceCounter(&t0);
         const bool ok = Build(k, pass, built, why, nullptr);
@@ -158,6 +241,7 @@ namespace wxlvk::vk::pipelines::detail
             f.key  = k;
             f.pass = pass;
             f.why  = why;
+            f.failedGeneration = generation; // Claude 2026-11-05 lot SOL1
             uint32_t p = home;
             while (s.pipeHash[p] != 0) p = (p + 1) & (kPipeHashSlots - 1);
             s.pipeHash[p] = ++s.pipelineCount;
@@ -169,6 +253,7 @@ namespace wxlvk::vk::pipelines::detail
         e      = built;
         e.key  = k;
         e.pass = pass;
+        e.builtGeneration = generation; // Claude PIPE1
         {
             uint32_t p = home;
             while (s.pipeHash[p] != 0) p = (p + 1) & (kPipeHashSlots - 1);

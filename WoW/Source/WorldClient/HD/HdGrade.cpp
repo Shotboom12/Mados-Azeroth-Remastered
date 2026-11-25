@@ -30,7 +30,7 @@ sampler2D sceneTex : register(s0);
 sampler2D lutA : register(s1);
 sampler2D lutB : register(s2);
 float4 c_screen : register(c0); // 1/width, 1/height
-float4 c_grade  : register(c1); // blend lutA -> lutB, strength, debug (1 = split screen), unused
+float4 c_grade  : register(c1); // blend lutA -> lutB, strength, unused, unused
 
 float3 Lut(sampler2D lut, float3 c) {
     float b = saturate(c.b) * 31.0;
@@ -45,10 +45,6 @@ float3 Lut(sampler2D lut, float3 c) {
 float4 main(float2 vpos : VPOS) : COLOR0 {
     float2 uv = (vpos + 0.5) * c_screen.xy;
     float3 c = tex2D(sceneTex, uv).rgb;
-    if (c_grade.z > 0.5 && uv.x < 0.5) {
-        // split screen: a thin white line in the middle
-        return float4(uv.x > 0.5 - c_screen.x * 2.0 ? float3(1, 1, 1) : c, 1);
-    }
     float3 g = lerp(Lut(lutA, c), Lut(lutB, c), c_grade.x);
     return float4(saturate(lerp(c, g, c_grade.y)), 1);
 }
@@ -56,9 +52,7 @@ float4 main(float2 vpos : VPOS) : COLOR0 {
 
     typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 
-    CVar* s_enabled = nullptr;
     CVar* s_strength = nullptr;
-    CVar* s_debug = nullptr;
     CVar* s_force = nullptr;
     CVar* s_info = nullptr;
 
@@ -75,9 +69,7 @@ float4 main(float2 vpos : VPOS) : COLOR0 {
         static bool registered = false;
         if (registered) return;
         registered = true;
-        s_enabled = CVar::Register("hdGrade", "HD: 1 = WoW Forever colour grading, 0 = original", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_strength = CVar::Register("hdGradeStrength", "HD: colour grading strength, 1 = Forever", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-        s_debug = CVar::Register("hdGradeDebug", "HD: 1 = split screen, left original, right graded", 0, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_force = CVar::Register("hdGradeLut", "HD: 0 = Forever's LUT for this place, else force this LUT id everywhere", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_info = CVar::Register("hdGradeInfo", "HD: hdGrade status (read only)", 0, "off", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     }
@@ -303,12 +295,7 @@ float4 main(float2 vpos : VPOS) : COLOR0 {
 }
 
 void HD::GradeWorld() {
-    RegisterCVars();
-    if (!s_enabled || !s_enabled->m_intValue) {
-        if (s_sceneTex) ReleaseScene();
-        SetInfo("off");
-        return;
-    }
+    RegisterCVars(); // AR1: grading always on (no hdGrade / hdGradeDebug)
 
     IDirect3DDevice9* device = Device();
     if (!device) {
@@ -331,10 +318,9 @@ void HD::GradeWorld() {
         if (first < 0 || luts.weight[i] > luts.weight[first]) { second = first; first = i; }
         else if (second < 0 || luts.weight[i] > luts.weight[second]) second = i;
     }
-    int32_t debug = s_debug ? s_debug->m_intValue : 0;
     if (first < 0 || (luts.id[first] == 0 && (second < 0 || luts.id[second] == 0))) {
         SetInfo("on, no Forever grading for this light (TBC, WotLK or Turtle zone)");
-        if (!debug) return;
+        return;
     }
     int32_t idA = first >= 0 ? luts.id[first] : 0;
     int32_t idB = second >= 0 ? luts.id[second] : idA;
@@ -374,7 +360,7 @@ void HD::GradeWorld() {
     float strength = s_strength ? Clamp(s_strength->m_floatValue, 0.0f, 2.0f) : 1.0f;
     float c[kConstRegs * 4] = {
         1.0f / desc.Width, 1.0f / desc.Height, 0.0f, 0.0f,
-        blend, strength, static_cast<float>(debug), 0.0f,
+        blend, strength, 0.0f, 0.0f,
     };
 
     // Full-screen pass over the world, no depth, no blend, keep alpha (used by the glow).
@@ -425,8 +411,49 @@ void HD::GradeWorld() {
     InvalidateClientState();
 
     char text[200];
-    snprintf(text, sizeof(text), "on, LUT %d (%.0f%%) + LUT %d (%.0f%%), strength %.2f%s", idA, (1.0f - blend) * 100.0f, idB, blend * 100.0f, strength, debug ? ", split screen" : "");
+    snprintf(text, sizeof(text), "on, LUT %d (%.0f%%) + LUT %d (%.0f%%), strength %.2f", idA, (1.0f - blend) * 100.0f, idB, blend * 100.0f, strength);
     SetInfo(text);
+}
+
+// HD: INT1 - Forever's light intensity where the camera is: zone light then nearby area lights, clear weather
+// blended to storm, same weights as CurrentLuts. Used by Lumenveil for its fog colour.
+float HD::ForeverIntensityHere() {
+    const DayNight::DNInfo& info = DayNight::g_dnInfo;
+    const TSGrowableArray<const LightRec*>& lights = DayNight::g_areaLights;
+    if (!lights.m_count) return 1.0f;
+    float time = HD::DayNightBandTime(info.m_dayProgression * 2880.0f);
+    float storm = Clamp(info.m_stormBlend, 0.0f, 1.0f);
+    auto one = [&](const LightRec* light) {
+        return HD::ForeverIntensityAt(light, 0, time) * (1.0f - storm) + HD::ForeverIntensityAt(light, 2, time) * storm;
+    };
+    float value = one(lights.m_data[0]);
+    struct Near { const LightRec* light; float distSq; float weight; };
+    Near nearLights[32];
+    int32_t count = 0;
+    for (uint32_t i = 1; i < lights.m_count && count < 32; i++) {
+        const LightRec* light = lights.m_data[i];
+        float dx = info.m_lightRefPos.x - light->m_gameCoords[0];
+        float dy = info.m_lightRefPos.y - light->m_gameCoords[1];
+        float dz = info.m_lightRefPos.z - light->m_gameCoords[2];
+        float distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq >= light->m_gameFalloffEnd * light->m_gameFalloffEnd) continue;
+        float distance = sqrtf(distSq);
+        float weight = 1.0f;
+        if (distance > light->m_gameFalloffStart) {
+            float span = light->m_gameFalloffEnd - light->m_gameFalloffStart;
+            weight = span > 0.0f ? Clamp(1.0f - (distance - light->m_gameFalloffStart) / span, 0.0f, 1.0f) : 0.0f;
+        }
+        if (weight <= 0.0f) continue;
+        nearLights[count++] = { light, distSq, weight };
+    }
+    for (int32_t i = 1; i < count; i++) {
+        Near n = nearLights[i];
+        int32_t j = i - 1;
+        while (j >= 0 && nearLights[j].distSq < n.distSq) { nearLights[j + 1] = nearLights[j]; j--; }
+        nearLights[j + 1] = n;
+    }
+    for (int32_t i = 0; i < count; i++) value += (one(nearLights[i].light) - value) * nearLights[i].weight;
+    return value;
 }
 
 void HD::GradeReleaseDeviceResources() {

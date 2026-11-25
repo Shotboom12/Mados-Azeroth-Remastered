@@ -68,7 +68,8 @@ namespace wxlvk::native::present::detail
         fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;   // the first wait on each slot returns at once
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
-            s.slots[i].main = buffers[2 * i];
+            s.slots[i].main  = buffers[2 * i];
+            s.slots[i].first = buffers[2 * i];   // Claude CPU-A
             s.slots[i].pre  = buffers[2 * i + 1];
             r = d.CreateSemaphore(h.device, &sem, nullptr, &s.slots[i].imageAvailable);
             if (r == VK_SUCCESS) r = d.CreateFence(h.device, &fence, nullptr, &s.slots[i].fence);

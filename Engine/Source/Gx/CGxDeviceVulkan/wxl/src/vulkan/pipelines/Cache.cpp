@@ -177,8 +177,9 @@ namespace wxlvk::vk::pipelines::detail
                             path.c_str(), s.stats.keysLoaded, why ? "; not used: " : "", why ? why : "");
     }
 
-    /// Writes the built keys (failed ones excepted) through a temporary file and a rename.
-    void SaveKeys()
+    /// The built keys (failed ones excepted), header first, as pipeline-keys.bin holds them.
+    /// Claude SAUV1: only the bytes; the background save writes them (Pipelines.cpp).
+    void BuildKeys(std::vector<uint8_t>& blob)
     {
         std::vector<PersistedKey> out;
         out.reserve(s.pipelineCount);
@@ -214,23 +215,13 @@ namespace wxlvk::vk::pipelines::detail
         h.count      = static_cast<uint32_t>(out.size());
         h.mode       = s.mode;
         h.records    = ManifestRecords();
-        const std::string path = wxlvk::path::Resolve(kKeysFile);
-        const std::string tmp  = path + ".tmp";
-        bool ok = false;
-        if (FILE* f = std::fopen(tmp.c_str(), "wb"))
-        {
-            ok = std::fwrite(&h, sizeof h, 1, f) == 1
-                 && (out.empty() || std::fwrite(out.data(), sizeof(PersistedKey), out.size(), f) == out.size());
-            ok = std::fclose(f) == 0 && ok;
-        }
-        ok = ok && MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
-        if (!ok)
-        {
-            DeleteFileA(tmp.c_str());
-            wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: pipelines: the key list could not be written to %s", path.c_str());
-        }
+        blob.resize(sizeof h + out.size() * sizeof(PersistedKey));
+        std::memcpy(blob.data(), &h, sizeof h);
+        if (!out.empty()) std::memcpy(blob.data() + sizeof h, out.data(), out.size() * sizeof(PersistedKey));
         s.keysSavedAt = s.buildCount;
     }
+
+    const char* KeysFile() { return kKeysFile; }
 
     /**
      * The sources a persisted key was built from, by md5.

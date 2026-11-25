@@ -45,7 +45,7 @@ class CGxTex {
     /* 0040 */ TSLink<CGxTex> m_link;
     /* 0048 */ TSLink<CGxTex> m_link2;
     /* 0050 */ uint32_t m_lastUsedFrame;
-    /* 0054 */ uint32_t unused_0054;
+    /* 0054 */ uint32_t unused_0054; // Claude CACHE1d: content generation, new value at creation and at each update mark
     /* 0058 */ int8_t m_char58;
     /* 0059 */ int8_t m_char59;
     /* 005A */ int8_t m_needsUpdate;
@@ -57,5 +57,8 @@ class CGxTex {
     CGxTex(EGxTexTarget target, uint32_t width, uint32_t height, uint32_t depth, EGxTexFormat format, EGxTexFormat dataFormat, CGxTexFlags flags, void* userArg, GxTexUserFunc userFunc, const char* name);
     ~CGxTex();
 };
+
+// Claude CACHE1d: the next texture content generation (CGxTex::unused_0054).
+uint32_t CGxTexNextGeneration();
 
 #endif

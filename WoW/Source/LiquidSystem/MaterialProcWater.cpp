@@ -158,7 +158,7 @@ Liquid::CMaterialProcWaterFFP* Liquid::CMaterialProcWaterFFP::Create() {
 // VERIFY: be2b8036 manual
 // OFFSET: 0x008A48F0
 void Liquid::CMaterialProcWater::Render(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, Liquid::IWaveManager* waveManager, const C3Vector& cameraPos, const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
-    // HD: hdCataWater 1 under Vulkan draws Cata's water material instead; false = the 3.3.5 material below
+    // HD: under Vulkan the Cata material draws it, or nothing (Claude BLZ1); false only on a legacy D3D9 / OpenGL device
     if (HD::CataWaterRender(environment, geomFactory, cameraPos, transform, bounds, settings)) return;
 
     CGxTex* texture0 = settings->GetTexture(0, 1250);
@@ -338,6 +338,7 @@ void Liquid::CMaterialProcWater::Render(Liquid::IEnvironment* environment, Liqui
 // VERIFY: 3685e63c manual
 // OFFSET: 0x008A5170
 void Liquid::CMaterialProcWaterFFP::Render(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, Liquid::IWaveManager* waveManager, const C3Vector& cameraPos, const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
+    if (HD::CataWaterRender(environment, geomFactory, cameraPos, transform, bounds, settings)) return; // Claude BLZ1: Vulkan never draws the 3.3.5 material
     CGxTex* texture0 = settings->GetTexture(4, 1250);
 
     if (!texture0) {

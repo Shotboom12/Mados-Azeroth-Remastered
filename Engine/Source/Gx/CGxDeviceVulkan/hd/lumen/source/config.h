@@ -12,7 +12,7 @@ namespace HD::Lumen::Source {
 constexpr float kEngineFarClipMin = 183.333f;
 constexpr float kEngineFarClipMax = 1583.33f;
 constexpr float kFarClipMaxKeepsClientCap = 0.0f;
-constexpr int kMaxLampCount = 128;
+constexpr int kMaxLampCount = 256; // Claude LV41: was 128 (hdLvLampCount up to 256)
 constexpr float kMinShaftGlare = 0.02f;
 constexpr float kMaxShaftGlare = 4.0f;
 constexpr float kMaxLightSaturation = 1.5f;
@@ -83,7 +83,7 @@ bool ParseConstantRanges(const char* text, unsigned registers, ConstantRanges& o
 std::string ConstantRangesText(const ConstantRanges& ranges);
 bool ConstantRangesInclude(const ConstantRanges& ranges, unsigned reg);
 
-constexpr int kMaxZoneListZones = 48;
+constexpr int kMaxZoneListZones = 64; // Claude 2026-11-13 lot LV5-SH1 (was 48): + Turtle green zones
 constexpr int kMaxZoneId = 65535;
 
 struct ZoneList
@@ -92,8 +92,12 @@ struct ZoneList
     unsigned short ids[kMaxZoneListZones];
 };
 
-constexpr ZoneList kDefaultDryZones = {12, {14, 17, 1637, 405, 400, 440, 1377, 3, 51, 46, 4, 40}};
-constexpr ZoneList kDefaultGreenZones = {9, {215, 1638, 12, 44, 38, 45, 267, 47, 11}};
+// Claude LV1 2026-11-13: brouillard = CoAVolFog.ini livre avec Lumenveil 0.1.1 (package), valeurs recopiees telles quelles.
+// Avant LV1 : Dry {12, {14, 17, 1637, 405, 400, 440, 1377, 3, 51, 46, 4, 40}} ; Green {9, {215, 1638, 12, 44, 38, 45, 267, 47, 11}}
+constexpr ZoneList kDefaultDryZones = {15, {14, 17, 1637, 405, 400, 440, 1377, 3, 51, 46, 4, 40, 3483, 3522, 3520}};
+// Claude 2026-11-13 lot LV5-SH1: + zones Turtle vertes 5179 Gilneas, 5581 Northwind, 5561 Balor, 5602 Grim Reaches, 5121 Tel'Abim,
+// 5642 Moonwhisper Coast, 408 Gillijim's Isle, 409 Lapidis Isle, et 616 Hyjal (43 -> 52)
+constexpr ZoneList kDefaultGreenZones = {52, {215, 1638, 12, 44, 38, 45, 267, 47, 11, 1, 15, 148, 490, 493, 85, 130, 28, 139, 36, 1519, 1657, 3430, 3433, 3487, 4080, 3524, 3525, 3521, 3519, 3518, 3703, 3537, 495, 65, 394, 66, 3711, 2817, 4395, 67, 210, 4197, 4742, 5179, 5581, 5561, 5602, 5121, 5642, 408, 409, 616}};
 
 bool ParseZoneList(const char* text, ZoneList& out);
 std::string ZoneListText(const ZoneList& zones);
@@ -114,6 +118,21 @@ struct ZoneFactors
     float otherZones = 1.0f;
 };
 
+// Claude LV1 2026-11-13: ZoneDensity du CoAVolFog.ini livre avec Lumenveil 0.1.1, meme ordre (76 zones, autres zones x1). Avant LV1 : aucune.
+// Claude 2026-11-13 lot LV5-SH1: + 14 zones apres les 76 d'origine : Turtle 5179 Gilneas, 5581 Northwind, 5561 Balor,
+// 5602 Grim Reaches, 5121 Tel'Abim, 5642 Moonwhisper Coast, 408 Gillijim's Isle, 409 Lapidis Isle (x0.2), 616 Hyjal (x0.21),
+// mers 5027 North Sea, 214 The Great Sea, 308 The Forbidding Sea, 332 The Great Sea (Kalimdor), 457 The Veiled Sea (x0.2).
+// Claude 2026-11-13 lot LV7: autres zones exterieures non listees : x0.2 (avant x1 comme Lumenveil 0.1.1, soit 5 fois plus de brume).
+// Concerne les 29 zones de l'AreaTable du client (parent 0, cartes 0/1/530/571) absentes de la liste : Thandol Span, Dun Algaz,
+// Thoradin's Wall, Lordamere Lake, Southfury River, Blackrock Mountain, Caverns of Time, Gates of AQ, Auchindoun, Twisting Nether,
+// Vordrassil's Tears, mers d'Outreterre et de Norfendre... ; instances non listees : Config::instanceZoneDensity (inchange).
+constexpr ZoneFactors kDefaultZoneDensity = {90,
+    {1, 38, 11, 45, 267, 1537, 2257, 1519, 331, 406, 1337, 3, 36, 4, 46, 41, 10, 139, 12, 3430, 3433, 4080, 44, 51, 3487, 130, 33, 8, 47, 85, 1497, 28, 40, 16, 3524, 3525, 148, 1657, 405, 14, 15, 361, 357, 493, 215, 1637, 1377, 440, 141, 17, 3557, 400, 1638, 490, 618, 3522, 3483, 3518, 3523, 3520, 3703, 3519, 3521, 3537, 2817, 4395, 65, 394, 495, 4742, 210, 3711, 67, 4197, 66, 4298,
+     5179, 5581, 5561, 5602, 5121, 5642, 408, 409, 616, 5027, 214, 308, 332, 457},
+    {0.09f, 0.33f, 0.1f, 0.11f, 0.21f, 0.16f, 0.19f, 0.15f, 0.21f, 0.24f, 0.37f, 0.12f, 0.2f, 0.2f, 0.2f, 0.2f, 0.09f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f,
+     0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.21f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
+    0.2f}; // Claude LV7 : autres zones x0.2 (avant 1.0f)
+
 bool ParseZoneFactors(const char* text, ZoneFactors& out);
 std::string ZoneFactorsText(const ZoneFactors& zones);
 float ZoneFactorOf(const ZoneFactors& zones, int zoneId);
@@ -131,12 +150,12 @@ struct Config
     Hotkey overlayKey = kDefaultOverlayHotkey;
     Hotkey toggleKey = kDefaultToggleHotkey;
     int quality = 2;
-    float density = 1.0f;
-    ZoneFactors zoneDensity = {};
+    float density = 0.37f; // Claude LV1 (avant 1.0f)
+    ZoneFactors zoneDensity = kDefaultZoneDensity; // Claude LV1 (avant {})
     float fogCeiling = 40.0f;
-    float haze = 1.0f;
-    float groundFog = 0.6f;
-    float farFog = 1.0f;
+    float haze = 1.19f; // Claude LV1 (avant 1.0f)
+    float groundFog = 1.86f; // Claude LV1 (avant 0.6f)
+    float farFog = 0.71f; // Claude LV1 (avant 1.0f)
     float farFogStretch = 1.0f;
     float aerialPerspective = 1.0f;
     int stockFog = 1;
@@ -158,13 +177,13 @@ struct Config
     float landBrightness = 1.0f;
     float skyHaze = 0.0f;
     float skyHazeGlow = 1.0f;
-    // HD L15: sun light in the fog by time of day (multipliers, 1 = unchanged) and anti-glare (0 = off)
+    // Claude L15: sun light in the fog by time of day (multipliers, 1 = unchanged) and anti-glare (0 = off)
     float scatterNight = 1.0f;
     float scatterDawn = 1.0f;
     float scatterDay = 1.0f;
     float scatterDusk = 1.0f;
     float antiGlare = 0.0f;
-    float viewLight = 0.0f; // HD L14: 1 = fog light follows the camera angle to the sun (kit), 0 = same light from every angle
+    float viewLight = 0.0f; // Claude L14: 1 = fog light follows the camera angle to the sun (kit), 0 = same light from every angle
     float skyHazeZenith = 1.0f;
     float skyHazeGlowGrade = 1.0f;
     float hazeFromSky = 1.0f;
@@ -173,6 +192,18 @@ struct Config
     bool lightShafts = true;
     bool terrainShadows = true;
     float surfaceShadows = 0.7f;
+    // Claude 2026-11-13 lot LV2: true = la brume garde seulement les couleurs For Ever (pas de teinte poussiere/humide,
+    // pas de teinte poussiere des bancs, pas de teinte bleue du crepuscule ; densites et meteo inchangees).
+    // false = comportement d'avant LV2. Recopie a chaque image depuis la CVar hdLvForeverColors (LvClient.cpp).
+    bool foreverColors = true;
+    // Claude 2026-11-13 lot LV5-SH1: carte courante = instance/donjon (Map.dbc m_instanceType != 0), mis a jour a chaque
+    // image par HdLumenBridge.cpp ; une zone d'instance absente de ZoneDensity prend instanceZoneDensity au lieu de x1.
+    bool instanceMap = false;
+    // Claude 2026-11-13 lot LV5-SH1b: true = le brouillard lointain « terrain ouvert » (zones vertes/seches) prend la couleur du
+    // brouillard For Ever (m_fogInterior + INT1, comme le reste de la brume) au lieu de la couleur du ciel ; densite, debut et
+    // montee inchanges. false = couleur du ciel (avant). Recopie a chaque image depuis la CVar hdLvHorizonFogColor (LvClient.cpp).
+    bool horizonFogFogColor = true;
+    float instanceZoneDensity = 0.2f;
     float lowSunLight = 1.0f;
     float shafts = 1.0f;
     float lowSunShafts = 1.0f;
@@ -200,7 +231,7 @@ struct Config
     float morningMist = 2.0f;
     float mistHeight = 12.0f;
     float eveningHaze = 0.4f;
-    float weatherFog = 1.0f;
+    float weatherFog = 0.25f; // Claude LV1 (avant 1.0f)
     float weatherShafts = 0.35f;
     float weatherTint = 1.0f;
     float weatherSky = 1.0f;
@@ -219,13 +250,13 @@ struct Config
     float farLights = 1.0f;
     float lightGlow = 1.0f;
     float glowThreshold = 0.4f;
-    float lampFog = 1.0f;
+    float lampFog = 1.0f; // Claude LV26 2026-11-15: back to Lumenveil's own halo strength (LV1 had 0.17f), max's choice
     int lampCount = 16;
     float lampFlicker = 1.0f;
     float fireStrength = 1.0f;
     float lampIndoors = 1.0f;
     float lampLight = 2.0f;
-    float lampDayLight = 0.35f;
+    float lampDayLight = 0.0f; // Claude J1 2026-11-05: outdoor catalogue lamps off by day (was 0.35 for every lamp); indoor lamps always on
     float lampShadows = 1.0f;
     float carriedShadows = 0.0f;
     float nightDarkness = 0.7f;

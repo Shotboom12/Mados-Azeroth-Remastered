@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HD 2026-11-02, kit commun R1 lot L1. See HdLumenBridge.h. Compiled only with WOWDECOMP_LUMEN.
+// Claude 2026-11-02, kit commun R1 lot L1. See HdLumenBridge.h. Compiled only with WOWDECOMP_LUMEN.
 #ifdef WOWDECOMP_LUMEN
 #include "HdLumenBridge.h"
 #include "HdVulkanFog.h"
@@ -27,7 +27,8 @@
 #include "WoW/Source/Object/ObjectClient/Missile_C.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/DB/Rec/SpellRec.h"
-#include "WoW/Source/DB/Rec/LightRec.h" // HD L17: light ids for the fog journal
+#include "WoW/Source/DB/Rec/LightRec.h" // Claude L17: light ids for the fog journal
+#include "WoW/Source/DB/Rec/MapRec.h" // Claude 2026-11-13 lot LV5-SH1: instance maps
 #include "Engine/Source/ConsoleBase/Types.h"
 #include <algorithm>
 #include <array>
@@ -81,7 +82,7 @@ double Seconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
 }
 
-// ---- HD 2026-11-02, lot L2: R2 lamps with the For Ever colours, without double light ----
+// ---- Claude 2026-11-02, lot L2: R2 lamps with the For Ever colours, without double light ----
 // Who already lights what with the client's own lamps (CM2Light), read in the code, not guessed:
 //   terrain (bit 1<<1): HdLights (hdLights 1, per pixel) or 3.3.5 per vertex; models (1<<4): CM2Scene::SelectLights
 //   (CWorldScene::SetupLighting); WMO walls (1<<2) and interiors (1<<3): CMapObjDefGroup::SelectLights only gives the
@@ -94,12 +95,17 @@ constexpr uint32_t kTerrain=1u<<1,kWmo=1u<<2,kInterior=1u<<3,kModel=1u<<4,kAllCl
 CVar* lampClasses=nullptr;
 CVar* lampInfo=nullptr;
 CVar* terrainBuildings=nullptr;
-// HD 2026-11-03, lot L4: hdLvLampForever 0 = R2 lamps keep their own (catalogue) colours and light every class of
+// Claude 2026-11-03, lot L4: hdLvLampForever 0 = R2 lamps keep their own (catalogue) colours and light every class of
 // hdLvLampClasses even with hdLights 1, so the For Ever ground light and the R2 lamps can be shown together.
 CVar* lampForever=nullptr;
 // Lot L6 (2026-11-03): hdLvLampScan 1 writes every lit native lamp the R2 catalogue does not know (no catalogue lamp
 // within 1 yd) to Logs\lumen-lampes-manquantes.txt, once per position, so the missing lamps can be added to lampdata.bin.
 CVar* lampScan=nullptr;
+// Claude LV39: hdLightsLumen 1 = hdLights 1 leaves out of the ground the native lights Lumen lights itself with shadows (a catalogue
+// lamp within 1 yd, Lumen lamps on, terrain in hdLvLampClasses, hdLvLampForever 0): the ground keeps Lumen's lamp shadows AND
+// every other native light per pixel (NPC torches lit only squares of terrain under hdLights 0, 3.3.5's per-vertex light).
+CVar* lightsLumen=nullptr;
+int lumenMap=-1;
 // Lot L7 (2026-11-03): hdLvSpellGround 1 = R2 spell lights (colour measured from the spell itself) and the lantern
 // light every surface, ground included, whatever hdLvLampClasses keeps for the lamps.
 CVar* spellGround=nullptr;
@@ -132,6 +138,7 @@ bool ScanLight(void* user,const HD::CachedLight& light) {
     }
     return true;
 }
+bool LumenLightsGround(const float* p); // Claude LV39: below
 CVar* Register(const char* name,const char* help,const char* value,bool save) {
     if(auto* v=CVar::LookupRegistered(name)) return v;
     return CVar::Register(name,help,save?1:0,value,nullptr,CATEGORY_GRAPHICS,false,nullptr,false);
@@ -155,8 +162,26 @@ void RegisterOnce() {
     missileImpact=Register("hdLvMissileImpact","Lumen R2: seconds of light where a spell hits (0 = none, default 0.5)","0.5",true);
     spellGround=Register("hdLvSpellGround","Lumen R2: 1 = spell lights and the lantern light the ground and every surface, whatever hdLvLampClasses (default 0)","0",true);
     lampScan=Register("hdLvLampScan","Lumen R2 lamps: 1 = write the lit native lamps missing from the R2 catalogue to Logs\\lumen-lampes-manquantes.txt (default 0)","0",false);
+    {static bool hdDef1Once=false;if(!hdDef1Once){hdDef1Once=true;if(lampScan&&lampScan->m_intValue!=0)lampScan->InternalSet("0",true,false,false,false);}} // Claude DEF1: diagnostic journal off at every start (a test never leaves it on)
     lampForever=Register("hdLvLampForever","Lumen R2 lamps: 1 = recognised lamps take the For Ever colour and leave ground and models to For Ever (default), 0 = R2 keeps its own colours and lights every class of hdLvLampClasses","1",true);
+    lightsLumen=Register("hdLightsLumen","HD + Lumen (Claude LV39): 1 = hdLights 1 leaves out of the ground the lamps Lumen lights itself with their shadows (catalogue lamps), keeps every other native light (NPC torches, fires) per pixel; 0 = hdLights lights every lamp, the For Ever light doubled with Lumen's (default, Max's choice 16 nov)","0",true);
+    HD::SetLumenLampTest(LumenLightsGround);
     Status(lampInfo,"off");
+}
+uint32_t AllowedClasses();
+// Claude LV39: see lightsLumen. Called by HdLights while it gathers the frame's native lights.
+bool LumenLightsGround(const float* p) {
+    if(!lightsLumen||lightsLumen->m_intValue!=1||lumenMap<0||!p) return false;
+    if(lampForever&&lampForever->m_intValue!=0) return false; // For Ever mode: recognised lamps leave the ground to the natives
+    static CVar* lamps=nullptr;if(!lamps) lamps=CVar::LookupRegistered("hdLvLamps");
+    if(!lamps||lamps->m_intValue==0||!(AllowedClasses()&kTerrain)) return false;
+    const auto* cat=HD::Lumen::Client::Catalogue();
+    // any catalogue lamp within 1 yd (as hdLvLampScan counts a lamp known): two lamps of one post count too
+    const auto* m=cat?cat->Map(lumenMap):nullptr;if(!m) return false;
+    bool found=false;
+    HD::Lumen::Source::ForEachLampNear(*m,p[0],p[1],1.f,[&](uint32_t,const HD::Lumen::Source::lampfile::Lamp& l){
+        float d=0;for(int k=0;k<3;++k){float a=p[k]-l.position[k];d+=a*a;}if(d<=1.f) found=true;});
+    return found;
 }
 uint32_t AllowedClasses() {
     int v=lampClasses?lampClasses->m_intValue:4;
@@ -183,13 +208,14 @@ bool VisitLight(void* user,const HD::CachedLight& light) {
 }
 // Lot L4 (2026-11-03): the HdLights cache is not readable on every frame (frame stamp check). Without a fallback a
 // recognised lamp lit models and terrain on the frames where the cache was missed and not on the others: the lamp
-// posts and the horses flashed orange / dark (video 2026-11-02 22:29). Keep the last good audit for a short time.
+// posts and the horses flashed orange / dark (Max's video 2026-11-02 22:29). Keep the last good audit for a short time.
 struct LastAudit {std::array<HD::Lumen::SurfacePolicy,1024> policies{};uint32_t count=0,applied=0;int age=1000;};
 LastAudit lastAudit;
 constexpr int kKeepAuditFrames=120;
 // Called by R2 after the opaque world (same thread, same frame as HdLights' gather).
 bool RefreshPolicy(void*,uint64_t,HD::Lumen::NativeFrame& n) {
     LampAudit a;a.catalogue=HD::Lumen::Client::Catalogue();a.out=&n;a.map=n.environment.mapId;
+    lumenMap=a.map; // Claude LV39: the map LumenLightsGround matches in
     a.applied=kAllClasses&~AllowedClasses();
     n.defaultAppliedClasses=a.applied;n.policyCount=0;
     n.effectsAllClasses=spellGround&&spellGround->m_intValue!=0;
@@ -205,8 +231,7 @@ bool RefreshPolicy(void*,uint64_t,HD::Lumen::NativeFrame& n) {
     bool kept=false;
     if(forever&&cache) {lastAudit.policies=n.policies;lastAudit.count=n.policyCount;lastAudit.applied=n.defaultAppliedClasses;lastAudit.age=0;}
     else if(forever&&!cache) {
-        auto* lights=CVar::LookupRegistered("hdLights");
-        const bool nativeOn=lights&&lights->m_intValue==1;
+        const bool nativeOn=HD::LightsMode()==1; // AR1
         if(nativeOn&&lastAudit.age<kKeepAuditFrames) {
             ++lastAudit.age;n.policies=lastAudit.policies;n.policyCount=lastAudit.count;n.defaultAppliedClasses=lastAudit.applied;kept=true;
         } else if(nativeOn) n.defaultAppliedClasses|=kTerrain|kModel; // For Ever lights them: never twice, never flashing
@@ -220,7 +245,7 @@ bool RefreshPolicy(void*,uint64_t,HD::Lumen::NativeFrame& n) {
     return true; // the class mask itself is the audit above; recolouring is extra when the cache is readable
 }
 
-// ---- HD 2026-11-02, lot L3: relief shadow (hdLvTerrain) from the game's own heights ----
+// ---- Claude 2026-11-02, lot L3: relief shadow (hdLvTerrain) from the game's own heights ----
 // Same steps as CMap::QueryHeight (Map.cpp, used by the weather) minus the water surface (the kit forbids a liquid
 // probe: R2's fog already stops at the existing water plane) and minus the chunk's loose doodads (trees, props: not
 // relief). hdLvTerrainWmo 0 = ground triangles only. An area that is not loaded gives no answer (empty cell).
@@ -253,7 +278,7 @@ bool ProbeHeight(void*,float x,float y,float top,float bottom,float& height) {
     return true;
 }
 }
-// HD L13: the game's own spell projectiles become Lumenveil effect lights, coloured by spell school.
+// Claude L13: the game's own spell projectiles become Lumenveil effect lights, coloured by spell school.
 // Read only: walks CMissile::s_inFlightMissileList, never changes a missile.
 struct SchoolCache { uint32_t spell=0; int32_t mask=0; };
 SchoolCache schoolCache[64];
@@ -316,7 +341,9 @@ void FillGameSpells(const float* camPos,double now) {
         return d(a.position)<d(b.position);});
     if(gameSpellLights.size()>12) gameSpellLights.resize(12);
     // journal Logs\lumen-projectiles.txt (proof for each test), at most 3000 lines, 0.1 s apart
-    if(!gameSpellLights.empty()&&loggedMissileLines<3000&&now-lastMissileLog>=0.1) {
+    // REL1 (2026-11-06): written only when hdLvSpellLog is 1 (off by default for players).
+    const CVar* spellLog=CVar::LookupRegistered("hdLvSpellLog");
+    if(spellLog&&spellLog->m_intValue!=0&&!gameSpellLights.empty()&&loggedMissileLines<3000&&now-lastMissileLog>=0.1) {
         lastMissileLog=now;
         if(std::FILE* f=std::fopen("Logs\\lumen-projectiles.txt","a")) {
             for(const auto& m:missilesSeen) {
@@ -329,7 +356,7 @@ void FillGameSpells(const float* camPos,double now) {
         }
     }
 }
-// HD L11: player, class and current target for the spell light detector
+// Claude L11: player, class and current target for the spell light detector
 // (selection circle filter, missile path player -> target). Read only.
 void FillUnits(HD::Lumen::Source::FrameInputs& e) {
     e.targetKnown=false;e.unitCount=0;
@@ -355,6 +382,82 @@ void FillUnits(HD::Lumen::Source::FrameInputs& e) {
     u0.target=1;
     e.unitCount=2;
 }
+// Claude 2026-11-15 lot LV23: every unit within 120 yd of the camera (feet, bounding radius) for the lamps' shadow cubes: a box
+// round each keeps what it carries without bones (a weapon, a fishing rod) out of the kept cubes. Read only.
+struct ShadowUnitScan {HD::Lumen::NativeFrame* frame;float camera[3];};
+int32_t ShadowUnitFound(WOWGUID guid,void* param) {
+    auto* scan=static_cast<ShadowUnitScan*>(param);auto& f=*scan->frame;
+    CGUnit_C* u=static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid,TYPEMASK_UNIT,__FILE__,__LINE__));
+    if(!u||!u->m_unit) return 1;
+    const C3Vector p=u->GetPosition();
+    if(!std::isfinite(p.x)||!std::isfinite(p.y)||!std::isfinite(p.z)) return 1;
+    const float dx=p.x-scan->camera[0],dy=p.y-scan->camera[1],dz=p.z-scan->camera[2];
+    if(dx*dx+dy*dy+dz*dz>120.f*120.f) return 1;
+    float r=u->m_unit->m_unitFieldBoundingradius;if(!std::isfinite(r)||r<0) r=0;
+    // Claude LV41: the nearest kShadowUnits (was: the first 64 the enumeration gave, far ones included): when full, the
+    // farthest kept unit gives its place to a nearer one.
+    const float d2=dx*dx+dy*dy+dz*dz;int at=f.shadowUnitCount;
+    if(at>=HD::Lumen::NativeFrame::kShadowUnits){
+        at=-1;float worst=d2;
+        for(int i=0;i<f.shadowUnitCount;++i){const auto& q=f.shadowUnits[i];const float ex=q[0]-scan->camera[0],ey=q[1]-scan->camera[1],ez=q[2]-scan->camera[2];const float e2=ex*ex+ey*ey+ez*ez;if(e2>worst){worst=e2;at=i;}}
+        if(at<0) return 1;
+    } else ++f.shadowUnitCount;
+    auto& o=f.shadowUnits[at];o[0]=p.x;o[1]=p.y;o[2]=p.z;o[3]=r;
+    return 1;
+}
+void FillShadowUnits(HD::Lumen::NativeFrame& f) {
+    f.shadowUnitCount=0;
+    const auto& cam=DayNight::g_dnInfo.m_cameraPos;ShadowUnitScan scan{&f,{cam.x,cam.y,cam.z}};
+    ClntObjMgrEnumVisibleObjects(ShadowUnitFound,&scan);
+}
+// Claude 2026-11-13 lot LV10 (hdLvDensityAdapt): the fog of this place over its whole day, clear weather.
+// For Ever: near-ground density (layers starting within 100 yards) per unit of Lumenveil density, as AdaptForeverFog
+// and AuthoredLayers write it (x0.35 x weight x 0.01). 3.3.5: the zone fog distance, same light blend as
+// DayNight::BlendAreaLight. Read only: nothing in the client changes.
+float DayFogDistanceAt(float time) {
+    const auto& info=DayNight::g_dnInfo;const auto& lights=DayNight::g_areaLights;
+    if(!lights.m_count||!lights.m_data[0]) return 0.0f;
+    auto one=[&](const LightRec* l){const LightParamsRec* p=DayNight::GetLightParams(l,0);return p?DayNight::CalcIndividualColorFromDBRec(time,p,0):0.0f;};
+    float end=one(lights.m_data[0]);
+    struct Near {const LightRec* light;float distSq;float weight;};
+    Near nearLights[32];int count=0;
+    for(uint32_t i=1;i<lights.m_count&&count<32;++i) {
+        const LightRec* l=lights.m_data[i];if(!l) continue;
+        float dx=info.m_lightRefPos.x-l->m_gameCoords[0],dy=info.m_lightRefPos.y-l->m_gameCoords[1],dz=info.m_lightRefPos.z-l->m_gameCoords[2];
+        float d2=dx*dx+dy*dy+dz*dz;
+        if(d2>=l->m_gameFalloffEnd*l->m_gameFalloffEnd) continue;
+        float d=std::sqrt(d2),w=1.0f;
+        if(d>l->m_gameFalloffStart) {float span=l->m_gameFalloffEnd-l->m_gameFalloffStart;w=span>0?std::clamp(1.0f-(d-l->m_gameFalloffStart)/span,0.0f,1.0f):0.0f;}
+        if(w<=0) continue;
+        nearLights[count++]={l,d2,w};
+    }
+    for(int i=1;i<count;++i) {Near n=nearLights[i];int j=i-1;while(j>=0&&nearLights[j].distSq<n.distSq) {nearLights[j+1]=nearLights[j];--j;}nearLights[j+1]=n;}
+    for(int i=0;i<count;++i) end+=(one(nearLights[i].light)-end)*nearLights[i].weight;
+    return std::isfinite(end)?end:0.0f;
+}
+float DayAuthoredNearAt(float time) {
+    HD::ForeverFog fog{};const float w=HD::VulkanFog::ForeverFogHereAt(fog,time);
+    if(!(w>0.0f)) return 0.0f;
+    float n=0.0f;const int layers=std::clamp(fog.count,0,3);
+    for(int i=0;i<layers;++i) if(fog.layers[i].start<=100.0f&&fog.layers[i].density>0.0f) n+=fog.layers[i].density*0.35f*std::min(w,1.0f)*0.01f;
+    return std::isfinite(n)?n:0.0f;
+}
+void FillDayCurve(HD::Lumen::NativeFrame& frame) {
+    static double last=-10.0;static std::array<float,48> authored{},distance{};static bool valid=false;
+    const double now=Seconds();
+    if(now-last>=0.25||now<last) {
+        last=now;valid=true;
+        for(int k=0;k<48;++k) {
+            const float t=float(k*60);
+            authored[k]=DayAuthoredNearAt(t);distance[k]=DayFogDistanceAt(t);
+            if(!(authored[k]>0.0f)&&!(distance[k]>0.0f)) valid=false;
+        }
+    }
+    for(int k=0;k<48;++k) {frame.dayAuthoredNear[k]=authored[k];frame.dayFogDistance[k]=distance[k];}
+    const float t=HD::DayNightBandTime(DayNight::g_dnInfo.m_dayProgression*2880.0f);
+    frame.dayAuthoredNear[48]=DayAuthoredNearAt(t);frame.dayFogDistance[48]=DayFogDistanceAt(t);
+    frame.dayCurveValid=valid&&(frame.dayAuthoredNear[48]>0.0f||frame.dayFogDistance[48]>0.0f);
+}
 void Frame() {
     VkFormat format{};VkExtent2D extent{};
     if(!wxlvk::native::present::BackBufferInfo(format,extent)||!extent.width||!extent.height) return; // no world image this frame
@@ -365,16 +468,39 @@ void Frame() {
     frame=HD::Lumen::NativeFrame{};
     if(!any) {HD::Lumen::Client::Prepare(frame,extent,{{0,0},extent},wxlvk::native::present::Completed());return;}
     const auto& dn=DayNight::g_dnInfo;
-    // zone 0 = unknown: the regional climate lists stay neutral (no guessed area id).
-    HD::Lumen::EnvironmentFromPlanets(dn,DayNight::g_planets,DayWeight(),Seconds(),s_mapId,0,Weather(),frame);
+    // Claude 2026-11-13 lot LV3: zone reelle = CGGameUI::m_areaID (STATIC 0x00BD080C, ecrite par NewZoneFeedback 0x005204C0),
+    // exactement ce que lit Lumenveil 0.1.1 (kZoneId) : ID de ZONE (1519 Stormwind, 12 Elwynn), pas de sous-zone. Avant : 0.
+    const int zoneId=CGGameUI::m_areaID>0?int(CGGameUI::m_areaID):0;
+    HD::Lumen::EnvironmentFromPlanets(dn,DayNight::g_planets,DayWeight(),Seconds(),s_mapId,zoneId,Weather(),frame);
+    // Claude 2026-11-13 lot LV3: interieur = test du jeu CGUnit_C::IsOutdoors (0x0071B7F0) sur le joueur, fondu 0,5 s,
+    // comme ReadIndoorWeight de Lumenveil 0.1.1 ; avant : m_interiorFogBlend de DayNight.
+    {
+        static double indoorSeconds=-1.0;static float indoorWeight=0.0f;
+        bool indoors=false;
+        if(CGPlayer_C* p=ClntObjMgrGetActivePlayerObj()) indoors=!p->IsOutdoors();
+        const double now=Seconds();
+        const double step=indoorSeconds<0.0?0.5:std::clamp(now-indoorSeconds,0.0,0.25);
+        indoorSeconds=now;
+        const float change=float(step/0.5);
+        indoorWeight=indoors?std::min(indoorWeight+change,1.0f):std::max(indoorWeight-change,0.0f);
+        frame.environment.indoors=indoorWeight;
+    }
+    // Claude 2026-11-13 lot LV5-SH1: instance/donjon = la carte courante a un type d'instance (Map.dbc m_instanceType != 0 :
+    // donjon, raid, champ de bataille, arene), comme HdCataViewDistance. Continents (0, 1, 530, 571...) : type 0.
+    {
+        const MapRec* mapRec=s_mapId>=0&&g_mapDB.m_loaded&&g_mapDB.m_recordsById?g_mapDB.GetRecord(s_mapId):nullptr;
+        frame.numericBase.instanceMap=mapRec&&mapRec->m_instanceType!=0;
+    }
     frame.environment.inLiquid=s_liquidTypeId!=0;
     FillUnits(frame.environment);
+    FillShadowUnits(frame); // Claude LV23
     frame.spellSource=spellSource?std::clamp(spellSource->m_intValue,0,2):1;
     if(frame.spellSource!=0) {FillGameSpells(frame.environment.playerPos,Seconds());frame.gameSpells=&gameSpellLights;}
     HD::ForeverFog fog{};
     float weight=HD::VulkanFog::ForeverFogHere(fog);
     if(weight>0) HD::Lumen::AdaptForeverFog(fog,weight,frame.environment.playerPos,frame);
-    // HD L17: read-only journal context: zone, sub-zone and the lights around the camera with their weight
+    FillDayCurve(frame); // Claude 2026-11-13 lot LV10: hdLvDensityAdapt
+    // Claude L17: read-only journal context: zone, sub-zone and the lights around the camera with their weight
     // (same distance falloff as CurrentForeverFog). Only written to Logs\\lumen-brume.txt by LvClient.
     {
         const char* zone=CGGameUI::m_realZoneText?CGGameUI::m_realZoneText:"";
@@ -398,7 +524,7 @@ void Frame() {
     }
     frame.nativeFogEnabled=HD::VulkanFog::ReferenceRequested();
     // Read-only snapshot of the existing water owner's plane (never a new liquid collection).
-    // HD L16: the shaders stop the fog march at this plane for EVERY ray, as if the nearest river were an
+    // Claude L16: the shaders stop the fog march at this plane for EVERY ray, as if the nearest river were an
     // endless sheet of water: below its height the fog vanished, and where depended on the camera angle. Off by default.
     frame.liquidPlaneValid=fogWaterCut&&fogWaterCut->m_intValue!=0&&g_gxCataPlane.m_valid!=0&&std::isfinite(g_gxCataPlane.m_height);
     frame.liquidPlaneHeight=frame.liquidPlaneValid?g_gxCataPlane.m_height:0.f;

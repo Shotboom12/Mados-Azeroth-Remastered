@@ -20,7 +20,7 @@ if (WOWDECOMP_VULKAN)
         "${GX_VULKAN_DIR}/*.cpp"
     )
     if (NOT WOWDECOMP_LUMEN)
-        list(FILTER GX_VULKAN_SOURCES EXCLUDE REGEX "/hd/(lumen|seyris)/") # HD 2026-11-02: kit R1 lots L0 + G1
+        list(FILTER GX_VULKAN_SOURCES EXCLUDE REGEX "/hd/(lumen|seyris)/") # Claude 2026-11-02: kit R1 lots L0 + G1
     endif ()
     add_library(GxVulkan OBJECT
         ${GX_VULKAN_SOURCES}

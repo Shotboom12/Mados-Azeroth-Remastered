@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HD 2026-11-02 (DLSS): console variables, same pattern as hd/fsr/HdFsrSettings.cpp.
+// Claude 2026-11-02 (DLSS): console variables, same pattern as hd/fsr/HdFsrSettings.cpp.
 #ifdef WOWDECOMP_DLSS
 #include "HdDlssSettings.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"

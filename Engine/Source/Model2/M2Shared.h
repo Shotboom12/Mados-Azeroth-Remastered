@@ -1,6 +1,7 @@
 #ifndef ENGINE_SOURCE_MODEL2_M2SHARED_H
 #define ENGINE_SOURCE_MODEL2_M2SHARED_H
 
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include "Engine/Source/Model2/M2Data.h"
@@ -104,6 +105,9 @@ class CM2Shared {
     void Release();
     int32_t SetIndices();
     int32_t SetVertices(uint32_t texCoordIndex);
+    // Claude voie B: the first copy of the vertices (SetVertices(0) with shaders: copy 0) and of the indices (SetIndices
+    // with shared vertices: copy 0), and where each section's indices start in it.
+    bool HdGpuFixedMesh(std::vector<uint8_t>& vertices, std::vector<uint16_t>& indices, std::vector<uint32_t>& sectionFirst) const;
     void SubstituteSimpleShaders();
     void SubstituteSpecializedShaders();
 };

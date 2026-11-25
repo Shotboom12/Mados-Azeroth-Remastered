@@ -17,6 +17,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gx/Types.h"
 #include "WoW/Source/WorldClient/HD/HdGxShader.h"
+#include "WoW/Source/WorldClient/HD/HdShaderBuild.h" // Claude BLZ1
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "WoW/Source/WorldClient/HD/HdTerrain.h"
@@ -179,7 +180,7 @@ void main(
     float nl = dot(-cSunDir.xyz, n);
     [branch] if (cHdLight.z > 0.5) {
         // HD: Forever. Ambient: horizon colour for a wall, sky colour for a roof facing up, ground colour for an
-        // overhang; the client's ambient is the sky colour (Forever's when hdForeverLight is 1, so horizon and ground
+        // overhang; the client's ambient is the sky colour (from the resolved For Ever world catalogue, so horizon and ground
         // are then Forever's own colours). Then a wrap of the sun over it, and the sun on its own in COLOR1.
         float up = dot(normalize(cHdUp.xyz), n);
         float3 sky = cAmbient.xyz * cHdLight2.x;
@@ -445,8 +446,6 @@ void main(
 }
 )HLSL";
 
-    typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
-
     // Vertex families, in the order of their macros: UNIFIED, REFL, SPECULAR, COMP
     struct VertexFamily { const char* name; int32_t unified, refl, specular, comp; };
     const VertexFamily kVertexFamilies[7] = {
@@ -480,11 +479,10 @@ void main(
     std::vector<uint8_t> s_vertexCode[7][kVertexCodes]; // written by the compile thread before s_state = StateReady
     std::vector<uint8_t> s_pixelCode[kPixelKinds][16];
     char s_threadInfo[260] = "";             // written by the compile thread before s_state changes to Ready/Failed
-    char s_refusedInfo[200] = "";            // a MapObj shader we cannot replace: then none is replaced (all or nothing)
+    char s_refusedInfo[300] = "";            // Claude BLZ1: the last MapObj shader we could not give our code (an ERROR)
     int32_t s_shownState = -1;
     int32_t s_inUse = 0;                     // shaders holding our code right now (shown in hdWmoInfo)
 
-    std::map<CGxShader*, std::vector<uint8_t> > s_original; // Blizzard's code of each shader we changed
     struct Retired { IUnknown* object; ULONGLONG time; };
     std::vector<Retired> s_retired;          // D3D shaders we replaced, released a little later (may still be bound)
 
@@ -496,7 +494,7 @@ void main(
         if (registered) return;
         registered = true;
         HD::ShaderCVars(); // HD: hdShaderDump
-        s_light = CVar::Register("hdWmoLight", "HD: 1 = WoW Forever lighting on buildings (exterior-lit parts), 2 = our shaders with 3.3.5 lighting, 3 = test view (sun after shadow only), 0 = Blizzard shaders", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        s_light = CVar::Register("hdWmoLight", "Azeroth Remastered: 1 = our lighting on buildings (exterior-lit parts), 3 = test view (sun after shadow only). No other value (AR1)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_info = CVar::Register("hdWmoInfo", "HD: hdWmoLight status (read only)", 0, "not started", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     }
 
@@ -509,84 +507,59 @@ void main(
         return lit ? 3 + 5 * shadow + lights : shadow;
     }
 
-    void SetMacro(D3D_SHADER_MACRO* macros, int32_t i, const char* name, int32_t value, char (*values)[4]) {
-        snprintf(values[i], 4, "%d", value);
-        macros[i].Name = name;
-        macros[i].Definition = values[i];
-    }
-
-    bool Compile(D3DCompileFn compile, const char* source, const char* name, const D3D_SHADER_MACRO* macros, const char* profile, std::vector<uint8_t>& out, const char* what, int32_t index) {
-        ID3DBlob* code = nullptr;
-        ID3DBlob* errors = nullptr;
-        HRESULT hr = compile(source, strlen(source), name, macros, nullptr, "main", profile, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
-        if (FAILED(hr) || !code) {
-            snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: %s %d: %s", what, index, errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown");
-            if (errors) errors->Release();
-            if (code) code->Release();
-            return false;
-        }
-        if (errors) errors->Release();
-        const uint8_t* bytes = static_cast<const uint8_t*>(code->GetBufferPointer());
-        out.assign(bytes, bytes + code->GetBufferSize());
-        code->Release();
-        return true;
-    }
-
-    // Compile thread: every permutation, all or nothing.
+    // Compile thread: every permutation, all or nothing (Claude BLZ1: from HD\ShaderCache when it holds them, else on
+    // every core; the world load waits for it, HD::MapObjShadersWait).
     void CompileAll() {
-        ULONGLONG start = GetTickCount64();
-        HMODULE module = LoadLibraryA("d3dcompiler_47.dll");
-        D3DCompileFn compile = module ? reinterpret_cast<D3DCompileFn>(GetProcAddress(module, "D3DCompile")) : nullptr;
-        if (!compile) {
-            snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: d3dcompiler_47.dll not found, Blizzard shaders kept");
-            s_state.store(StateFailed);
-            return;
-        }
-        int32_t total = 0;
+        std::vector<HD::ShaderBuild::Job> jobs;
         for (int32_t family = 0; family < 7; family++) {
             const VertexFamily& f = kVertexFamilies[family];
             for (int32_t c = 0; c < kVertexCodes; c++) {
                 int32_t lit = c >= 3;
                 int32_t shadow = lit ? (c - 3) / 5 : c;
                 int32_t lights = lit ? (c - 3) % 5 : 0;
-                D3D_SHADER_MACRO macros[8];
-                char values[7][4];
-                SetMacro(macros, 0, "UNIFIED", f.unified, values);
-                SetMacro(macros, 1, "REFL", f.refl, values);
-                SetMacro(macros, 2, "SPECULAR", f.specular, values);
-                SetMacro(macros, 3, "COMP", f.comp, values);
-                SetMacro(macros, 4, "LIT", lit, values);
-                SetMacro(macros, 5, "LIGHTS", lights, values);
-                SetMacro(macros, 6, "SHADOW", shadow, values);
-                macros[7].Name = nullptr;
-                macros[7].Definition = nullptr;
-                if (!Compile(compile, kVertexShader, "HdMapObjVS", macros, "vs_3_0", s_vertexCode[family][c], f.name, c)) {
-                    s_state.store(StateFailed);
-                    return;
-                }
-                HD::ShaderDump("HdMapObj", false, family, c, &s_vertexCode[family][c][0], s_vertexCode[family][c].size()); // HD
-                total++;
+                HD::ShaderBuild::Job job;
+                job.Define("UNIFIED", f.unified);
+                job.Define("REFL", f.refl);
+                job.Define("SPECULAR", f.specular);
+                job.Define("COMP", f.comp);
+                job.Define("LIT", lit);
+                job.Define("LIGHTS", lights);
+                job.Define("SHADOW", shadow);
+                job.source = kVertexShader;
+                job.name = "HdMapObjVS";
+                job.profile = "vs_3_0";
+                job.out = &s_vertexCode[family][c];
+                job.what = f.name;
+                job.index = c;
+                jobs.push_back(job);
             }
         }
         for (int32_t kind = 0; kind < kPixelKinds; kind++) {
             for (int32_t p = 0; p < 16; p++) {
-                D3D_SHADER_MACRO macros[5];
-                char values[4][4];
-                SetMacro(macros, 0, "KIND", kind, values);
-                SetMacro(macros, 1, "SHADOW", p & 3, values);
-                SetMacro(macros, 2, "PCF", (p >> 2) & 1, values);
-                SetMacro(macros, 3, "ALPHA_TEST", p >> 3, values);
-                macros[4].Name = nullptr;
-                macros[4].Definition = nullptr;
-                if (!Compile(compile, kPixelShader, "HdMapObjPS", macros, "ps_3_0", s_pixelCode[kind][p], "MapObj pixel kind", kind * 16 + p)) {
-                    s_state.store(StateFailed);
-                    return;
-                }
-                HD::ShaderDump("HdMapObj", true, kind, p, &s_pixelCode[kind][p][0], s_pixelCode[kind][p].size()); // HD
-                total++;
+                HD::ShaderBuild::Job job;
+                job.Define("KIND", kind);
+                job.Define("SHADOW", p & 3);
+                job.Define("PCF", (p >> 2) & 1);
+                job.Define("ALPHA_TEST", p >> 3);
+                job.source = kPixelShader;
+                job.name = "HdMapObjPS";
+                job.profile = "ps_3_0";
+                job.out = &s_pixelCode[kind][p];
+                job.what = "MapObj pixel kind";
+                job.index = kind * 16 + p;
+                jobs.push_back(job);
             }
         }
-        snprintf(s_threadInfo, sizeof(s_threadInfo), "%d shaders compiled in %u ms", total, static_cast<uint32_t>(GetTickCount64() - start));
+        if (!HD::ShaderBuild::Build("HdMapObj", jobs, s_threadInfo, sizeof(s_threadInfo))) {
+            s_state.store(StateFailed);
+            return;
+        }
+        for (int32_t family = 0; family < 7; family++)
+            for (int32_t c = 0; c < kVertexCodes; c++)
+                HD::ShaderDump("HdMapObj", false, family, c, &s_vertexCode[family][c][0], s_vertexCode[family][c].size()); // HD
+        for (int32_t kind = 0; kind < kPixelKinds; kind++)
+            for (int32_t p = 0; p < 16; p++)
+                HD::ShaderDump("HdMapObj", true, kind, p, &s_pixelCode[kind][p][0], s_pixelCode[kind][p].size()); // HD
         s_state.store(StateReady);
     }
 
@@ -594,9 +567,9 @@ void main(
         s_shownState = state;
         if (!s_info) return;
         char text[500];
-        if (state == StateCompiling) snprintf(text, sizeof(text), "compiling (Blizzard shaders until done)");
+        if (s_refusedInfo[0]) snprintf(text, sizeof(text), "%s", s_refusedInfo); // Claude BLZ1: an error stays shown
+        else if (state == StateCompiling) snprintf(text, sizeof(text), "compiling (the world load waits for it)");
         else if (state == StateIdle) snprintf(text, sizeof(text), "not started");
-        else if (state == StateReady && s_refusedInfo[0]) snprintf(text, sizeof(text), "%s; %s", s_threadInfo, s_refusedInfo);
         else if (state == StateReady) snprintf(text, sizeof(text), "%s, %d in use", s_threadInfo, s_inUse);
         else snprintf(text, sizeof(text), "%s", s_threadInfo);
         s_info->Set(text, true, false, false, false);
@@ -654,33 +627,32 @@ void main(
         return code && code->size() >= 4 ? code : nullptr;
     }
 
-    // All or nothing: one MapObj shader we cannot replace and every one goes back to Blizzard's (else a shared
-    // vertex shader would flip between ours and Blizzard's from one batch to the next). Returns false then.
+    // Claude BLZ1: a MapObj shader we could not give our code. It is an ERROR, shown in hdWmoInfo and
+    // Logs\HdErreurs.txt (once per shader), never a reason to put Blizzard's code back on the others.
+    void Refuse(CGxShader* shader, const char* why) {
+        static std::map<CGxShader*, bool> s_refused;
+        if (s_refused[shader]) return;
+        s_refused[shader] = true;
+        snprintf(s_refusedInfo, sizeof(s_refusedInfo), "ERROR: %s not ours: %s", shader->m_key.m_str ? shader->m_key.m_str : "(no name)", why);
+        ShowState(s_state.load());
+        HD::ShaderBuild::Error(s_refusedInfo);
+    }
+
     bool Replaceable(CGxShader* shader, bool vertex) {
         if (shader->unused_0028 == kOursMark || OurCode(shader, vertex)) return true;
-        snprintf(s_refusedInfo, sizeof(s_refusedInfo), "refused %s, Blizzard shaders kept", shader->m_key.m_str ? shader->m_key.m_str : "(no name)");
+        Refuse(shader, "no code of ours (unknown family, not shader model 3, or no translated Vulkan module)");
         return false;
     }
 
-    // Gives the shader our code (want) or Blizzard's back; returns true if it holds our code afterwards.
-    bool Apply(CGxShader* shader, bool vertex, bool want) {
-        bool ours = shader->unused_0028 == kOursMark;
-        if (want == ours) return ours;
+    // Gives the shader our code, once and for good (Claude BLZ1: no way back to Blizzard's).
+    void Apply(CGxShader* shader, bool vertex) {
+        if (shader->unused_0028 == kOursMark) return;
         ReleaseRetired(false);
-        if (!want) {
-            std::map<CGxShader*, std::vector<uint8_t> >::iterator it = s_original.find(shader);
-            if (it != s_original.end() && !it->second.empty()) SetCode(shader, &it->second[0], static_cast<uint32_t>(it->second.size()));
-            shader->unused_0028 = 0;
-            s_inUse--;
-            return false;
-        }
         const std::vector<uint8_t>* code = OurCode(shader, vertex);
-        if (!code) return false; // checked by Replaceable before
-        s_original[shader].assign(shader->m_code.m_data, shader->m_code.m_data + shader->m_code.Count());
+        if (!code) return; // checked by Replaceable before
         SetCode(shader, &(*code)[0], static_cast<uint32_t>(code->size()));
         shader->unused_0028 = kOursMark;
         s_inUse++;
-        return true;
     }
 
     // HD: world up (0, 0, 1) in view space, the hemisphere axis (rows a, b, c of the view matrix as in
@@ -698,6 +670,11 @@ void main(
             up[0] = 0.0f; up[1] = 0.0f; up[2] = 1.0f;
         }
     }
+}
+
+void HD::MapObjShadersWait() {
+    HD::MapObjShadersStart();
+    HD::ShaderBuild::Wait(s_state, StateCompiling);
 }
 
 void HD::MapObjShadersStart() {
@@ -718,28 +695,27 @@ void HD::MapObjShaders(CShaderEffect* effect, uint32_t vertexPermute, uint32_t p
     if (state != s_shownState) ShowState(state);
 
     bool d3d9 = HD::ShaderSwapDevice(); // HD: D3D9, or Vulkan through the translated modules
-    int32_t mode = s_light ? s_light->m_intValue : 1;
-    bool want = state == StateReady && mode != 0 && d3d9 && !s_refusedInfo[0];
+    const int32_t mode = HD::LightModeOf(s_light);
     bool wasOurs = vs->unused_0028 == kOursMark && ps->unused_0028 == kOursMark;
     int32_t inUse = s_inUse;
-    if (want && (!Replaceable(vs, true) || !Replaceable(ps, false))) {
-        want = false;
-        ShowState(state);
-    }
-
-    // the pair goes together: our vertex shader's Forever output (sun in COLOR1) needs our pixel shader
-    bool ours = Apply(vs, true, want);
-    ours = Apply(ps, false, want) && ours;
+    // Claude BLZ1: the pair goes together (our vertex shader's Forever output, sun in COLOR1, needs our pixel
+    // shader), once and for good. The world load waited for the compile (HD::MapObjShadersWait).
+    bool ours = wasOurs;
     if (!ours) {
-        Apply(vs, true, false);
-        Apply(ps, false, false);
+        if (state != StateReady) Refuse(vs, state == StateFailed ? s_threadInfo : "drawn before the compile finished");
+        else if (!d3d9) Refuse(vs, "device without shader swap (gxApi must be vulkan)");
+        else if (Replaceable(vs, true) && Replaceable(ps, false)) {
+            Apply(vs, true);
+            Apply(ps, false);
+            ours = true;
+        }
     }
     if (s_inUse != inUse || ours != wasOurs) ShowState(state);
     if (!ours) return;
 
     // HD: constants of our shaders, every batch (the terrain and other batches use the same registers)
     bool exteriorLit = lightingMode == 1 || lightingMode == 2;
-    bool forever = exteriorLit && (mode == 1 || mode == 3);
+    bool forever = exteriorLit;
     bool test = forever && mode == 3;
     float horizon[3];
     float ground[3];

@@ -329,6 +329,7 @@ namespace wxlvk::vk::loader
         WXL_VK_DEVICE_PROC(DestroyDescriptorPool);
         WXL_VK_DEVICE_PROC(ResetDescriptorPool);
         WXL_VK_DEVICE_PROC(AllocateDescriptorSets);
+        WXL_VK_DEVICE_PROC(FreeDescriptorSets);   // Claude voie B
         WXL_VK_DEVICE_PROC(UpdateDescriptorSets);
         WXL_VK_DEVICE_PROC(CreateSampler);
         WXL_VK_DEVICE_PROC(DestroySampler);
@@ -341,6 +342,7 @@ namespace wxlvk::vk::loader
         WXL_VK_DEVICE_PROC(CmdSetViewport);
         WXL_VK_DEVICE_PROC(CmdSetScissor);
         WXL_VK_DEVICE_PROC(CmdDrawIndexed);
+        WXL_VK_DEVICE_PROC(CmdDrawIndexedIndirect);   // Claude voie B
         WXL_VK_DEVICE_PROC(CmdDraw);
         WXL_VK_DEVICE_PROC(CmdSetDepthBias);
         WXL_VK_DEVICE_PROC(CmdSetBlendConstants);

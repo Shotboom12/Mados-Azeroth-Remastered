@@ -162,7 +162,7 @@ bool Effect::Record(const WXL_VkStageContext& ctx,int32_t a,int32_t b,const Para
        ctx.colorLayout!=VK_IMAGE_LAYOUT_GENERAL || ctx.frameSlots!=s->device.frameSlots || ctx.frameSlot>=s->device.frameSlots || ctx.extent.width!=s->width || ctx.extent.height!=s->height) {s->error="grade frame/extent unavailable";return false;}
     auto& slot=s->slots[ctx.frameSlot];if(slot.serial==ctx.serial || slot.serial>ctx.completedSerial){s->error="grade slot in flight/duplicate";return false;}
     auto ia=s->luts.find(a),ib=s->luts.find(b);if(ia==s->luts.end()||ib==s->luts.end()){s->error="grade LUT not prepared";return false;}
-    Parameters p=parameters;if(!std::isfinite(p.blend)||!std::isfinite(p.strength)||!std::isfinite(p.debug)){s->error="grade non-finite parameters";return false;}
+    Parameters p=parameters;if(!std::isfinite(p.blend)||!std::isfinite(p.strength)){s->error="grade non-finite parameters";return false;}
     p.blend=Sat(p.blend);p.strength=std::clamp(p.strength,0.0f,2.0f);p.swapRB=ctx.swapRB;
     // HD: all contributions are normalized together; never switch a third LUT in/out by rank.
     Impl::Lut* prepared[16]{};float mixWeights[16]{};int32_t active=0;
@@ -235,7 +235,7 @@ const char* Effect::Error() const {return state_?state_->error:"grade not initia
 #ifndef HD_GRADE_STANDALONE
 namespace {
 Effect effect;const WXL_VkRenderApi* api=nullptr;void* stage=nullptr;
-CVar *enabled=nullptr,*strength=nullptr,*debug=nullptr,*forced=nullptr,*info=nullptr,*continuous=nullptr;
+CVar *strength=nullptr,*forced=nullptr,*info=nullptr,*continuous=nullptr;
 LutWeights currentWeights;bool completeMix=false;
 bool wanted=false,sawRecord=false;Parameters current;Selection selected;char lastInfo[240]{};
 std::set<int32_t> missing;
@@ -333,7 +333,7 @@ void __cdecl Stage(void*,const WXL_VkStageContext* ctx) {
     if(!ctx)return;sawRecord=true;
     if(!effect.Record(*ctx,selected.a,selected.b,current,completeMix?&currentWeights:nullptr)){Info(effect.Error());return;}
     char text[240];
-    if(completeMix)std::snprintf(text,sizeof text,"Vulkan grade: continuous mixture, %d IDs, strength %.2f%s",currentWeights.count,current.strength,current.debug>.5f?", split screen":"");
+    if(completeMix)std::snprintf(text,sizeof text,"Vulkan grade: continuous mixture, %d IDs, strength %.2f",currentWeights.count,current.strength);
     else std::snprintf(text,sizeof text,"Vulkan grade: legacy top-two LUT %d + %d, strength %.2f",selected.a,selected.b,current.strength);
     Info(text);
 }
@@ -341,8 +341,8 @@ void __cdecl Stage(void*,const WXL_VkStageContext* ctx) {
 bool Init() {
     if(stage)return true;
     continuous=Var("hdGradeContinuous","HD: 1 mixes all contributing LUTs continuously; 0 old top-two diagnostic","1");
-    enabled=Var("hdGrade","HD: colour grading, 0 off / 1 on","0");strength=Var("hdGradeStrength","HD: grading strength 0..2","1");
-    debug=Var("hdGradeDebug","HD: left original / right graded","0",0);forced=Var("hdGradeLut","HD: positive LUT ID overrides zone choice","0");info=Var("hdGradeInfo","HD: grading status","off",0);
+    /* AR1: grading always on, no hdGrade / hdGradeDebug (no ungraded "original" view) */strength=Var("hdGradeStrength","HD: grading strength 0..2","1");
+    forced=Var("hdGradeLut","HD: positive LUT ID overrides zone choice","0");info=Var("hdGradeInfo","HD: grading status","off",0);
     api=wxl::ScriptMgr::GetInterface<const WXL_VkRenderApi>(WXL_VK_RENDER_API_NAME,WXL_VK_RENDER_API_VERSION);
     if(!api || api->structSize<offsetof(WXL_VkRenderApi,UnregisterStage)+sizeof(api->UnregisterStage) || !api->RegisterStage || !api->UnregisterStage || !effect.Init(api)){Info("Vulkan grade: Init failed");return false;}
     if(!Cache(0)){effect.Shutdown(0);Info("Vulkan grade: identity LUT failed");return false;}
@@ -350,14 +350,14 @@ bool Init() {
     stage=api->RegisterStage(&desc,"HD.Grade");if(!stage){effect.Shutdown(0);missing.clear();Info("Vulkan grade: exact after-bloom point not installed");return false;}
     Prewarm();Info("off");return true;
 }
-void Resize() {if(!stage || !enabled || !enabled->m_intValue)return;VkFormat format{};VkExtent2D extent{};if(wxlvk::native::present::BackBufferInfo(format,extent))effect.Resize(extent.width,extent.height);}
+void Resize() {if(!stage)return;VkFormat format{};VkExtent2D extent{};if(wxlvk::native::present::BackBufferInfo(format,extent))effect.Resize(extent.width,extent.height);}
 void World() {
     if(!g_theGxDevicePtr || g_theGxDevicePtr->DeviceApi()!=GxApi_Vulkan){HD::GradeWorld();return;}
-    wanted=false;if(!stage)return;if(!enabled || !enabled->m_intValue){Info("off");return;}
+    wanted=false;if(!stage)return;
     LutWeights weights;if(forced && forced->m_intValue>0)weights.Add(forced->m_intValue,1);else CurrentLuts(weights);
     currentWeights=weights;completeMix=continuous&&continuous->m_intValue!=0;
-    selected=Select(weights);current={};current.blend=selected.blend;current.strength=Clamp(strength?strength->m_floatValue:1,0,2);current.debug=debug?float(debug->m_intValue):0;
-    if(!selected.hasGrade && current.debug<=.5f){Info("Vulkan grade: no grading for this light");return;}
+    selected=Select(weights);current={};current.blend=selected.blend;current.strength=Clamp(strength?strength->m_floatValue:1,0,2);
+    if(!selected.hasGrade){Info("Vulkan grade: no grading for this light");return;}
     if(completeMix)for(int32_t i=0;i<weights.count;++i)if(weights.weight[i]>0&&!Cache(weights.id[i])){Info("Vulkan grade: contributing LUT missing; image unchanged");return;}
     if(!Cache(selected.a)||!Cache(selected.b)){Info("Vulkan grade: LUT missing, invalid or allocation failed; image unchanged");return;}
     wanted=true;sawRecord=false;wxlvk::stages::chain::Run(static_cast<wxlvk::stages::Point>(PrivatePoint));wanted=false;

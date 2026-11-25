@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HD 2026-11-02 (DLSS): the DLSS console variables. No Vulkan here (included next to ConsoleVar.h).
+// Claude 2026-11-02 (DLSS): the DLSS console variables. No Vulkan here (included next to ConsoleVar.h).
 #pragma once
 #include <cstdint>
 namespace HD::Dlss::Settings {

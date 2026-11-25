@@ -67,7 +67,7 @@ struct State {
     bool prepFailed = false;
 
     Runtime::Upscale mode = Runtime::Upscale::Off;   // what BeforeWorld began this frame
-    bool dlss = false;                               // HD 2026-11-02: DLSS records the upscale this frame, not FSR
+    bool dlss = false;                               // Claude 2026-11-02: DLSS records the upscale this frame, not FSR
     bool on = false;                                 // a world set or a context may exist
     VkExtent2D render{}, native{};
     uint32_t quality = 0;
@@ -325,7 +325,7 @@ void LogM1(){
         const auto rigid=Rigid::ReadStats(true);
         wxl::ScriptMgr::Log(WXL_LOG_INFO,"fsr: M2 rendered frames %llu, draw prepares %llu, velocity-capable draws %llu, zero-marker draws %llu, unsafe draws %llu, first/reset draws %llu, scope rejects %llu, capacity rejects %llu, singular %llu, conflicts %llu; CPU prepare+scope %.4f ms/frame; fixed cache %llu bytes; generated frames NOT counted",
             static_cast<unsigned long long>(rigid.frames),static_cast<unsigned long long>(rigid.draws),static_cast<unsigned long long>(rigid.writers),static_cast<unsigned long long>(rigid.zero),static_cast<unsigned long long>(rigid.unsafe),static_cast<unsigned long long>(rigid.first),static_cast<unsigned long long>(rigid.scopeMiss),static_cast<unsigned long long>(rigid.full),static_cast<unsigned long long>(rigid.singular),static_cast<unsigned long long>(rigid.conflict),rigid.frames?rigid.cpuMs/double(rigid.frames):0.,static_cast<unsigned long long>(Rigid::MemoryBytes()));
-        // HD 2026-10-31 (ghosting): conflicts split; a "shared" one no longer drops every object's motion for the whole frame.
+        // Claude 2026-10-31 (ghosting): conflicts split; a "shared" one no longer drops every object's motion for the whole frame.
         if(rigid.conflict)wxl::ScriptMgr::Log(WXL_LOG_INFO,"fsr: M2 conflicts %llu: %llu shared (those draws camera-only, frame kept), %llu unsafe (frame camera-only)",
             static_cast<unsigned long long>(rigid.conflict),static_cast<unsigned long long>(rigid.shared),static_cast<unsigned long long>(rigid.conflict-rigid.shared));
         static uint32_t conflictNotes=0;static uint32_t conflictWindows=0;char conflictLine[600];
@@ -466,7 +466,7 @@ void BeforeWorld() {
     g.mode = Runtime::Upscale::Off;
     g.gen = false;
     g.dlss = false;
-    g.objectRequested=Settings::ObjectMotion();g.motionDebug=Settings::DebugView()>=1&&Settings::DebugView()<=3; // HD 2026-10-31: views 1..3 = motion (ours), 4..5 = R1 masks
+    g.objectRequested=Settings::ObjectMotion();g.motionDebug=Settings::DebugView()>=1&&Settings::DebugView()<=3; // Claude 2026-10-31: views 1..3 = motion (ours), 4..5 = R1 masks
     if(!g.objectRequested&&!g.motionDebug)g.motionInitFailed=false;
     const Runtime::Upscale want = Runtime::Mode();
     const bool gen = Runtime::Generate();
@@ -489,7 +489,7 @@ void BeforeWorld() {
     const Options o = Runtime::Requested();
     // Generation without upscaling: the world at the native size, its depth and motion made as with the upscale.
     FfxApiDimensions2D render{native.width, native.height};
-    // HD 2026-11-02 (DLSS): with hdDLSS the render size is NVIDIA's for the same quality; when DLSS cannot run
+    // Claude 2026-11-02 (DLSS): with hdDLSS the render size is NVIDIA's for the same quality; when DLSS cannot run
     // (hdDLSSInfo says why) the frame is FSR's, exactly as before.
     bool dlss = false;
 #ifdef WOWDECOMP_DLSS
@@ -784,7 +784,7 @@ void AfterWorld() {
         NoteM1Cpu(0,begin);
     }
 
-    // Q1 (2026-11-01): the statuses report the measured share of frames with object motion.
+    // Q1 (Claude 2026-11-01): the statuses report the measured share of frames with object motion.
     if(g.objectRequested){++g.omFrames;if(omThisFrame)++g.omComposed;if(g.omFrames>=120){Runtime::NoteObjectMotion(100.0*g.omComposed/g.omFrames);g.omFrames=g.omComposed=0;}}
     else{Runtime::NoteObjectMotion(-1.0);g.omFrames=g.omComposed=0;}
 
@@ -840,7 +840,7 @@ void AfterWorld() {
 
     bool dlssDone = false;
 #ifdef WOWDECOMP_DLSS
-    // HD 2026-11-02 (DLSS): the same inputs FSR gets, in NVIDIA's states (colour/depth/motion SHADER_READ_ONLY,
+    // Claude 2026-11-02 (DLSS): the same inputs FSR gets, in NVIDIA's states (colour/depth/motion SHADER_READ_ONLY,
     // output GENERAL from the barrier above), into the same output image and the same copy onto the back buffer.
     if (fsr && dlss) {
         dlssDone = true;
@@ -857,7 +857,7 @@ void AfterWorld() {
         df.mvScaleY = f.motionScale.y;
         df.milliseconds = f.milliseconds;
         df.reset = f.reset;
-        df.sharpness = HD::Dlss::Settings::Sharpness();   // HD 2026-11-02: FSR's RCAS after DLSS (DLSS 310 has none), own slider 0..2
+        df.sharpness = HD::Dlss::Settings::Sharpness();   // Claude 2026-11-02: FSR's RCAS after DLSS (DLSS 310 has none), own slider 0..2
         df.slot = present::Slot();
         const int rc = HD::Dlss::Evaluate(df);
         // NGX bound its own pipelines and descriptor sets: the draws' tracking starts over.
@@ -894,7 +894,7 @@ void AfterWorld() {
     // Disable FG explicitly to inspect motion; generation itself remains unchanged.
     if(g.motionDebug&&!gen&&EnsureObjectMotionEffect()&&present::WorldTargetDebugOutput(im)){
         LARGE_INTEGER begin{};if(HD::CataRenderPerf::Enabled())QueryPerformanceCounter(&begin);
-        // Diagnostic modes (2026-10-31): 2 = final vectors x16 (small/distant motion visible), 3 = object markers only.
+        // Diagnostic modes (Claude, 2026-10-31): 2 = final vectors x16 (small/distant motion visible), 3 = object markers only.
         const uint32_t view=Settings::DebugView();
         const bool shown=view==3&&g.objectRequested&&im.objectMotion.view?objectMotionEffect.DebugObjects(M1Frame(im,im.native),im.objectMotion.view,im.output.view,512.f)
                         :objectMotionEffect.Debug(M1Frame(im,im.native),im.motion.image,im.motion.view,im.output.view,view==2?512.f:32.f);
@@ -904,7 +904,7 @@ void AfterWorld() {
         NoteM1Cpu(1,begin);
         wxlvk::vk::pipelines::InvalidateBindings();
     }
-    if(masksReady&&!gen&&Settings::DebugView()>=4&&present::WorldTargetDebugOutput(im)){ // HD 2026-10-31: R1 views moved to 4/5 (2/3 are our motion views); masks API keeps 2/3
+    if(masksReady&&!gen&&Settings::DebugView()>=4&&present::WorldTargetDebugOutput(im)){ // Claude 2026-10-31: R1 views moved to 4/5 (2/3 are our motion views); masks API keeps 2/3
         if(masksEffect.Debug({im.cmd,present::Serial(),present::Completed(),present::Slot()},{im.output.image,im.output.view,im.output.format,im.output.extent},Settings::DebugView()-2))present::WorldTargetBlit(im,true,VK_IMAGE_LAYOUT_GENERAL);
         wxlvk::vk::pipelines::InvalidateBindings();
     }

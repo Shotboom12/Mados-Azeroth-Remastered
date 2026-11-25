@@ -11,7 +11,7 @@
 namespace HD::Lumen::Source {
 static float g_effectGain = 1.0f;
 static bool g_effectPure = false;
-static float g_ringSpellFactor = 1.6f; // HD L12
+static float g_ringSpellFactor = 1.6f; // Claude L12
 
 
 namespace
@@ -183,7 +183,7 @@ int SuppressTargetRing(const EffectMeasurement& m, std::vector<Cell>& cells)
         return 0;
     const float* p = f.glProjection;
     int suppressed = 0;
-    // HD L12: the selection circle is steady, a spell hitting the target is not. Learn the circle's own
+    // Claude L12: the selection circle is steady, a spell hitting the target is not. Learn the circle's own
     // energy while nothing else happens; when the ring zone holds clearly more, let it through (spell impact).
     static float s_ringBase = -1.0f;
     static float s_ringFeet[3] = {};
@@ -369,7 +369,7 @@ bool ClusterToLight(const EffectFrame& f, const CellSums& s, EffectCluster& out)
     out.litArea = s.energy * pixelArea;
     out.hot = out.atWeapon && !out.handGlow ? 1.0f : Hotness(s.pixels > 0.0f ? s.energy / s.pixels : 0.0f);
     out.intensity = EffectIntensity(out.litArea * (1.0f + kEffectHotAreaGain * (out.atWeapon ? 1.0f : out.hot)));
-    out.intensity = std::min(out.intensity * g_effectGain, kMaxEffectIntensity); // HD L11: gain before the spawn threshold
+    out.intensity = std::min(out.intensity * g_effectGain, kMaxEffectIntensity); // Claude L11: gain before the spawn threshold
     out.nearYards = std::clamp(std::sqrt(s.pixels * pixelArea / kPi), kMinEffectNearYards, kMaxEffectNearYards);
     out.surfaceReach = EffectSurfaceReach(out.intensity);
     out.viewDepth = depth;
@@ -412,7 +412,7 @@ void EffectFramePlayer(const FrameInputs& in, float pivotHeight, EffectFrame& f)
     f.handGlows = in.playerKnown && EffectHandGlows(in.playerClass);
     if (in.playerKnown)
         EffectPlayerZone(in.playerPos, in.playerFacing, pivotHeight, f.playerZone);
-    // HD L11: the selection circle under the target is not a spell (the ring filter was never fed).
+    // Claude L11: the selection circle under the target is not a spell (the ring filter was never fed).
     f.targetKnown = in.targetKnown;
     if (in.targetKnown)
     {

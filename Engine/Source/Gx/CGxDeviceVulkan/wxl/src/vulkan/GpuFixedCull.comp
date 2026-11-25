@@ -1,0 +1,395 @@
+// Claude voie B (23 nov 2026): the GPU chooses the fixed map doodads of each sun shadow band and writes their draws.
+//
+// One work group per (command, band). A command is one mesh piece of one model file (a batch of its first copy in the
+// shared vertex / index buffers of the voie B); its entries are the registered doodads that draw it, in registry order.
+// For each entry the group runs the very tests of CShadowQuery::QueryTerrainBand (ShadowQuery.cpp), in the CPU's own
+// operation order (`precise`: no fused multiply-add, no reassociation):
+//   - one of the doodad's linked terrain chunks passed HdQChunk this band (the CPU's chunk bits),
+//   - the doodad is not disabled this frame (the CPU's per-frame check: alpha, model, flag 0x80),
+//   - ShadowBeyondFade (its band-centre or camera order), maxSize < radius,
+//   - extents.Intersects(bbox), bandFrustums[b].Cull(bbox), cullFrustums[b].CullInv(bbox) != 3.
+// A doodad that passes gets bone 0 = worldTransform * view (C44Matrix operator*, the same sum order) written at its
+// copy of the command's palette range, in registry order (a scan, not atomics: the same order every frame), and the
+// command's VkDrawIndexedIndirectCommand gets the count.
+//
+// Claude B4 (24 nov 2026): the animated doodads too (trees that sway, birds, fish). Compiled twice: with ANIM, a first
+// pass (one invocation per animated doodad) does CM2Model::AnimateMT's bones for those a band can see (the same sums in
+// the same order, the CPU's own sequence time), into BoneB; then this pass copies a command's bones (its section's bone
+// combo) for each copy, 3 rows a bone, where a fixed doodad gets its world * view.
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct Band {
+    vec4 planes[6];
+    vec4 cull[6];
+    vec4 extB;      // w: maxSize
+    vec4 extT;
+    vec4 pos;       // the fade origin: the band centre (mode 1) or the camera (mode 0)
+    vec4 fadeA;     // the fade limits of levels 0..3 for this band
+    vec4 fadeB;     // x: level 4
+    uvec4 flags;    // x: band on (1: fixed doodads, 2: animated ones), y: cull frustum used, z: fade mode (0 camera, 1 band centre, 2 never beyond), w: chunk word base
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer FrameB {
+    vec4 view[4];   // the M2 scene's view, C44Matrix rows a, b, c, d
+    uvec4 counts;   // x: commands, y: disabled word base, z: control (1: every doodad whose index % 50 == 0 is left out), w: entries
+    uvec4 anim;     // x: animated doodads, y: their table in D, z: their words in B (time, sequence, loops)
+    vec4 thr;       // x: -0.019444443f, y: 0.019444443f (CFrustum::Cull / CullInv), as the CPU's bits
+    vec4 norm;      // C4Quaternion::NormalizeApprox's 1.021435, 0.95906597, 0.532516, 0.91521198
+    uvec4 quat;     // x: 0.000030518044f (M2CompQuat), y: 0.6521197f, as bits
+    Band band[3];
+} F;
+
+struct Obj {
+    vec4 sphere;    // centre, radius
+    vec4 boxB;
+    vec4 boxT;
+    vec4 w[4];      // the world transform, C44Matrix rows a, b, c, d
+    uvec4 info;     // x: fade level, y: first chunk link, z: chunk links, w: 1 + its first row in BoneB (0: fixed)
+};
+layout(std430, set = 0, binding = 1) readonly buffer ObjB { Obj o[]; } O;
+layout(std430, set = 0, binding = 2) readonly buffer EntB { uint e[]; } E;          // the doodad of each entry
+// a: indexCount, firstIndex, vertexOffset, entryStart; b: entryCount, palette first row of each band (whole copies);
+// c: rows a copy, its bones in D (a slot per bone, animated doodads only)
+struct Cmd { uvec4 a; uvec4 b; uvec4 c; };
+layout(std430, set = 0, binding = 3) readonly buffer CmdB { Cmd c[]; } C;
+layout(std430, set = 0, binding = 4) readonly buffer LinkB { uint l[]; } L;         // chunk slots
+layout(std430, set = 0, binding = 5) readonly buffer BitsB { uint w[]; } B;         // chunk bits per band, then disabled bits
+layout(std430, set = 0, binding = 6) writeonly buffer ArgB { uint a[]; } A;        // VkDrawIndexedIndirectCommand [band][command]
+layout(std430, set = 0, binding = 7) writeonly buffer PalB { vec4 p[]; } P;        // 3 rows a copy
+layout(std430, set = 0, binding = 8) writeonly buffer ChoB { uint v[]; } V;        // [band][entry]: chosen (the proof's readback)
+layout(std430, set = 0, binding = 9) readonly buffer AniB { uint d[]; } D;         // the animated models' bones and keys, their doodads
+#ifdef ANIM
+layout(std430, set = 0, binding = 10) buffer BoneB { vec4 r[]; } N;                // 3 rows a bone
+#else
+layout(std430, set = 0, binding = 10) readonly buffer BoneB { vec4 r[]; } N;
+#endif
+
+shared uint s_vis[64];
+
+bool PlaneCull(vec4 pl, vec3 b, vec3 t, float limit, bool inv) {
+    // CFrustum::Cull: the box corner on the plane's side, chosen by the sign BIT of each normal component.
+    float x = (floatBitsToUint(pl.x) >> 31) != 0u ? b.x : t.x;
+    float y = (floatBitsToUint(pl.y) >> 31) != 0u ? b.y : t.y;
+    float z = (floatBitsToUint(pl.z) >> 31) != 0u ? b.z : t.z;
+    precise float d = ((z * pl.z + y * pl.y) + x * pl.x) + pl.w;
+    return inv ? (d > limit) : (d < limit);
+}
+
+bool Visible(uint oi, uint bi) {
+    Band bd = F.band[bi];
+    if ((bd.flags.x & (O.o[oi].info.w == 0u ? 1u : 2u)) == 0u) return false;
+    if (F.counts.z == 1u && (oi % 50u) == 0u) return false;   // the proof's control
+    if (((B.w[F.counts.y + (oi >> 5)] >> (oi & 31u)) & 1u) != 0u) return false;
+    Obj ob = O.o[oi];
+    // HdQChunk: one of its chunks passed in this band.
+    bool chunk = false;
+    for (uint k = 0u; k < ob.info.z; ++k) {
+        uint s = L.l[ob.info.y + k];
+        if (((B.w[bd.flags.w + (s >> 5)] >> (s & 31u)) & 1u) != 0u) { chunk = true; break; }
+    }
+    if (!chunk) return false;
+    // ShadowBeyondFade
+    if (bd.flags.z != 2u) {
+        uint lv = ob.info.x;
+        float limit = lv == 0u ? bd.fadeA.x : lv == 1u ? bd.fadeA.y : lv == 2u ? bd.fadeA.z : lv == 3u ? bd.fadeA.w : bd.fadeB.x;
+        precise float dx = ob.sphere.x - bd.pos.x;
+        precise float dy = ob.sphere.y - bd.pos.y;
+        precise float dz = ob.sphere.z - bd.pos.z;
+        precise float dd;
+        if (bd.flags.z == 1u) dd = (dx * dx + dy * dy) + dz * dz;
+        else dd = dx * dx + (dy * dy + dz * dz);
+        if (dd > limit) return false;
+    }
+    if (bd.extB.w < ob.sphere.w) return false;   // maxSize < radius
+    vec3 b = ob.boxB.xyz, t = ob.boxT.xyz;
+    // extents.Intersects(bbox)
+    if (!(bd.extT.x >= b.x && bd.extT.y >= b.y && bd.extT.z >= b.z && bd.extB.x <= t.x && bd.extB.y <= t.y && bd.extB.z <= t.z)) return false;
+    for (int i = 0; i < 6; ++i) if (PlaneCull(bd.planes[i], b, t, F.thr.x, false)) return false;
+    if (bd.flags.y != 0u) {
+        bool keep = false;   // CullInv(bbox) != 3: a plane past the limit
+        for (int i = 0; i < 6; ++i) if (PlaneCull(bd.cull[i], b, t, F.thr.y, true)) { keep = true; break; }
+        if (!keep) return false;
+    }
+    return true;
+}
+
+void WorldView(uint oi, out vec4 rowA, out vec4 rowB, out vec4 rowC) {
+    vec4 l0 = O.o[oi].w[0], l1 = O.o[oi].w[1], l2 = O.o[oi].w[2], l3 = O.o[oi].w[3];
+    vec4 r0 = F.view[0], r1 = F.view[1], r2 = F.view[2], r3 = F.view[3];
+    // C44Matrix operator*(l, r) (Tempest/C44Matrix.cpp), the sums in its order. l.aN = l0[N], r.aN = r0[N], ...
+    precise float a0 = ((r2.x * l0.z + l0.y * r1.x) + l0.w * r3.x) + l0.x * r0.x;
+    precise float a1 = ((r2.y * l0.z + l0.y * r1.y) + r0.y * l0.x) + r3.y * l0.w;
+    precise float a2 = ((l0.y * r1.z + l0.w * r3.z) + r0.z * l0.x) + l0.z * r2.z;
+    precise float b0 = ((l1.y * r1.x + r2.x * l1.z) + l1.w * r3.x) + l1.x * r0.x;
+    precise float b1 = ((l1.y * r1.y + r2.y * l1.z) + r3.y * l1.w) + l1.x * r0.y;
+    precise float b2 = ((r3.z * l1.w + l1.z * r2.z) + l1.y * r1.z) + l1.x * r0.z;
+    precise float c0 = ((l2.y * r1.x + r2.x * l2.z) + l2.w * r3.x) + l2.x * r0.x;
+    precise float c1 = ((l2.y * r1.y + r3.y * l2.w) + r2.y * l2.z) + l2.x * r0.y;
+    precise float c2 = ((l2.w * r3.z + l2.z * r2.z) + l2.y * r1.z) + l2.x * r0.z;
+    precise float d0 = ((l3.y * r1.x + r2.x * l3.z) + l3.w * r3.x) + l3.x * r0.x;
+    precise float d1 = ((l3.y * r1.y + r3.y * l3.w) + r2.y * l3.z) + l3.x * r0.y;
+    precise float d2 = ((l3.w * r3.z + l3.z * r2.z) + l3.y * r1.z) + l3.x * r0.z;
+    // RenderBatchShadowMap's rows: (a0 b0 c0 d0), (a1 b1 c1 d1), (a2 b2 c2 d2).
+    rowA = vec4(a0, b0, c0, d0);
+    rowB = vec4(a1, b1, c1, d1);
+    rowC = vec4(a2, b2, c2, d2);
+}
+
+#ifdef ANIM
+
+// a / b rounded as the CPU rounds it (the GPU's own division may be off by an ulp).
+float Div(float a, float b) {
+    precise float q = a / b;
+    precise float e = fma(-q, b, a);
+    precise float c = fma(e, 1.0 / b, q);
+    return c;
+}
+
+// CM2Model::FindKey: the last key at or before the time (the CPU's remembered key changes the search, not its answer).
+void FindKey(uint track, uint time, uint seq, uint loopTime, out uint k0, out uint k1, out float ratio) {
+    uint head = D.d[track];          // type (bits 0..7), 1 + loop (bits 8..)
+    uint nTimes = D.d[track + 1u];
+    k0 = 0u; k1 = 0u; ratio = 0.0;
+    if (nTimes == 0u) return;
+    uint a = seq;
+    uint t = time;
+    if ((head >> 8) != 0u) { t = loopTime; a = 0u; }
+    else if (a >= nTimes) a = 0u;
+    uint at = D.d[track + 3u + 2u * a];
+    uint count = D.d[track + 4u + 2u * a];
+    if (count <= 1u) return;
+    uint lo = 0u, hi = count - 1u;   // the answer is in [lo, hi] (the first key is at 0)
+    while (lo < hi) {
+        uint mid = (lo + hi + 1u) >> 1;
+        if (D.d[at + mid] <= t) lo = mid; else hi = mid - 1u;
+    }
+    if (lo + 1u >= count) { k0 = lo; k1 = lo; return; }
+    k0 = lo;
+    k1 = lo + 1u;
+    uint from = D.d[at + lo];
+    ratio = Div(float(t - from), float(D.d[at + lo + 1u] - from));
+}
+
+/// The keys of the sequence: their place in D and their count.
+void Keys(uint track, uint seq, out uint at, out uint count) {
+    uint nTimes = D.d[track + 1u];
+    uint nKeys = D.d[track + 2u];
+    uint k = seq < nKeys ? seq : 0u;
+    uint p = track + 3u + 2u * nTimes + 2u * k;
+    at = D.d[p];
+    count = D.d[p + 1u];
+}
+
+vec4 CompQuat(uint at) {
+    uint p = D.d[at], q = D.d[at + 1u];
+    precise vec4 v = vec4(float(p & 0xFFFFu), float(p >> 16), float(q & 0xFFFFu), float(q >> 16)) * uintBitsToFloat(F.quat.x) - 1.0;
+    return v;
+}
+
+uint LoopTime(uint track, uint frame) {
+    uint loop = D.d[track] >> 8;
+    return loop == 0u ? 0u : B.w[frame + 1u + loop];
+}
+
+vec4 Rotation(uint track, uint frame) {
+    uint seq = B.w[frame + 1u];
+    uint at, count;
+    Keys(track, seq, at, count);
+    if (count == 0u) return vec4(0.0, 0.0, 0.0, 1.0);
+    uint k0, k1;
+    float t;
+    FindKey(track, B.w[frame], seq, LoopTime(track, frame), k0, k1, t);
+    vec4 a = CompQuat(at + 2u * k0);
+    if ((D.d[track] & 0xFFu) == 0u) return a;
+    vec4 b = CompQuat(at + 2u * k1);
+    precise vec4 v = (b - a) * t + a;                       // C4Quaternion::Nlerp
+    precise float len = ((v.w * v.w + v.z * v.z) + v.y * v.y) + v.x * v.x;   // NormalizeApprox (its constants: FrameB, as the CPU's bits)
+    float c0 = F.norm.x, c1 = F.norm.y, c2 = F.norm.z;
+    precise float s = c0 - (len - c1) * c2;
+    if (len <= F.norm.w) {
+        precise float s1 = s * (c0 - ((s * s) * len - c1) * c2);
+        s = s1;
+        if (len <= uintBitsToFloat(F.quat.y)) {
+            precise float s2 = (c0 - (len * (s * s) - c1) * c2) * s;
+            s = s2;
+        }
+    }
+    precise vec4 o = v * s;
+    return o;
+}
+
+vec3 Vector(uint track, uint frame, vec3 def) {
+    uint seq = B.w[frame + 1u];
+    uint at, count;
+    Keys(track, seq, at, count);
+    if (count == 0u) return def;
+    uint k0, k1;
+    float t;
+    FindKey(track, B.w[frame], seq, LoopTime(track, frame), k0, k1, t);
+    at += 3u * k0;
+    vec3 a = vec3(uintBitsToFloat(D.d[at]), uintBitsToFloat(D.d[at + 1u]), uintBitsToFloat(D.d[at + 2u]));
+    if ((D.d[track] & 0xFFu) == 0u) return a;
+    at += 3u * (k1 - k0);
+    vec3 b = vec3(uintBitsToFloat(D.d[at]), uintBitsToFloat(D.d[at + 1u]), uintBitsToFloat(D.d[at + 2u]));
+    precise vec3 v = (b - a) * t + a;
+    return v;
+}
+
+vec3 Float3(uint at) { return vec3(uintBitsToFloat(D.d[at]), uintBitsToFloat(D.d[at + 1u]), uintBitsToFloat(D.d[at + 2u])); }
+
+void main() {
+    uint ai = gl_GlobalInvocationID.x;
+    if (ai >= F.anim.x) return;
+    uint rec = F.anim.y + 4u * ai;
+    uint oi = D.d[rec];
+    if (!(Visible(oi, 0u) || Visible(oi, 1u) || Visible(oi, 2u))) return;
+    uint model = D.d[rec + 1u];
+    uint base = D.d[rec + 2u];
+    uint frame = F.anim.z + D.d[rec + 3u];
+    vec4 w0, w1, w2;
+    WorldView(oi, w0, w1, w2);
+    uint bones = D.d[model];
+    for (uint i = 0u; i < bones; ++i) {
+        uint bone = model + 1u + 8u * i;
+        uint parent = D.d[bone];
+        vec4 p0 = w0, p1 = w1, p2 = w2;                     // the columns 0, 1, 2 of the parent's rows a, b, c, d
+        if (parent != 0xFFFFFFFFu) {
+            uint pr = base + 3u * parent;
+            p0 = N.r[pr]; p1 = N.r[pr + 1u]; p2 = N.r[pr + 2u];
+        }
+        uint kinds = D.d[bone + 1u];
+        uint row = base + 3u * i;
+        if ((kinds & 1u) == 0u) {
+            N.r[row] = p0; N.r[row + 1u] = p1; N.r[row + 2u] = p2;
+            continue;
+        }
+        vec3 pivot = Float3(bone + 5u);
+        // the local matrix's rows a, b, c (C44Matrix::FromQuaternion)
+        vec3 la = vec3(1.0, 0.0, 0.0), lb = vec3(0.0, 1.0, 0.0), lc = vec3(0.0, 0.0, 1.0);
+        uint rotKind = (kinds >> 1) & 3u;
+        if (rotKind != 0u) {
+            vec4 q;
+            if (rotKind == 1u) {
+                uint at = D.d[bone + 2u];
+                q = vec4(Float3(at), uintBitsToFloat(D.d[at + 3u]));
+            } else q = Rotation(D.d[bone + 2u], frame);
+            precise float x2 = q.x * 2.0;
+            precise float y2 = q.y * 2.0;
+            precise float z2 = 2.0 * q.z;
+            precise float wx = q.w * x2;
+            precise float wy = q.w * y2;
+            precise float wz = q.w * z2;
+            precise float xx = x2 * q.x;
+            precise float xy = q.x * y2;
+            precise float xz = q.x * z2;
+            precise float yy = y2 * q.y;
+            precise float yz = q.y * z2;
+            precise float zz = z2 * q.z;
+            precise float ma0 = 1.0 - (zz + yy);
+            precise float ma1 = xy + wz;
+            precise float ma2 = xz - wy;
+            precise float mb0 = xy - wz;
+            precise float mb1 = 1.0 - (zz + xx);
+            precise float mb2 = yz + wx;
+            precise float mc0 = wy + xz;
+            precise float mc1 = yz - wx;
+            precise float mc2 = 1.0 - (xx + yy);
+            la = vec3(ma0, ma1, ma2); lb = vec3(mb0, mb1, mb2); lc = vec3(mc0, mc1, mc2);
+        }
+        uint sclKind = (kinds >> 3) & 3u;
+        if (sclKind != 0u) {
+            vec3 s = sclKind == 1u ? Float3(D.d[bone + 3u]) : Vector(D.d[bone + 3u], frame, vec3(1.0));
+            precise vec3 sa = la * s.x;
+            precise vec3 sb = lb * s.y;
+            precise vec3 sc = lc * s.z;
+            la = sa; lb = sb; lc = sc;
+        }
+        vec3 off = pivot;
+        uint trnKind = (kinds >> 5) & 3u;
+        if (trnKind != 0u) {
+            vec3 t = trnKind == 1u ? Float3(D.d[bone + 4u]) : Vector(D.d[bone + 4u], frame, vec3(0.0));
+            precise vec3 o2 = off + t;
+            off = o2;
+        }
+        // Translate(-pivot)
+        precise vec3 ld = ((lc * (-pivot.z) + lb * (-pivot.y)) + la * (-pivot.x)) + off;
+        // local * parent (C44Matrix operator*, l's column 3 = 0 0 0 1): p0 = (r.a0 r.b0 r.c0 r.d0), p1, p2 alike.
+        precise float a0 = (p0.z * la.z + la.y * p0.y) + la.x * p0.x;
+        precise float a1 = (p1.z * la.z + la.y * p1.y) + p1.x * la.x;
+        precise float a2 = (la.y * p2.y + p2.x * la.x) + la.z * p2.z;
+        precise float b0 = (lb.y * p0.y + p0.z * lb.z) + lb.x * p0.x;
+        precise float b1 = (lb.y * p1.y + p1.z * lb.z) + lb.x * p1.x;
+        precise float b2 = (lb.z * p2.z + lb.y * p2.y) + lb.x * p2.x;
+        precise float c0 = (lc.y * p0.y + p0.z * lc.z) + lc.x * p0.x;
+        precise float c1 = (lc.y * p1.y + p1.z * lc.z) + lc.x * p1.x;
+        precise float c2 = (lc.z * p2.z + lc.y * p2.y) + lc.x * p2.x;
+        precise float d0 = ((ld.y * p0.y + p0.z * ld.z) + p0.w) + ld.x * p0.x;
+        precise float d1 = ((ld.y * p1.y + p1.w) + p1.z * ld.z) + ld.x * p1.x;
+        precise float d2 = ((p2.w + ld.z * p2.z) + ld.y * p2.y) + ld.x * p2.x;
+        N.r[row]      = vec4(a0, b0, c0, d0);
+        N.r[row + 1u] = vec4(a1, b1, c1, d1);
+        N.r[row + 2u] = vec4(a2, b2, c2, d2);
+    }
+}
+
+#else
+
+void WriteBones(uint oi, uint row, uint rows, uint combo) {
+    uint bone = O.o[oi].info.w;
+    if (bone == 0u) {
+        vec4 r0, r1, r2;
+        WorldView(oi, r0, r1, r2);
+        P.p[row] = r0; P.p[row + 1u] = r1; P.p[row + 2u] = r2;
+        return;
+    }
+    bone -= 1u;
+    for (uint k = 0u; k * 3u < rows; ++k) {
+        uint from = bone + 3u * D.d[combo + k];
+        uint to = row + 3u * k;
+        P.p[to] = N.r[from]; P.p[to + 1u] = N.r[from + 1u]; P.p[to + 2u] = N.r[from + 2u];
+    }
+}
+
+void main() {
+    uint ci = gl_WorkGroupID.x;
+    uint bi = gl_WorkGroupID.y;
+    uint lane = gl_LocalInvocationID.x;
+    Cmd cmd = C.c[ci];
+    uint rows = cmd.c.x;
+    uint first = cmd.b[1u + bi];
+    uint total = 0u;
+    for (uint base = 0u; base < cmd.b.x; base += 64u) {
+        uint k = base + lane;
+        uint ei = cmd.a.w + k;
+        bool vis = false;
+        uint oi = 0u;
+        if (k < cmd.b.x) {
+            oi = E.e[ei];
+            vis = Visible(oi, bi);
+            V.v[bi * F.counts.w + ei] = vis ? 1u : 0u;
+        }
+        s_vis[lane] = vis ? 1u : 0u;
+        barrier();
+        uint before = 0u, all = 0u;
+        for (uint j = 0u; j < 64u; ++j) {
+            uint s = s_vis[j];
+            if (j < lane) before += s;
+            all += s;
+        }
+        if (vis) WriteBones(oi, first + (total + before) * rows, rows, cmd.c.y);
+        total += all;
+        barrier();
+    }
+    if (lane == 0u) {
+        uint at = (bi * F.counts.x + ci) * 5u;
+        A.a[at]      = cmd.a.x;
+        A.a[at + 1u] = total;
+        A.a[at + 2u] = cmd.a.y;
+        A.a[at + 3u] = cmd.a.z;
+        A.a[at + 4u] = first / rows;
+    }
+}
+
+#endif

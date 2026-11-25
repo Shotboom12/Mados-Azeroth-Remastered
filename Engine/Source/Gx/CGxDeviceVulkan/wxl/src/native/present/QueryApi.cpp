@@ -1,3 +1,4 @@
+#include "native/record/RecordThread.hpp"
 // The present path's occlusion query API.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -24,6 +25,7 @@ namespace wxlvk::native::present
 
     bool QueryStart(QueryRun& run)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Query);
         if (!EnsureFrame()) return false;
         QueryForget(run);
         if (s.queryPools[0] == VK_NULL_HANDLE)
@@ -81,6 +83,7 @@ namespace wxlvk::native::present
 
     void QueryStop(QueryRun& run)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Query);
         if (!run.active) return;
         QueryEndVk(run);
         run.active = false;
@@ -89,6 +92,7 @@ namespace wxlvk::native::present
 
     void QueryForget(QueryRun& run)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Query);
         if (run.active) QueryStop(run);
         if (s.activeRun == &run) s.activeRun = nullptr;
         Unregister(run);
@@ -96,6 +100,7 @@ namespace wxlvk::native::present
 
     bool QueryReady(QueryRun& run)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Query);
         if (run.serial == 0) return true;   // never issued: D3D's new query is signalled
         if (run.active) return false;
         if (run.harvested) return true;
@@ -134,6 +139,7 @@ namespace wxlvk::native::present
 
     bool QueryWait(QueryRun& run)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Query);
         if (QueryReady(run)) return true;
         if (run.active) return false;
         if (s.open && run.serial == s.serial)

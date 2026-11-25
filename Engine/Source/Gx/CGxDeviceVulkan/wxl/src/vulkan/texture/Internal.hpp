@@ -51,7 +51,9 @@ namespace wxlvk::vk::texture::detail
     /// refusal rather than silent growth. One image per engine texture with an image (render
     /// targets included); a zone holds a few thousand. Heap-allocated at Init() (~450 KiB) rather
     /// than static, so it does not ship in the DLL's .data.
-    constexpr uint32_t kMaxImages = 16384;
+    /// HD TEX1 (6 nov 2026): 16384 -> 65536. A long session in the custom zones (long view distance, fast travel) filled
+    /// the 16384 and every new texture was refused (ground and models drawn without them). ~3 MB of table on x64.
+    constexpr uint32_t kMaxImages = 65536;
 
     /// The index over the table, twice its size (a load factor of at most one half keeps
     /// linear probing short), a power of two for the mask.
@@ -141,6 +143,7 @@ namespace wxlvk::vk::texture::detail
     uint32_t HashSlotOf(uint32_t index);
     void HashInsert(uint32_t index);
     void RemoveOwned(uint32_t i);
+    void NoteCount(); // HD TEX1: one log line each time the live count moves by 1024 (Create.cpp)
     void FreeTables();
     VkImageSubresourceRange WholeColour(uint32_t levels, uint32_t layers);
     void Transition(VkCommandBuffer cmd, VkImage image, uint32_t levels, uint32_t layers, VkImageLayout from, VkImageLayout to, VkPipelineStageFlags srcStage, VkAccessFlags srcAccess, VkPipelineStageFlags dstStage, VkAccessFlags dstAccess);

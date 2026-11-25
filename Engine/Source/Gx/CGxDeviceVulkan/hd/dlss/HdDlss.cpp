@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HD 2026-11-02 (DLSS): NVIDIA DLSS Super Resolution through NGX (SDK 310.9.16, ThirdParty/DLSS), in place of
+// Claude 2026-11-02 (DLSS): NVIDIA DLSS Super Resolution through NGX (SDK 310.9.16, ThirdParty/DLSS), in place of
 // the FSR upscaler, on the inputs the FSR pass already makes. See HdDlss.h. NGX is started only when hdDLSS is
 // first asked for; its DLL (nvngx_dlss.dll) is looked for in the executable's DLSS folder, then the executable's.
 #ifdef WOWDECOMP_DLSS
@@ -145,7 +145,7 @@ void WaitIdle() {
     if (h && h->device && h->dapi) h->dapi->DeviceWaitIdle(h->device);
 }
 
-// --- the sharpening after DLSS (2026-11-02) -----------------------------------------------------------
+// --- the sharpening after DLSS (Claude 2026-11-02) -----------------------------------------------------------
 // DLSS 310 has no sharpening; FSR's own RCAS is the one the player tuned. DLSS then writes into an image of ours
 // at the display size, and RCAS (shaders/HdDlssRcas.comp) reads it and writes the pass's output.
 constexpr uint32_t kSharpSlots = 2;

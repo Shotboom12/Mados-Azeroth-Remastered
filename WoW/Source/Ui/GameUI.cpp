@@ -173,6 +173,22 @@
 #include "WoW/Source/DB/Rec/CreatureFamilyRec.h"
 #include "WoW/Source/DB/Rec/CreatureTypeRec.h"
 #include "WoW/Source/WorldClient/HD/HdCataRenderPerf.h" // HD: hdCataRenderPerf
+// Claude METEO1 (16 nov 2026) : hdWeatherFixe 1 = la meteo affichee est GELEE telle qu'elle est (aucun saut a l'ecran : For Ever
+// melange son ciel et sa lumiere selon l'intensite de la meteo, forcer un temps clair faisait sauter tout l'eclairage) ; les
+// changements envoyes par le serveur sont gardes de cote. 0 = s'il en est arrive un, il est applique avec sa propre transition.
+namespace {
+struct HdServerWeather { bool known = false; bool pending = false; uint32_t type = 0; float intensity = 0.0f; const WeatherRec* rec = nullptr; float transition = 1.0f; int32_t kit = -1; };
+HdServerWeather s_hdServerWeather;
+CVar* s_hdWeatherFixe = nullptr;
+void HdApplyWeather(bool fixe) {
+    HdServerWeather& w = s_hdServerWeather;
+    if (fixe || !World::s_weather || !w.known || !w.pending) return;   // gelee : rien ne change a l'ecran
+    w.pending = false;
+    World::s_weather->SetType(w.type, w.intensity, w.rec, false, w.transition);   // la transition du serveur, pas de saut
+    SI2::SetWeatherKitID(w.kit);
+}
+bool HdWeatherFixeChanged(CVar*, const char*, const char* value, void*) { HdApplyWeather(value && value[0] && value[0] != '0'); return true; }
+}
 
 // STATIC: 0x00ACC3F8
 CImVector s_deadSelectionColor = CImVector(0x7F, 0x7F, 0x7F, 0xFF);
@@ -1673,6 +1689,7 @@ void CGGameUI::InitializeFrameXML() {
 
     g_taintLogCVar = CVar::Register("taintLog", "Whether taint logging is enabled", 0, "0", SetTaintLogCallback, 5, false, nullptr, false);
     g_scriptProfileCVar = CVar::Register("scriptProfile", "Whether or not script profiling is enabled", 0, "0", nullptr, 5, false, nullptr, false);
+    CataFlightRegisterCVars(); // Claude 2026-11-12 lot CF1
 
     CRect windowRect = { 0.0f, 0.0f, 0.0f, 0.0f };
 
@@ -1846,6 +1863,7 @@ void CGGameUI::InitializeGame() {
     ClientServices::SetMessageHandler(SMSG_AREA_SPIRIT_HEALER_TIME, CGGameUI::MessageHandler, nullptr);
     ClientServices::SetMessageHandler(SMSG_INVALID_PROMOTION_CODE, CGGameUI::MessageHandler, nullptr);
     ClientServices::SetMessageHandler(SMSG_WEATHER, CGGameUI::MessageHandler, nullptr);
+    if (!s_hdWeatherFixe) s_hdWeatherFixe = CVar::Register("hdWeatherFixe", "HD (Claude METEO1): 1 = meteo gelee telle quelle pendant les bancs (aucun changement a l ecran, les envois du serveur attendent), 0 = meteo du serveur", 1, "0", HdWeatherFixeChanged, CATEGORY_GRAPHICS, false, nullptr, false);
     ClientServices::SetMessageHandler(SMSG_OVERRIDE_LIGHT, CGGameUI::MessageHandler, nullptr);
     ClientServices::SetMessageHandler(SMSG_INSTANCE_DIFFICULTY, CGGameUI::MessageHandler, nullptr);
     ClientServices::SetMessageHandler(MSG_SET_DUNGEON_DIFFICULTY, CGGameUI::MessageHandler, nullptr);
@@ -6639,13 +6657,16 @@ int32_t CGGameUI::MessageHandler(void* param, NETMESSAGE msgId, uint32_t time, C
                 soundKitId = rec->m_ambienceID;
             }
 
-            World::s_weather->SetType(type, intensity, rec, abrupt == 0, transition);
-
             if (soundKitId <= 0) {
                 soundKitId = -1;
             }
 
-            SI2::SetWeatherKitID(soundKitId);
+            const bool hdFixe = s_hdWeatherFixe && s_hdWeatherFixe->m_intValue != 0; // Claude METEO1
+            s_hdServerWeather = HdServerWeather{ true, hdFixe, type, intensity, rec, transition, soundKitId };
+            if (!hdFixe) {
+                World::s_weather->SetType(type, intensity, rec, abrupt == 0, transition);
+                SI2::SetWeatherKitID(soundKitId);
+            }
             ConsolePrintf("Weather changed to %d, intensity %f\n", type, intensity);
             return 1;
         }
@@ -7553,6 +7574,82 @@ void CGGameUI::Shutdown() {
     s_taintEvents.InternalClear(0);
 }
 
+// Claude 2026-11-12 lot CF1 : vol en Azeroth selon Cataclysm 15595.
+// 15595 (Unit_C.cpp FlyingMountAllowed) : bit 0x2 des mountFlags de la sous-zone puis de la zone, puis licence 90267
+// sur les cartes 0 et 1. AreaTable 15595 (SHA256 292F75A7...) : les 926 aires WotLK des cartes 0 et 1 y ont mountFlags 0xF. Une aire est volable sauf si elle
+// porte le drapeau WotLK 0x20000000 ou si elle-meme ou un de ses parents est dans hdCataFlightNoFly.
+// Le module serveur mod-cata-flight applique exactement la meme regle (meme liste, meme licence).
+// hdCataFlight 0 (defaut) = comportement WotLK inchange.
+static CVar* s_hdCataFlight = nullptr;
+static CVar* s_hdCataFlightLicense = nullptr;
+static CVar* s_hdCataFlightNoFly = nullptr;
+
+void CataFlightRegisterCVars() {
+    if (s_hdCataFlight) {
+        return;
+    }
+
+    s_hdCataFlight = CVar::Register("hdCataFlight", "Claude CF1: 1 = fly in Eastern Kingdoms and Kalimdor (maps 0 and 1) with the Cataclysm rule; the server needs mod-cata-flight with the same settings; 0 = WotLK (default)", 1, "0", nullptr, 5, false, nullptr, false);
+    s_hdCataFlightLicense = CVar::Register("hdCataFlightLicense", "Claude CF1: spell the player must know to fly on maps 0 and 1 (Cataclysm: 90267 Flight Master's License, absent from 3.3.5a); 0 = none; default 34090 Expert Riding", 1, "34090", nullptr, 5, false, nullptr, false);
+    s_hdCataFlightNoFly = CVar::Register("hdCataFlightNoFly", "Claude CF1: comma separated AreaTable ids (zone or subzone, children included) where flying stays forbidden on maps 0 and 1; default empty = Cataclysm 15595 (mountFlags 0xF on every WotLK area of maps 0 and 1)", 1, "", nullptr, 5, false, nullptr, false);
+}
+
+int32_t CataFlightEnabled() {
+    return s_hdCataFlight && s_hdCataFlight->m_intValue != 0;
+}
+
+uint32_t CataFlightLicenseSpell() {
+    if (!s_hdCataFlightLicense || s_hdCataFlightLicense->m_intValue <= 0) {
+        return 0;
+    }
+
+    return static_cast<uint32_t>(s_hdCataFlightLicense->m_intValue);
+}
+
+static int32_t CataFlightListed(int32_t areaId) {
+    const char* p = (s_hdCataFlightNoFly && s_hdCataFlightNoFly->m_stringValue.m_str) ? s_hdCataFlightNoFly->m_stringValue.m_str : "";
+
+    while (*p) {
+        while (*p && (*p < '0' || *p > '9')) {
+            p++;
+        }
+
+        int32_t value = 0;
+        int32_t digits = 0;
+
+        while (*p >= '0' && *p <= '9') {
+            if (digits < 9) {
+                value = value * 10 + (*p - '0');
+            }
+
+            digits++;
+            p++;
+        }
+
+        if (digits && value == areaId) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int32_t CataFlightAreaAllowed(const AreaTableRec* area) {
+    if (area->m_flags & 0x20000000) {
+        return 0;
+    }
+
+    for (int32_t depth = 0; area && depth < 8; depth++) {
+        if (CataFlightListed(area->m_id)) {
+            return 0;
+        }
+
+        area = area->m_parentAreaID ? g_areaTableDB.GetRecord(area->m_parentAreaID) : nullptr;
+    }
+
+    return 1;
+}
+
 // VERIFY: 39aaac88 manual
 // OFFSET: 0x0051A1D0
 int32_t IsInFlyableArea() {
@@ -7560,6 +7657,11 @@ int32_t IsInFlyableArea() {
 
     if (!area) {
         area = g_areaTableDB.GetRecord(CGGameUI::m_areaID);
+    }
+
+    // Claude 2026-11-12 lot CF1 : regle Cataclysm 15595 sur les cartes 0 et 1 (voir CataFlightAreaAllowed).
+    if (area && CataFlightEnabled() && (CGGameUI::m_iCurrentMapID == 0 || CGGameUI::m_iCurrentMapID == 1)) {
+        return CataFlightAreaAllowed(area);
     }
 
     if (area && (area->m_flags & 0x400) && !(area->m_flags & 0x20000000)) {

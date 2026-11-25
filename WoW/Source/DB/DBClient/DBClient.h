@@ -483,10 +483,6 @@ extern WowClientDB<ObjectEffectPackageRec> g_objectEffectPackageDB;
 extern WowClientDB<ObjectEffectPackageElemRec> g_objectEffectPackageElemDB;
 extern WowClientDB<SoundFilterRec> g_soundFilterDB;
 extern WowClientDB<SoundFilterElemRec> g_soundFilterElemDB;
-extern WowClientDB<LightSkyboxRec> g_lightSkyboxDB;
-extern WowClientDB_RLE<LightIntBandRec> g_lightIntBandDB;
-extern WowClientDB_RLE<LightFloatBandRec> g_lightFloatBandDB;
-extern WowClientDB<LightParamsRec> g_lightParamsDB;
 extern WowClientDB<LightRec> g_lightDB;
 
 int32_t ClientDBGetNumWeaponSubClasses();

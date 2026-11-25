@@ -52,7 +52,7 @@ inline bool FromRowsWithProjection(const float(*rows)[4],const Matrix&projection
 }
 inline uint64_t Mix(uint64_t x){x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;return x^(x>>31);}
 enum class HistoryResult { Valid, First, Full, Conflict, Singular, Shared };
-// HD 2026-10-31 (ghosting): Conflict = a key seen again this frame with another matrix AFTER its first draw this frame wrote a
+// Claude 2026-10-31 (ghosting): Conflict = a key seen again this frame with another matrix AFTER its first draw this frame wrote a
 // motion vector (the frame is unsafe). Shared = the same, but the first draw this frame was already a zero marker (the key was
 // poisoned last frame): every draw of this key is camera-only, no pixel holds a doubtful vector, the frame stays safe.
 template<uint32_t Count=32768,uint32_t Probes=64>class History {

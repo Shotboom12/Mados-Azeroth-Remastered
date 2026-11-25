@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
@@ -30,10 +31,33 @@
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/HD/HdCataMirror.h"
+#include "WoW/Source/WorldClient/LiquidEnvironment.h"      // Claude B3
+#include "WoW/Source/WorldClient/LiquidGeomFactories.h"   // HD LV28: CMeshGeomFactory
+#include "WoW/Source/WorldClient/MapChunkLiquid.h"        // Claude B3
+#include "WoW/Source/WorldClient/MapObjGroup.h"           // HD LV28: CMapObjGroup::m_liquidCorner
 #include "WoW/Source/WorldClient/HD/HdCataRipples.h"
 #include "WoW/Source/WorldClient/HD/HdGxShader.h"
+#include "WoW/Source/WorldClient/HD/HdShaderBuild.h" // Claude BLZ1: HD::ShaderBuild::Error
 #include "WoW/Source/WorldClient/CPortalView.h"
 #include "WoW/Source/WorldClient/World.h"
+
+// vulkan/GpuFixed.cpp (wxl): Claude B3
+struct HdGpuFixedCpuSpan
+{
+    void*    palette = nullptr;
+    void*    args = nullptr;
+    uint32_t firstInstance = 0;
+    uint32_t commands = 0;
+    uint32_t rows = 0;
+    uint32_t slot = 0;
+    uint32_t argsOffset = 0;
+};
+bool HdGpuFixedDevReady();
+bool HdGpuFixedDevCpuAlloc(uint32_t rows, uint32_t copies, uint32_t commands, HdGpuFixedCpuSpan& span);
+void HdGpuFixedDevDisarm();
+bool HdGpuTerrainDevFrame();
+bool HdGpuTerrainDevGeometry(const void* vertexBuf, const void* indexBuf, uint32_t start, uint32_t& firstIndex, int32_t& vertexOffset);
+bool HdGpuMultiDevArm(const HdGpuFixedCpuSpan& span);
 
 namespace {
     namespace cw = HD::CataWater;
@@ -45,6 +69,21 @@ namespace {
     constexpr uint32_t kDisplacements = 0;
     constexpr uint32_t kRippleMaps = 2;       // HD: tranche 2, Cata's dynamic displacement maps (CataRipples.cpp)
     constexpr float kPlaneMatch = 0.25f;   // yards: an instance this close to the mirror's plane takes its reflection
+    // HD L19 (2026-11-03): a chunk batch's sphere centre is the middle of ALL its water (a lake and the stream that
+    // leaves it), not the lake's height, so the batch next to the mirrored one could fall back to the sky reflection:
+    // a straight seam on the lake at the batch border. With hdCataWaterPlaneRange 1 a chunk batch whose water reaches
+    // the plane (its lowest..highest within kPlaneMatch) takes the reflection too, like Cata where every reflecting
+    // water uses the closest plane. Batches taller than kRangeMax (falls, rapids) keep the old test.
+    constexpr float kRangeMax = 3.0f;
+    CVar* s_planeRange = nullptr;
+    CVar* s_waterLog = nullptr;
+    // HD L19: read-only journal Logs\\hd-eau.txt (hdCataWaterLog 1): the water drawn near the camera and why it took
+    // the reflection or not. It changes nothing on screen.
+    struct LogEntry { float x, y, cz, low, high; int haveRange, mesh, oldMirror, mirrored, sky; uint32_t type; };
+    std::vector<LogEntry> s_logEntries;
+    float s_logCamera[3] = {};
+    uint32_t s_logLast = 0;
+    int s_logLines = 0;
     constexpr uint32_t kVertexRows = 53;
     constexpr uint32_t kPixelRows = 32;
     constexpr uint32_t kPixelLowRows = 13;    // the translated pixel modules read c0..c12 from the pixel slice
@@ -73,12 +112,22 @@ namespace {
     char s_lastInfo[256] = "";
 
     // Why an instance keeps the 3.3.5 material: counted in g_gxCataWater.m_kept, which the device logs (Vulkan.log).
+    // Claude BLZ1: why an instance was NOT drawn. There is no 3.3.5 material behind any more: a liquid we cannot draw
+    // is skipped (counted in g_gxCataWater.m_kept, which the device logs in Vulkan.log), and, unless the reason only
+    // lasts the first frames (Proxies, NoCopy, Noise), it is an ERROR in Logs\HdErreurs.txt.
     enum Kept { Kept_Submerged, Kept_Files, Kept_Proxies, Kept_NoCopy, Kept_Type, Kept_Wmo, Kept_Textures, Kept_Constants,
-                Kept_Buffers, Kept_Count };
+                Kept_Buffers, Kept_Service, Kept_Noise, Kept_Count };
     static_assert(Kept_Count <= sizeof(g_gxCataWater.m_kept) / sizeof(g_gxCataWater.m_kept[0]), "GxCataWater::m_kept");
-    bool KeepOld(Kept reason) {
+    bool Skip(Kept reason, const char* text = nullptr) {
         g_gxCataWater.m_kept[reason]++;
-        return false;
+        if (text && reason != Kept_Proxies && reason != Kept_NoCopy && reason != Kept_Noise) {
+            static std::map<std::string, bool> s_reported;
+            if (!s_reported[text]) {
+                s_reported[text] = true;
+                HD::ShaderBuild::Error(text);
+            }
+        }
+        return true;
     }
 
     // A BLP2 of the Cata runtime, kept in memory: its texture's fill callback hands out its levels.
@@ -295,7 +344,7 @@ namespace {
             LoadShader(cw::ShaderKind::Pixel, rippleReal.pixelName, rippleReal.pixel, index, s_ripplePixelReal) &&
             LoadShader(cw::ShaderKind::Pixel, rippleFake.pixelName, rippleFake.pixel, index, s_ripplePixelFake) &&
             LoadShader(cw::ShaderKind::Pixel, rippleNone.pixelName, rippleNone.pixel, index, s_ripplePixelNone);
-        // HD: tranche 4. Optional too: without them the camera in a liquid keeps the 3.3.5 water, as before. Cata never
+        // HD: tranche 4. Without them the camera in a liquid draws no water (Claude BLZ1: an ERROR, no 3.3.5 water). Cata never
         // has a real reflection below (Liquid::HasRealReflection), and the module is the same for all three kinds.
         cw::Permutation below, rippleBelow;
         std::string belowError;
@@ -502,39 +551,331 @@ namespace {
     }
 }
 
+namespace {
+    // HD LV28: a general 4 x 4 inverse in double (Gauss-Jordan, partial pivot); false when singular.
+    bool Invert(const double in[4][4], double out[4][4]) {
+        double a[4][8];
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 8; ++j) a[i][j] = j < 4 ? in[i][j] : (j - 4 == i ? 1.0 : 0.0);
+        for (int c = 0; c < 4; ++c) {
+            int p = c;
+            for (int r = c + 1; r < 4; ++r) if (std::fabs(a[r][c]) > std::fabs(a[p][c])) p = r;
+            if (std::fabs(a[p][c]) < 1e-12) return false;
+            if (p != c) for (int j = 0; j < 8; ++j) std::swap(a[p][j], a[c][j]);
+            const double d = a[c][c];
+            for (int j = 0; j < 8; ++j) a[c][j] /= d;
+            for (int r = 0; r < 4; ++r) if (r != c) { const double f = a[r][c]; for (int j = 0; j < 8; ++j) a[r][j] -= f * a[c][j]; }
+        }
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) out[i][j] = a[i][j + 4];
+        return true;
+    }
+
+    // HD LV28: this water, as its shaders draw it, into this pass's list (g_gxCataWater.m_lampWaters), once per kind.
+    template <class Constants>
+    void NoteLampWater(void* normals, const Constants& k, Liquid::IGeomFactory* factory, const C44Matrix& transform, bool mesh,
+                       const CAaBox& meshBox) {
+        GxCataLampWater e = {};
+        e.normals = normals;
+        for (uint32_t i = 0; i < 16; ++i) { const auto& r = k.vertex[26 + i]; e.rows[i][0] = r.x; e.rows[i][1] = r.y; e.rows[i][2] = r.z; e.rows[i][3] = r.w; }
+        { const auto& r = k.vertex[50]; e.rows[16][0] = r.x; e.rows[16][1] = r.y; e.rows[16][2] = r.z; e.rows[16][3] = r.w; }
+        { const auto& r = k.pixel[23]; e.pixel[0] = r.x; e.pixel[1] = r.y; e.pixel[2] = r.z; e.pixel[3] = r.w; }
+        const auto* meshFactory = mesh ? dynamic_cast<const Liquid::CMeshGeomFactory*>(factory) : nullptr;
+        if (meshFactory && meshFactory->m_mapObjGroup) {
+            // A map object's v3 = 0.24 x (its group-space vertex - the liquid corner).xy, the vertex = world x inverse(instance).
+            const C44Matrix& t = transform;
+            const double m[4][4] = {{t.a0, t.a1, t.a2, t.a3}, {t.b0, t.b1, t.b2, t.b3}, {t.c0, t.c1, t.c2, t.c3}, {t.d0, t.d1, t.d2, t.d3}};
+            double inv[4][4];
+            if (!Invert(m, inv)) return;
+            const C3Vector& corner = meshFactory->m_mapObjGroup->m_liquidCorner;
+            const double cornerXY[2] = {corner.x, corner.y};
+            for (int r = 0; r < 2; ++r) {
+                for (int i = 0; i < 3; ++i) e.uv[r][i] = 0.24 * inv[i][r];
+                e.uv[r][3] = 0.24 * (inv[3][r] - cornerXY[r]);
+            }
+            e.box[0] = meshBox.b.x; e.box[1] = meshBox.b.y; e.box[2] = meshBox.b.z;
+            e.box[3] = meshBox.t.x; e.box[4] = meshBox.t.y; e.box[5] = meshBox.t.z;
+            e.global = 0;
+        } else {
+            e.uv[0][0] = 0.06; e.uv[1][1] = 0.06;   // a chunk's: 0.060000002 x the world x, y (MapChunkLiquid.cpp)
+            e.global = 1;
+        }
+        for (uint32_t i = 0; i < g_gxCataWater.m_lampWaterCount; ++i) {
+            const GxCataLampWater& o = g_gxCataWater.m_lampWaters[i];
+            if (o.global == e.global && o.normals == e.normals && !std::memcmp(o.rows, e.rows, sizeof e.rows) &&
+                !std::memcmp(o.pixel, e.pixel, sizeof e.pixel) && !std::memcmp(o.uv, e.uv, sizeof e.uv) &&
+                !std::memcmp(o.box, e.box, sizeof e.box)) return;
+        }
+        if (g_gxCataWater.m_lampWaterCount < 8) g_gxCataWater.m_lampWaters[g_gxCataWater.m_lampWaterCount++] = e;
+    }
+}
+
 void HD::CataWaterBeginLiquidPass() {
     if (!s_info) {
         s_info = CVar::Register("hdCataWaterInfo", "HD: hdCataWater status (read only)", 0, "off", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     }
+    if (!s_planeRange) {   // HD L19
+        s_planeRange = CVar::Register("hdCataWaterPlaneRange", "HD: 2 = water joined to the reflected water takes the reflection, 1 = only batches touching its height, 0 = old test", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        s_waterLog = CVar::Register("hdCataWaterLog", "HD: water journal Logs\\hd-eau.txt, 1 on / 0 off", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        {static bool hdDef1Once=false;if(!hdDef1Once){hdDef1Once=true;if(s_waterLog&&s_waterLog->m_intValue!=0)s_waterLog->InternalSet("0",true,false,false,false);}} // Claude DEF1: diagnostic journal off at every start (a test never leaves it on)
+    }
+    {   // HD L19: last frame's water, once a second, while hdCataWaterLog is 1
+        const uint32_t now = OsGetAsyncTimeMs();
+        if (s_waterLog && s_waterLog->m_intValue && s_logLines < 6000 && now - s_logLast >= 1000) {
+            s_logLast = now;
+            if (std::FILE* f = std::fopen("Logs\\hd-eau.txt", "a")) {
+                std::fprintf(f, "--- camera %.1f %.1f %.1f | plane %s %.2f | mirror %d | regle plage %d | %u eaux a moins de 120 m\n", s_logCamera[0], s_logCamera[1], s_logCamera[2],
+                             g_gxCataPlane.m_valid ? "a" : "aucun, dernier", g_gxCataPlane.m_height, g_gxCataWater.m_mirror, s_planeRange ? s_planeRange->m_intValue : -1,
+                             static_cast<unsigned>(s_logEntries.size()));
+                s_logLines++;
+                for (const LogEntry& e : s_logEntries) {
+                    if (s_logLines >= 6000) break;
+                    std::fprintf(f, "  centre %.1f %.1f | type %u %s | centre z %.2f | eau %s%.2f..%.2f | ancien test %s | rendu %s\n", e.x, e.y, e.type,
+                                 e.mesh ? "objet" : "chunk", e.cz, e.haveRange ? "" : "(inconnue) ", e.low, e.high,
+                                 e.oldMirror ? "reflet" : "pas de reflet", e.mirrored ? "REFLET" : e.sky ? "CIEL" : "SANS");
+                    s_logLines++;
+                }
+                std::fclose(f);
+            }
+        }
+        s_logEntries.clear();
+        s_logCamera[0] = CWorldScene::s_activeWorldView.x;
+        s_logCamera[1] = CWorldScene::s_activeWorldView.y;
+        s_logCamera[2] = CWorldScene::s_activeWorldView.z;
+    }
     g_gxCataWater.m_ready = 0;
     g_gxCataWater.m_mirror = 0;
+    // Claude BLZ1: the proxy textures exist before the device's BeforeLiquids stages run, so its bridge hands them
+    // over this very frame and the first frame's water is drawn too (it used to be skipped: "proxy textures 1").
+    if (g_gxCataWater.m_enabled && HD::VulkanDevice()) Proxies();
     g_gxCataWater.m_sky = 0;
     FillSky();
     HD::CataRipplesBeginFrame(CWorldScene::s_activeWorldView);   // HD: tranche 2, before the device's stages run
     s_submerged = g_gxCataWater.m_enabled && World::SceneCamLiquidStatus(nullptr) != 0;
+    {   // HD LV27 (hdLvWaterLamps): seen from above, the Cata water writes its depth for the lamp reflections, and the device
+        // keeps the depth before the liquids and puts it back after them (nothing after the water sees its depth).
+        static CVar* waterLamps = nullptr;
+        if (!waterLamps) waterLamps = CVar::LookupRegistered("hdLvWaterLamps");
+        g_gxCataWater.m_keepDepth = (g_gxCataWater.m_enabled && !s_submerged && waterLamps && waterLamps->m_intValue != 0) ? 1 : 0;
+        g_gxCataWater.m_lampWaterCount = 0;   // HD LV28: filled again by this pass's Cata water draws
+    }
     RenderMirroredSky();   // HD: tranche 3, before the device's stages (they read it)
     if (!g_gxCataWater.m_enabled) SetInfo("off");
 }
 
+// Claude voie B, B3 (23 nov 2026), hdGpuWater: the chunks' water in groups. The instances of a list come sorted by material
+// and settings: consecutive chunks with the same settings have the same textures and constants (nothing in them is the
+// chunk's own: its vertices are in the world). They are made once (the Run), each chunk only finds its reflection and its
+// buffers, and consecutive chunks with the same reflection and pools go out as one draw of several commands, in order.
+namespace {
+    struct Run {
+        bool valid = false;
+        bool client = false;   // the environment: a CClientEnvironment, what it says (each chunk has its own)
+        int32_t interiorFog = 0, customLight = 0;
+        const Liquid::CMaterialSettings* settings = nullptr;
+        const cw::LiquidType* type = nullptr;
+        uint32_t liquidType = 0;
+        CGxTex* ramp = nullptr;
+        CGxTex* surface = nullptr;
+        CGxTex* foam = nullptr;
+        cw::MaterialConstants k;
+        bool rippled = false;
+    };
+    Run s_run;
+
+    bool SameEnvironment(const Liquid::IEnvironment* environment) {
+        if (!environment || !s_run.client || typeid(*environment) != typeid(Liquid::CClientEnvironment)) return false;
+        const auto* client = static_cast<const Liquid::CClientEnvironment*>(environment);
+        return client->m_interiorFog == s_run.interiorFog && client->m_customLight == s_run.customLight;
+    }
+
+    struct Waiting {
+        std::vector<uint32_t> args;   // VkDrawIndexedIndirectCommand
+        CGxBuf* vertexBuf = nullptr;
+        CGxBuf* indexBuf = nullptr;
+        CGxBatch batch;
+        std::vector<CGxBatch> batches;                     // the same one by one, should the group not be armed
+        std::vector<std::pair<CGxBuf*, CGxBuf*>> buffers;
+        bool mirrored = false, sky = false;
+        float z = 0.0f;
+    };
+    Waiting s_waiting;
+    CVar* s_gpuWater = nullptr;
+
+    bool GroupWater() {
+        if (!s_gpuWater)
+            s_gpuWater = CVar::Register("hdGpuWater", "HD: the chunks' water drawn in groups (voie B, B3): 0 = the original, 1 = voie B", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        return s_gpuWater && s_gpuWater->m_intValue && HdGpuFixedDevReady() && HdGpuTerrainDevFrame();
+    }
+
+    // The state, textures, shaders and constants of a water draw (the buffers are the caller's).
+    void BindWater(const Run& run, bool mirrored, bool sky) {
+        g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
+        // Claude LV27 2026-11-15 (hdLvWaterLamps, Lumenveil 0.1.1 liquidDepth): seen from above, the water writes its depth so the
+        // pass after the liquids finds its surface for the lamp reflections; 0 = exactly as before (no depth written).
+        // LV27 method B: the device puts the depth before the liquids back after AfterLiquids (g_gxCataWater.m_keepDepth).
+        g_theGxDevicePtr->RsSet(GxRs_DepthWrite, g_gxCataWater.m_keepDepth ? 1 : 0);
+        g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
+        GxUpdateAlphaRef(GxRs_AlphaRef);
+        g_theGxDevicePtr->RsSet(GxRs_Fog, 1);
+
+        CGxTex* sceneColor = static_cast<CGxTex*>(g_gxCataWater.m_proxy[0]);
+        g_theGxDevicePtr->RsSet(GxRs_Texture0, sceneColor);
+        // Cata (CMaterialWater::SetupRender): s1 the mirror for the water it was drawn for, else the sky's reflection.
+        g_theGxDevicePtr->RsSet(GxRs_Texture1, static_cast<CGxTex*>(sky ? g_gxCataWater.m_proxySky : g_gxCataWater.m_proxy[1]));
+        g_theGxDevicePtr->RsSet(GxRs_Texture2, run.ramp);
+        // HD: Cata's blurred back buffer (the device's KawaseBlur, CataSceneCapture.cpp; the sharp copy without it). The
+        // mirrored water's shader does not sample s3.
+        g_theGxDevicePtr->RsSet(GxRs_Texture3, static_cast<CGxTex*>(g_gxCataWater.m_proxyBlur));
+        g_theGxDevicePtr->RsSet(GxRs_Texture5, run.surface);
+        g_theGxDevicePtr->RsSet(GxRs_Texture6, static_cast<CGxTex*>(g_gxCataWater.m_proxy[2]));
+        g_theGxDevicePtr->RsSet(GxRs_Texture7, run.foam);
+
+        // HD: tranche 2, Cata (CMaterialWater::SetupRender, HasDynamicDisplMap): s4 and s8 the maps, the shaders that read them.
+        if (run.rippled) {
+            g_theGxDevicePtr->RsSet(GxRs_Texture4, static_cast<CGxTex*>(g_gxCataRipples.m_proxy[0]));
+            g_theGxDevicePtr->RsSet(GxRs_Texture8, static_cast<CGxTex*>(g_gxCataRipples.m_proxy[1]));
+            g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_rippleVertex);
+            g_theGxDevicePtr->RsSet(GxRs_PixelShader, s_submerged ? s_ripplePixelBelow : mirrored ? s_ripplePixelReal : sky ? s_ripplePixelNone : s_ripplePixelFake);
+        } else {
+            g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_vertex);
+            g_theGxDevicePtr->RsSet(GxRs_PixelShader, s_submerged ? s_pixelBelow : mirrored ? s_pixelReal : sky ? s_pixelNone : s_pixelFake);
+        }
+
+        // The vertex rows first, then the pixel ones: c0..c12 in the pixel slice, c13..c31 in vertex rows 64.. (the
+        // translated modules' contract). The pixel slice's c13 and up are left alone: the device keeps its fog there.
+        g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(run.k.vertex.data()), kVertexRows);
+        g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, reinterpret_cast<const float*>(run.k.pixel.data()), kPixelLowRows);
+        g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, kPixelHighRow, reinterpret_cast<const float*>(run.k.pixel.data() + kPixelLowRows),
+                                             kPixelRows - kPixelLowRows);
+    }
+
+    void DrawWaiting() {
+        Waiting& w = s_waiting;
+        const uint32_t count = static_cast<uint32_t>(w.args.size() / 5);
+        if (!count) return;
+        g_theGxDevicePtr->RsPush();
+        GxPrimVertexPtr(w.vertexBuf, GxVBF_PNCT2);
+        g_theGxDevicePtr->PrimIndexPtr(w.indexBuf);
+        BindWater(s_run, w.mirrored, w.sky);
+        HdGpuFixedCpuSpan span;
+        if (count > 1 && HdGpuFixedDevCpuAlloc(1, 1, count, span)) {
+            memcpy(span.args, w.args.data(), size_t(count) * 20);
+            if (HdGpuMultiDevArm(span)) {
+                g_theGxDevicePtr->Draw(&w.batches.back(), 1);
+                HdGpuFixedDevDisarm();
+                w.args.clear();
+            }
+        }
+        if (!w.args.empty()) {   // one by one
+            for (uint32_t i = 0; i < count; i++) {
+                GxPrimVertexPtr(w.buffers[i].first, GxVBF_PNCT2);
+                g_theGxDevicePtr->PrimIndexPtr(w.buffers[i].second);
+                g_theGxDevicePtr->Draw(&w.batches[i], 1);
+            }
+        }
+        g_theGxDevicePtr->RsPop();
+        w.args.clear();
+        w.batches.clear();
+        w.buffers.clear();
+        if (s_submerged) SetInfo("on: LiquidType %u (%s), seen from below%s", s_run.liquidType, s_run.type->name.c_str(), s_run.rippled ? ", ripples" : "");
+        else if (w.mirrored) SetInfo("on: LiquidType %u (%s), reflection%s", s_run.liquidType, s_run.type->name.c_str(), s_run.rippled ? ", ripples" : "");
+        else SetInfo("on: LiquidType %u (%s), %s%s (water, plane %s %.1f)", s_run.liquidType, s_run.type->name.c_str(),
+                     w.sky ? "sky reflection" : "no reflection", s_run.rippled ? ", ripples" : "", g_gxCataPlane.m_valid ? "at" : "none, last", g_gxCataPlane.m_height);
+    }
+
+    // A chunk's water of the run. False: its buffers are not there (the caller's ordinary path says why).
+    bool QueueWater(Liquid::CChunkGeomFactory* factory, const C44Matrix* transform, const CAaSphere* bounds) {
+        factory->SetTransform(const_cast<C44Matrix*>(transform));
+        // The reflection (CataWaterRender, a chunk's).
+        const float height = bounds->c.z;
+        const bool oldMirror = !s_submerged && g_gxCataWater.m_mirror && g_gxCataPlane.m_valid && fabsf(height - g_gxCataPlane.m_height) < kPlaneMatch;
+        float rangeLow = height, rangeHigh = height;
+        const bool haveRange = HD::CataMirrorInstanceRange(factory, rangeLow, rangeHigh);
+        const int rule = s_planeRange ? s_planeRange->m_intValue : 0;
+        const bool canMirror = !oldMirror && haveRange && !s_submerged && g_gxCataWater.m_mirror && g_gxCataPlane.m_valid;
+        const bool rangeMirror = canMirror && ((rule == 1 && rangeHigh - rangeLow <= kRangeMax &&
+                                 g_gxCataPlane.m_height >= rangeLow - kPlaneMatch && g_gxCataPlane.m_height <= rangeHigh + kPlaneMatch) ||
+                                 (rule >= 2 && HD::CataMirrorInChain(factory)));
+        const bool mirrored = oldMirror || rangeMirror;
+        const bool sky = !s_submerged && !mirrored && g_gxCataWater.m_sky && s_pixelNone;
+
+        // Buffers about to be filled (locked): what waits is drawn first.
+        if (!factory->m_buf || factory->m_format != GxVBF_PNCT2 || factory->m_dirty || !factory->m_buf->Valid()) DrawWaiting();
+        CGxBuf* vertexBuf = nullptr;
+        CGxBuf* indexBuf = nullptr;
+        CGxBatch batch;
+        batch.m_primType = GxPrims_Last;
+        batch.m_start = 0;
+        batch.m_count = 0;
+        batch.m_minIndex = 0;
+        batch.m_maxIndex = 0;
+        factory->GetBuffers(GxVBF_PNCT2, &vertexBuf, &indexBuf, &batch);
+        if (!vertexBuf || !indexBuf || !batch.m_count) return false;
+        uint32_t firstIndex = 0;
+        int32_t vertexOffset = 0;
+        if (!HdGpuTerrainDevGeometry(vertexBuf, indexBuf, batch.m_start, firstIndex, vertexOffset)) return false;
+
+        Waiting& w = s_waiting;
+        if (!w.args.empty() && (w.mirrored != mirrored || w.sky != sky || w.batches.back().m_primType != batch.m_primType ||
+                                w.vertexBuf->m_pool != vertexBuf->m_pool || w.indexBuf->m_pool != indexBuf->m_pool)) DrawWaiting();
+        w.mirrored = mirrored;
+        w.sky = sky;
+        w.vertexBuf = vertexBuf;
+        w.indexBuf = indexBuf;
+        const uint32_t args[5] = {batch.m_count, 1u, firstIndex, static_cast<uint32_t>(vertexOffset), 0u};
+        w.args.insert(w.args.end(), args, args + 5);
+        w.batches.push_back(batch);
+        w.buffers.emplace_back(vertexBuf, indexBuf);
+        g_gxCataWater.m_drawn++;
+
+        if (s_waterLog && s_waterLog->m_intValue && s_logEntries.size() < 64) {   // HD L19: journal only
+            const float dx = bounds->c.x - s_logCamera[0], dy = bounds->c.y - s_logCamera[1];
+            if (dx * dx + dy * dy < 120.0f * 120.0f) {
+                LogEntry e{bounds->c.x, bounds->c.y, bounds->c.z, rangeLow, rangeHigh, haveRange ? 1 : 0, 0, oldMirror ? 1 : 0, mirrored ? 1 : 0, sky ? 1 : 0, s_run.liquidType};
+                s_logEntries.push_back(e);
+            }
+        }
+        return true;
+    }
+}
+
+void HD::CataWaterFlush() {
+    DrawWaiting();
+    s_run.valid = false;
+}
+
 bool HD::CataWaterRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, const C3Vector& cameraPos,
                          const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
-    if (!g_gxCataWater.m_enabled || !HD::VulkanDevice() || !environment || !geomFactory || !transform || !bounds || !settings) return false;
-    if (!LoadOnce()) return KeepOld(Kept_Files);
+    if (!HD::VulkanDevice()) return false; // Claude BLZ1: only the legacy D3D9 / OpenGL devices draw the 3.3.5 liquids
+    auto* const chunk = geomFactory && typeid(*geomFactory) == typeid(Liquid::CChunkGeomFactory)   // Claude B3
+                            ? static_cast<Liquid::CChunkGeomFactory*>(geomFactory) : nullptr;
+    if (s_run.valid && chunk && transform && bounds && settings == s_run.settings && SameEnvironment(environment) &&
+        QueueWater(chunk, transform, bounds)) return true;
+    HD::CataWaterFlush();
+    if (!environment || !geomFactory || !transform || !bounds || !settings) return Skip(Kept_Buffers, "ERROR: water: an instance without environment, geometry, transform, bounds or settings");
+    if (!g_gxCataWater.m_enabled) { SetInfo("ERROR: the Cata water services are not up: water not drawn"); return Skip(Kept_Service, "ERROR: water: the Cata water services (CataWaterService) are not up"); }
+    if (!LoadOnce()) return Skip(Kept_Files, "ERROR: water: the Cata water files or shaders did not load (CataWater\\, see hdCataWaterInfo)");
+    {   // Claude BLZ1: the liquid goes to the Cata material its Cata row names (Orange Slime, Coilfang and Hyjal water are
+        // 3.3.5 material 1 but Cata water; a magma row is Cata magma whatever material called us).
+        const cw::LiquidType* row = s_types.Find(LiquidTypeOf(settings));
+        if (row && row->material == 2) return HD::CataMagmaRender(environment, geomFactory, cameraPos, transform, bounds, settings);
+    }
     // HD: tranche 4, Cata's Below shader when the camera is in a liquid (CMaterialWater::SetupRender, CameraSubmerged).
-    if (s_submerged && !s_pixelBelow) { SetInfo("camera in a liquid: 3.3.5 water (CataProcWaterBelow not loaded)"); return KeepOld(Kept_Submerged); }
+    if (s_submerged && !s_pixelBelow) { SetInfo("ERROR: camera in a liquid: CataProcWaterBelow not loaded, water not drawn"); return Skip(Kept_Submerged, "ERROR: water: CataProcWaterBelow not loaded (camera in a liquid)"); }
     const bool proxiesBefore = g_gxCataWater.m_proxy[0] && g_gxCataWater.m_proxy[1] && g_gxCataWater.m_proxy[2] && g_gxCataWater.m_proxySky &&
                                g_gxCataWater.m_proxyBlur && g_gxCataRipples.m_proxy[0] && g_gxCataRipples.m_proxy[1];
     if (!Proxies() || !proxiesBefore) {   // made this frame: the bridge hands them over from the next one
-        SetInfo("the proxy textures are not ready yet");
-        return KeepOld(Kept_Proxies);
+        SetInfo("the proxy textures are not ready yet (first frame): water not drawn");
+        return Skip(Kept_Proxies);
     }
-    if (!g_gxCataWater.m_ready) { SetInfo("no scene copy this frame: 3.3.5 water"); return KeepOld(Kept_NoCopy); }
+    if (!g_gxCataWater.m_ready) { SetInfo("no scene copy this frame: water not drawn"); return Skip(Kept_NoCopy); }
 
     const uint32_t liquidType = LiquidTypeOf(settings);
     const cw::LiquidType* type = cw::ResolveType(s_types, liquidType, {});
-    if (!type || type->material != 1) {   // magma, slime, Cata's other materials: 3.3.5
-        SetInfo("LiquidType %u is not a Cata water (material 1) row: 3.3.5 water", liquidType);
-        return KeepOld(Kept_Type);
+    if (!type) {   // Claude BLZ1: a liquid type Cata has no water row for: an ERROR, not drawn
+        SetInfo("ERROR: LiquidType %u has no Cata water row: not drawn", liquidType);
+        char text[160];
+        snprintf(text, sizeof(text), "ERROR: water: LiquidType %u has no Cata water row (CataWater\\DBFilesClient\\LiquidType.dbc)", liquidType);
+        return Skip(Kept_Type, text);
     }
 
     // A chunk's factory bakes the transform into its vertices (SetTransform true: identity model); a map object's
@@ -547,17 +888,31 @@ bool HD::CataWaterRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory
     CGxTex* surface = BlpTexture(type->textures[2]);
     CGxTex* foam = BlpTexture(type->textures[3]);
     if (!ramp || !surface || !foam) {
-        if (!ramp) SetInfo("LiquidType %u: no depth ramp texture (%s)", liquidType, type->textures[1].c_str());
-        else if (!surface || !foam) SetInfo("LiquidType %u: surface or foam texture not loaded (%s, %s)", liquidType,
+        if (!ramp) SetInfo("ERROR: LiquidType %u: no depth ramp texture (%s)", liquidType, type->textures[1].c_str());
+        else if (!surface || !foam) SetInfo("ERROR: LiquidType %u: surface or foam texture not loaded (%s, %s)", liquidType,
                                             type->textures[2].c_str(), type->textures[3].c_str());
-        return KeepOld(Kept_Textures);
+        char text[200];
+        snprintf(text, sizeof(text), "ERROR: water: LiquidType %u: a texture did not load (ramp %s, surface %s, foam %s)", liquidType,
+                 type->textures[1].c_str(), type->textures[2].c_str(), type->textures[3].c_str());
+        return Skip(Kept_Textures, text);
     }
 
     // The water's height: a map object's from its group (the bounds are the whole group's sphere), a chunk's from them.
     CAaBox meshBox;
     const bool mesh = HD::CataMirrorMeshWaterBox(geomFactory, *transform, meshBox);
     const float height = mesh ? (meshBox.b.z + meshBox.t.z) * 0.5f : bounds->c.z;
-    const bool mirrored = !s_submerged && g_gxCataWater.m_mirror && g_gxCataPlane.m_valid && fabsf(height - g_gxCataPlane.m_height) < kPlaneMatch;
+    const bool oldMirror = !s_submerged && g_gxCataWater.m_mirror && g_gxCataPlane.m_valid && fabsf(height - g_gxCataPlane.m_height) < kPlaneMatch;
+    // HD L19: a chunk batch whose water reaches the plane takes the reflection too (see kRangeMax).
+    float rangeLow = height, rangeHigh = height;
+    const bool haveRange = !mesh && HD::CataMirrorInstanceRange(geomFactory, rangeLow, rangeHigh);
+    const int rule = s_planeRange ? s_planeRange->m_intValue : 0;
+    const bool canMirror = !oldMirror && haveRange && !s_submerged && g_gxCataWater.m_mirror && g_gxCataPlane.m_valid;
+    // 1 (L19): the batch's own water reaches the plane. 2 (L19b): the batch is joined to the plane's water by its
+    // neighbours (HdCataMirror.cpp, CataMirrorInChain): the whole stream out of the lake, no seam half way up.
+    const bool rangeMirror = canMirror && ((rule == 1 && rangeHigh - rangeLow <= kRangeMax &&
+                             g_gxCataPlane.m_height >= rangeLow - kPlaneMatch && g_gxCataPlane.m_height <= rangeHigh + kPlaneMatch) ||
+                             (rule >= 2 && HD::CataMirrorInChain(geomFactory)));
+    const bool mirrored = oldMirror || rangeMirror;
 
     // Constants: what Cata's SetupRender, SetupLighting and SetInstanceTransform put in s_vsConsts / s_psConsts.
     C44Matrix view;
@@ -587,7 +942,32 @@ bool HD::CataWaterRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory
     if (!cw::SetMaterialConstants(k, *type, OsGetAsyncTimeMs(), camera, Liquid::WorldCoordScale(), 1.0f, relative, displacement, error) ||
         !SetScreen(k, error)) {
         SetInfo("ERROR: LiquidType %u: %s", liquidType, error.c_str());
-        return KeepOld(Kept_Constants);
+        char text[300];
+        snprintf(text, sizeof(text), "ERROR: water: LiquidType %u: %s", liquidType, error.c_str());
+        return Skip(Kept_Constants, text);
+    }
+
+    // HD: tranche 2, Cata (CMaterialWater::SetupRender, HasDynamicDisplMap).
+    const bool rippled = displacement.size() == kRippleMaps && (!s_submerged || s_ripplePixelBelow);
+    s_run.client = typeid(*environment) == typeid(Liquid::CClientEnvironment);   // Claude B3
+    if (s_run.client) {
+        s_run.interiorFog = static_cast<const Liquid::CClientEnvironment*>(environment)->m_interiorFog;
+        s_run.customLight = static_cast<const Liquid::CClientEnvironment*>(environment)->m_customLight;
+    }
+    s_run.settings = settings;
+    s_run.type = type;
+    s_run.liquidType = liquidType;
+    s_run.ramp = ramp;
+    s_run.surface = surface;
+    s_run.foam = foam;
+    s_run.k = k;
+    s_run.rippled = rippled;
+    if (chunk && identity && GroupWater()) {   // the list's next chunks with these settings join it
+        if (QueueWater(chunk, transform, bounds)) {
+            s_run.valid = true;
+            NoteLampWater(surface, k, geomFactory, *transform, mesh, meshBox);   // a chunk's says nothing of the chunk itself
+            return true;
+        }
     }
 
     g_theGxDevicePtr->RsPush();
@@ -604,49 +984,25 @@ bool HD::CataWaterRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory
     geomFactory->GetBuffers(GxVBF_PNCT2, &vertexBuf, &indexBuf, &batch);
     if (!vertexBuf || !indexBuf || !batch.m_count) {
         g_theGxDevicePtr->RsPop();
-        SetInfo("LiquidType %u: the chunk gave no vertices in Cata's format", liquidType);
-        return KeepOld(Kept_Buffers);
+        SetInfo("ERROR: LiquidType %u: the chunk gave no vertices in Cata's format", liquidType);
+        char text[160];
+        snprintf(text, sizeof(text), "ERROR: water: LiquidType %u: an instance gave no vertices in Cata's format", liquidType);
+        return Skip(Kept_Buffers, text);
     }
     GxPrimVertexPtr(vertexBuf, GxVBF_PNCT2);
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);
 
-    g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
-    g_theGxDevicePtr->RsSet(GxRs_DepthWrite, 0);
-    g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
-    GxUpdateAlphaRef(GxRs_AlphaRef);
-    g_theGxDevicePtr->RsSet(GxRs_Fog, 1);
-
-    CGxTex* sceneColor = static_cast<CGxTex*>(g_gxCataWater.m_proxy[0]);
-    g_theGxDevicePtr->RsSet(GxRs_Texture0, sceneColor);
-    // Cata (CMaterialWater::SetupRender): s1 the mirror for the water it was drawn for, else the sky's reflection.
     const bool sky = !s_submerged && !mirrored && g_gxCataWater.m_sky && s_pixelNone;
-    g_theGxDevicePtr->RsSet(GxRs_Texture1, static_cast<CGxTex*>(sky ? g_gxCataWater.m_proxySky : g_gxCataWater.m_proxy[1]));
-    g_theGxDevicePtr->RsSet(GxRs_Texture2, ramp);
-    // HD: Cata's blurred back buffer (the device's KawaseBlur, CataSceneCapture.cpp; the sharp copy without it). The
-    // mirrored water's shader does not sample s3.
-    g_theGxDevicePtr->RsSet(GxRs_Texture3, static_cast<CGxTex*>(g_gxCataWater.m_proxyBlur));
-    g_theGxDevicePtr->RsSet(GxRs_Texture5, surface);
-    g_theGxDevicePtr->RsSet(GxRs_Texture6, static_cast<CGxTex*>(g_gxCataWater.m_proxy[2]));
-    g_theGxDevicePtr->RsSet(GxRs_Texture7, foam);
-
-    // HD: tranche 2, Cata (CMaterialWater::SetupRender, HasDynamicDisplMap): s4 and s8 the maps, the shaders that read them.
-    const bool rippled = displacement.size() == kRippleMaps && (!s_submerged || s_ripplePixelBelow);
-    if (rippled) {
-        g_theGxDevicePtr->RsSet(GxRs_Texture4, static_cast<CGxTex*>(ripples.m_proxy[0]));
-        g_theGxDevicePtr->RsSet(GxRs_Texture8, static_cast<CGxTex*>(ripples.m_proxy[1]));
-        g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_rippleVertex);
-        g_theGxDevicePtr->RsSet(GxRs_PixelShader, s_submerged ? s_ripplePixelBelow : mirrored ? s_ripplePixelReal : sky ? s_ripplePixelNone : s_ripplePixelFake);
-    } else {
-        g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_vertex);
-        g_theGxDevicePtr->RsSet(GxRs_PixelShader, s_submerged ? s_pixelBelow : mirrored ? s_pixelReal : sky ? s_pixelNone : s_pixelFake);
+    if (s_waterLog && s_waterLog->m_intValue && s_logEntries.size() < 64) {   // HD L19: journal only
+        const float dx = bounds->c.x - s_logCamera[0], dy = bounds->c.y - s_logCamera[1];
+        if (dx * dx + dy * dy < 120.0f * 120.0f) {
+            LogEntry e{bounds->c.x, bounds->c.y, bounds->c.z, mesh ? meshBox.b.z : rangeLow, mesh ? meshBox.t.z : rangeHigh, haveRange || mesh ? 1 : 0,
+                       mesh ? 1 : 0, oldMirror ? 1 : 0, mirrored ? 1 : 0, sky ? 1 : 0, liquidType};
+            s_logEntries.push_back(e);
+        }
     }
-
-    // The vertex rows first, then the pixel ones: c0..c12 in the pixel slice, c13..c31 in vertex rows 64.. (the
-    // translated modules' contract). The pixel slice's c13 and up are left alone: the device keeps its fog there.
-    g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(k.vertex.data()), kVertexRows);
-    g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, reinterpret_cast<const float*>(k.pixel.data()), kPixelLowRows);
-    g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, kPixelHighRow, reinterpret_cast<const float*>(k.pixel.data() + kPixelLowRows),
-                                         kPixelRows - kPixelLowRows);
+    BindWater(s_run, mirrored, sky);
+    NoteLampWater(surface, k, geomFactory, *transform, mesh, meshBox);   // HD LV28: for the lamp reflections
 
     g_theGxDevicePtr->Draw(&batch, 1);
     g_theGxDevicePtr->RsPop();
@@ -675,7 +1031,6 @@ namespace {
     CGxShader* s_magmaPixel = nullptr;
     std::vector<uint8_t> s_noiseBytes;
     CTexture* s_noise = nullptr;
-    CVar* s_magma = nullptr;
     CVar* s_magmaInfo = nullptr;
     char s_magmaLastInfo[256] = "";
 
@@ -779,22 +1134,23 @@ namespace {
 
 bool HD::CataMagmaRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, const C3Vector& cameraPos,
                          const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
-    if (!s_magma) {
-        s_magma = CVar::Register("hdCataMagma", "HD: 1 = Cata 4.3.4 lava and slime (Vulkan), 0 = the 3.3.5 ones", 1, "1", nullptr,
-                                 CATEGORY_GRAPHICS, false, nullptr, false);
+    if (!s_magmaInfo) { // AR1: Cata lava and slime always on (no hdCataMagma)
         s_magmaInfo = CVar::Register("hdCataMagmaInfo", "HD: hdCataMagma status (read only)", 0, "off", nullptr, CATEGORY_GRAPHICS,
                                      false, nullptr, false);
     }
-    if (!s_magma || s_magma->m_intValue != 1) { MagmaInfo("off"); return false; }
-    if (!HD::VulkanDevice()) { MagmaInfo("off: Vulkan only (gxApi vulkan)"); return false; }
-    if (!environment || !geomFactory || !transform || !bounds || !settings) return false;
-    if (!MagmaLoadOnce()) return false;
+    if (!HD::VulkanDevice()) { MagmaInfo("off: Vulkan only (gxApi vulkan)"); return false; } // Claude BLZ1: legacy devices only
+    if (!environment || !geomFactory || !transform || !bounds || !settings) return Skip(Kept_Buffers, "ERROR: magma: an instance without environment, geometry, transform, bounds or settings");
+    HD::CataWaterFlush();   // Claude B3: the water before it
+    if (!MagmaLoadOnce()) return Skip(Kept_Files, "ERROR: magma: the Cata magma files or shaders did not load (CataWater\\, see hdCataMagmaInfo)");
 
     const uint32_t liquidType = LiquidTypeOf(settings);
     const cw::LiquidType* type = s_magmaTypes.Find(liquidType);
+    if (type && type->IsWater()) return HD::CataWaterRender(environment, geomFactory, cameraPos, transform, bounds, settings); // Claude BLZ1
     if (!type || type->material != 2) {
-        MagmaInfo("LiquidType %u is not a Cata magma (material 2) row: 3.3.5 magma", liquidType);
-        return false;
+        MagmaInfo("ERROR: LiquidType %u has no Cata magma row: not drawn", liquidType);
+        char text[160];
+        snprintf(text, sizeof(text), "ERROR: magma: LiquidType %u has no Cata row (CataWater\\DBFilesClient\\LiquidType.dbc)", liquidType);
+        return Skip(Kept_Type, text);
     }
 
     // Cata SetupRender: s0 the noise volume, s1..s3 settings textures 1..3 (the row's layers, no extension in the DBC).
@@ -803,12 +1159,14 @@ bool HD::CataMagmaRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory
         const std::string& name = type->textures[i + 1];
         layers[i] = name.empty() ? nullptr : BlpTexture(name + ".blp");
         if (!layers[i]) {
-            MagmaInfo("LiquidType %u: layer %u not loaded (CataWater\\Textures\\%s.blp)", liquidType, i + 1, name.c_str());
-            return false;
+            MagmaInfo("ERROR: LiquidType %u: layer %u not loaded (CataWater\\Textures\\%s.blp)", liquidType, i + 1, name.c_str());
+            char text[200];
+            snprintf(text, sizeof(text), "ERROR: magma: LiquidType %u: layer %u not loaded (CataWater\\Textures\\%s.blp)", liquidType, i + 1, name.c_str());
+            return Skip(Kept_Textures, text);
         }
     }
     CGxTex* noise = TextureGetGxTex(s_noise, 1, nullptr);
-    if (!noise) { MagmaInfo("the noise texture is not ready yet"); return false; }
+    if (!noise) { MagmaInfo("the noise texture is not ready yet (first frames): not drawn"); return Skip(Kept_Noise); }
 
     // Constants: Cata's SetupLighting, SetInstanceTransform (a chunk's factory bakes the transform: identity model) and
     // SetupRender.
@@ -872,8 +1230,10 @@ bool HD::CataMagmaRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory
     geomFactory->GetBuffers(GxVBF_PCT, &vertexBuf, &indexBuf, &batch);
     if (!vertexBuf || !indexBuf || !batch.m_count) {
         g_theGxDevicePtr->RsPop();
-        MagmaInfo("LiquidType %u: the instance gave no vertices", liquidType);
-        return false;
+        MagmaInfo("ERROR: LiquidType %u: the instance gave no vertices", liquidType);
+        char text[160];
+        snprintf(text, sizeof(text), "ERROR: magma: LiquidType %u: an instance gave no vertices", liquidType);
+        return Skip(Kept_Buffers, text);
     }
     GxPrimVertexPtr(vertexBuf, GxVBF_PCT);
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);

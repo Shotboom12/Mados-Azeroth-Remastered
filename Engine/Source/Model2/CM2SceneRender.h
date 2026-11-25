@@ -64,6 +64,7 @@ class CM2SceneRender {
     uint32_t DrawBatchedParticle(uint32_t index, M2Element* elements, uint32_t* indices, uint32_t count);
     void DrawBatchDoodad(M2Element* elements, uint32_t* indices);
     void DrawBatchProj();
+    void HdDrawGpuScene(); // Claude B2
     void DrawCallback();
     uint32_t DrawParticle(uint32_t index, M2Element* elements, uint32_t* indices, uint32_t count);
     void DrawRibbon();

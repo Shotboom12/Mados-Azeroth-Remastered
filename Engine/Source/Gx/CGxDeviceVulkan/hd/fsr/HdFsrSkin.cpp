@@ -78,7 +78,7 @@ DrawData Effect::Record(const wxlvk::draw::Cmd&c,const float misc[4]){
  Input input{c.pixelConst,misc,c.vertexRows,c.paletteRows,Rigid::SkeletonRows(),c.paletteSerial};const auto observation=s->cache.Observe(Rigid::SkeletonOwner(),Rigid::SkeletonPart(),s->frame.serial,input);data.cookie=observation.cookie;
  if(observation.captured){++s->stats.captures;s->stats.cpuBytes+=observation.bytesCopied;}
  if(observation.result==Result::Conflict){++s->stats.conflicts;s->safe=false;Rigid::UnsafeFrame();return data;}
- if(observation.result==Result::Shared){++s->stats.conflicts;return data;} // HD 2026-10-31: camera-only draw, the frame stays safe
+ if(observation.result==Result::Shared){++s->stats.conflicts;return data;} // Claude 2026-10-31: camera-only draw, the frame stays safe
  if(observation.result==Result::Full){++s->stats.cacheFull;return data;}
  if(observation.result==Result::Invalid){++s->stats.invalid;return data;}
  if(!observation.previous){++s->stats.first;return data;}

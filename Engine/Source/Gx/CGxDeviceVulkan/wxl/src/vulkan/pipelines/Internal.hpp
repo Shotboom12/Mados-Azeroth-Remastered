@@ -119,7 +119,7 @@ namespace wxlvk::vk::pipelines::detail
     /// The pipeline cache file beside the DLL (src/common/ModulePath.hpp), and the
     /// largest blob it is trusted with (a session's few hundred pipelines are a few MiB at most).
     constexpr const char* kCacheFile     = "pipeline-cache.bin";
-    constexpr size_t      kCacheMaxBytes = 64u * 1024u * 1024u;
+    constexpr size_t      kCacheMaxBytes = 256u * 1024u * 1024u;   // Claude B3: was 64 MiB, full since B2
 
     /// The most samplers the cache holds. The key below has 6 filters x 4 wrap combinations x the
     /// anisotropy bits, and the world variant of the mipmapped ones; the UI uses two or three of them,
@@ -253,12 +253,14 @@ namespace wxlvk::vk::pipelines::detail
     /// again rather than written (State::LastSlice), so a frame rarely needs all of it.
     constexpr uint32_t kRingBytes = 8u * 1024u * 1024u;
 
-    /// How many more ring buffers, and how many more descriptor pools, one frame slot may spill
-    /// into when a frame outgrows the first. Every draw of a frame is recorded as it arrives, so an
-    /// in-world frame -- several thousand draws, about a third of them in the 256-row class -- would
-    /// otherwise skip its tail. Made on first use, kept for the session, rewound with the slot.
-    constexpr uint32_t kRingSpill = 3;
-    constexpr uint32_t kPoolSpill = 3;
+    /// Claude RING1 (18 nov 2026): a frame slot spills into as many more ring buffers, and as many
+    /// more descriptor pools, as its frame needs -- no fixed count. Every draw of a frame is recorded
+    /// as it arrives, and a draw that found no room was skipped: with the old fixed 3 spills (32 MiB
+    /// of uniforms per frame), an Extreme-distance frame at Darkshire (thousands of sun-shadow draws
+    /// of animated trees and characters, each a 256-row slice) filled them all during the shadow
+    /// bands, and every later draw of that frame -- the whole world and the minimap -- was skipped
+    /// (the "For Ever colour flickering to grey"). Made on first use, kept for the session, rewound
+    /// with the slot, so a frame's room only ever grows to the busiest frame's need.
 
     // --- the bone-palette ring ----------------------------------------------------------------
     //
@@ -272,8 +274,9 @@ namespace wxlvk::vk::pipelines::detail
     // last one the slot wrote, and every draw until the next change binds that offset. The range is
     // the whole b[] (kBoneRange), so a write needs that much room ahead of the cursor; a frame that
     // runs the ring dry draws its remaining 256-row draws through the 256-row modules (the key's
-    // `bones` bit is 0 then). 4 MiB per slot holds about 1100 palette changes a frame.
-    constexpr uint32_t kBoneRingBytes = 4u * 1024u * 1024u;
+    // `bones` bit is 0 then). 8 MiB per slot holds about 2300 palette changes a frame (Claude P2 2026-11-05: 4 MiB ran
+    // dry at ~1100 in Elwynn at view 4, ~586 draws a frame fell back to the 256-row modules).
+    constexpr uint32_t kBoneRingBytes = 8u * 1024u * 1024u;
     constexpr uint32_t kBoneRange     = manifest::kBoneRows * 16u;
     static_assert(Cmd::kPaletteBase == manifest::kBoneBase, "the reader's palette base is the variant's b[0]");
 
@@ -413,6 +416,7 @@ namespace wxlvk::vk::pipelines::detail
         /// (the wind's values, then the light's matrix); made on first use (src/capture/).
         VkPipelineLayout      windShadow      = VK_NULL_HANDLE;
         VkPipelineLayout      windShadowBones = VK_NULL_HANDLE;
+        VkPipelineLayout      table = VK_NULL_HANDLE;   ///< Claude B3: set 0, set 1, the rows' set 2 and the texture table's set 3; made on first use
     };
 
     /// One pipeline, for one key, built against one render pass.
@@ -435,6 +439,7 @@ namespace wxlvk::vk::pipelines::detail
         bool         dynamicBlend = false; ///< blend mode 11 and VK_DYNAMIC_STATE_BLEND_CONSTANTS: Record() sets the Cmd's factor
         uint32_t     streams      = 1;     ///< vertex bindings the pipeline declares (1 + the Cmd's extraStreams)
         bool         bones        = false; ///< built from the vertex module's bone-palette variant: 64-row slice, palette in set 2
+        bool         table        = false; ///< Claude B3: the terrain's .gput twins: the chunks' rows in set 2 (`bones` too), the texture table in set 3
         bool         wind         = false; ///< built from the vertex module's tree-wind variant: set 3 and the push range
         bool         gbuf         = false; ///< built from the modules' G-buffer variants (tools/gbuffer): the pass's three extra attachments written
 #ifdef WOWDECOMP_FSR
@@ -445,6 +450,8 @@ namespace wxlvk::vk::pipelines::detail
         bool         constStream  = false; ///< a stride-0 binding at index `streams` feeds the attributes the layout lacks (State::constVb)
         bool         prewarmed    = false; ///< built at bring-up from the persisted key list, not yet checked against a draw (VerifyPrewarmed)
         const char*  why          = nullptr; ///< a failed entry: why the build failed (static text)
+        uint32_t     failedGeneration = 0; ///< Claude 2026-11-05 lot SOL1: a failed entry: translated::Generation() when its build was tried
+        uint32_t     builtGeneration  = 0; ///< Claude PIPE1: a built entry: translated::Generation() when its sources were last resolved (VerifySources)
         const ShaderRow* row      = nullptr; ///< the hand-written row, when that was the source
         const manifest::Record* vrec = nullptr; ///< the translated vertex record, for the log
         const manifest::Record* prec = nullptr; ///< the translated pixel record, for the log
@@ -499,12 +506,17 @@ namespace wxlvk::vk::pipelines::detail
         uint32_t         padded256                                    = kSliceBytes256; ///< a class-256 slice at ringAlign
 
         // What a frame spills into once its ring buffer or its descriptor pool
-        // is full (kRingSpill / kPoolSpill). Index 0 of ringActive / poolActive is the slot's own.
-        memory::Buffer   ringSpill[wxlvk::vk::pipelines::kFrameSlots][kRingSpill];
-        VkDescriptorSet  ringSpillSets[wxlvk::vk::pipelines::kFrameSlots][kRingSpill] = {};
-        VkDescriptorPool ringSpillPool                                = VK_NULL_HANDLE;
+        // is full. Index 0 of ringActive / poolActive is the slot's own.
+        // Claude RING1: grown on demand, no fixed count. Each ring spill has its own one-set pool.
+        std::vector<memory::Buffer>   ringSpill[wxlvk::vk::pipelines::kFrameSlots];
+        std::vector<VkDescriptorSet>  ringSpillSets[wxlvk::vk::pipelines::kFrameSlots];
+        std::vector<VkDescriptorPool> ringSpillPools[wxlvk::vk::pipelines::kFrameSlots];
         uint32_t         ringActive[wxlvk::vk::pipelines::kFrameSlots] = {};
-        VkDescriptorPool poolSpill[wxlvk::vk::pipelines::kFrameSlots][kPoolSpill] = {};
+        std::vector<VkDescriptorPool> poolSpill[wxlvk::vk::pipelines::kFrameSlots];
+        /// Claude PIPE1: pipelines replaced by VerifySources, with the BeginFrame() calls left before
+        /// they are destroyed (a frame still in flight may have recorded them).
+        struct Retired { VkPipeline pipeline; uint32_t framesLeft; };
+        std::vector<Retired> retired;
         uint32_t         poolActive[wxlvk::vk::pipelines::kFrameSlots] = {};
 
         // The bone-palette ring (kBoneRingBytes): set 2's layout, one buffer, one set and one
@@ -517,6 +529,12 @@ namespace wxlvk::vk::pipelines::detail
         memory::Buffer        boneRing[wxlvk::vk::pipelines::kFrameSlots];
         uint32_t              boneCursor[wxlvk::vk::pipelines::kFrameSlots] = {};
         uint32_t              boneAlign   = 1;
+        // Claude OS2: each slot's ring size (kBoneRingBytes at bring-up), and the bytes its frame asked for
+        // past that size (palettes refused, drawn on the 256-row module). BeginFrame grows the slot's ring
+        // to fit them once the slot's fence has been waited on: the next frames all take the palette path.
+        uint32_t              boneBytes[wxlvk::vk::pipelines::kFrameSlots]  = {};
+        uint32_t              boneWanted[wxlvk::vk::pipelines::kFrameSlots] = {};
+        uint32_t              boneGrowths = 0;
         struct LastPalette
         {
             bool     valid  = false;
@@ -576,7 +594,16 @@ namespace wxlvk::vk::pipelines::detail
         uint64_t    boundSerial                  = 0;
         uint32_t    boundCount                   = 0;
         bool        boundValid                   = false;
+        uint32_t    boundOwn                     = 0;       // Claude INST1-CUBES: the section's bone count the bound was made with (0: the palette's)
         float       boundValue[4]                = {};
+        // Claude PERF2/PREUVE1: the exact bound's own cache (the palette, its count and the section's bones and reach).
+        uint64_t    exactSerial                  = 0;
+        uint32_t    exactCount                   = 0;
+        uint32_t    exactBones                   = 0;
+        float       exactReach                   = 0.0f;
+        bool        exactValid                   = false;
+        bool        exactFound                   = false;
+        float       exactValue[4]                = {};
 
         /// The constant vertex stream (kConstVbBytes); VK_NULL_HANDLE when it could not be made,
         /// and then a row that needs it is not built.
@@ -644,6 +671,7 @@ namespace wxlvk::vk::pipelines::detail
             uint32_t         set1Offset = 0;
             VkDescriptorSet  set2      = VK_NULL_HANDLE;   ///< the palette ring, valid with set2Offset while not null
             uint32_t         set2Offset = 0;
+            VkDescriptorSet  set3      = VK_NULL_HANDLE;   ///< Claude B3: the texture table (a wind draw binds its own through another layout)
             bool             viewport  = false;
             bool             scissor   = false;
             bool             bias      = false;
@@ -709,6 +737,8 @@ namespace wxlvk::vk::pipelines::detail
     extern SetCache g_setCache[wxlvk::vk::pipelines::kFrameSlots];
 
     VkPipelineLayout BonesLayoutFor(uint32_t index);
+    VkPipelineLayout TableLayoutFor(uint32_t index);   // Claude B3 (Table.cpp)
+    void DropTable(const loader::Device& d, VkDevice device);
 #ifdef WOWDECOMP_FSR
     VkPipelineLayout SkinLayoutFor(uint32_t index);
     VkPipelineLayout MotionWindLayoutFor(uint32_t index,bool bones);
@@ -849,11 +879,13 @@ namespace wxlvk::vk::pipelines::detail
     bool SpillPool(uint32_t slot);
     bool CreateRing(const context::Handles& h);
     void CreateBones(const context::Handles& h);
+    bool GrowBones(uint32_t slot, uint32_t bytes);   // Claude OS2
 
     // Cache.cpp
     void LoadPipelineCache(const context::Handles& h);
     void LoadKeys();
-    void SaveKeys();
+    void BuildKeys(std::vector<uint8_t>& blob);   // Claude SAUV1: the bytes of pipeline-keys.bin
+    const char* KeysFile();
     void Prewarm(VkRenderPass pass, uint32_t colour, uint32_t depth, bool gbuffer);
 
     // --- one draw's record, in phases (Record.cpp, RecordInputs.cpp) -----------------------------
@@ -902,6 +934,7 @@ namespace wxlvk::vk::pipelines::detail
         SliceSection sections[4];
         bool         reuse     = false;            ///< the previous ring draw's slice, bound again
         uint32_t     firstDiff = 0;                ///< the first section that differs from the copy (4: none)
+        uint32_t     diffSectionRow = 0;        ///< CP2: unchanged rows inside the first differing section
         uint32_t     diffRow   = 0;                ///< its first row in the slice
 
         // what is bound (DescriptorSet, WriteSlice, WritePalette)
@@ -977,10 +1010,15 @@ namespace wxlvk::vk::pipelines::detail
     }
 
     /// Whether a 256-row draw's palette fits this frame slot: already written, or room for one more.
+    /// HD MT2 (Claude 2026-11-04): set by RecordFront() around its Accept() when its own upper bound of the
+    /// slot's palette cursor already proves the room (the record thread is moving the real cursor). Engine thread only.
+    inline bool g_frontPaletteFits = false;
+
     inline bool PaletteFits(uint32_t slot, const Cmd& c)
     {
+        if (g_frontPaletteFits) return true;
         const State::LastPalette& lp = s.lastPalette[slot];
         if (lp.valid && lp.serial == c.paletteSerial && lp.count == c.paletteCount) return true;
-        return s.boneCursor[slot] + kBoneRange <= kBoneRingBytes;
+        return s.boneCursor[slot] + kBoneRange <= s.boneBytes[slot];   // Claude OS2: the slot's own size
     }
 }

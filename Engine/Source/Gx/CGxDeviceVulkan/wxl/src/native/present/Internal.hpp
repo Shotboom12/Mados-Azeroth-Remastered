@@ -138,6 +138,13 @@ namespace wxlvk::native::present::detail
     {
         VkCommandBuffer main  = nullptr;
         VkCommandBuffer pre   = nullptr;
+        // Claude CPU-A: the frame's main buffer in pieces round the aside segments (SplitForAside): submitted
+        // pre, chain[0 .. chainCount), main. `first` is the frame's first piece (main at the open), `spare` the later ones.
+        VkCommandBuffer first = nullptr;
+        VkCommandBuffer spare[kMaxAsideSegments] = {};
+        VkCommandBuffer chain[2 * kMaxAsideSegments] = {};
+        uint32_t        chainCount = 0;
+        uint32_t        pieces = 0;
         VkSemaphore     imageAvailable = VK_NULL_HANDLE;
         VkFence         fence = VK_NULL_HANDLE;
         uint64_t        serial = 0;     ///< the frame this slot last submitted
@@ -252,6 +259,13 @@ namespace wxlvk::native::present::detail
         VkImageView   depthView = VK_NULL_HANDLE;
         memory::Block depthBlock;
         VkImageLayout depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // Claude FSRFIX1 (2026-11-19): the LV27 kept depth goes with its depth, at its size (swapped with State's too):
+        // the back depth's kept copy is native size, the world depth's is render size.
+        VkExtent2D    depthExtent = { 0, 0 };
+        VkImage       depthSaved = VK_NULL_HANDLE;
+        VkImageView   depthSavedView = VK_NULL_HANDLE;
+        memory::Block depthSavedBlock;
+        VkImageLayout depthSavedLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImage       gbufImage[kGBufferAttachments] = {};
         VkImageView   gbufView[kGBufferAttachments]  = {};
         memory::Block gbufBlock[kGBufferAttachments];
@@ -300,6 +314,14 @@ namespace wxlvk::native::present::detail
         memory::Block  depthBlock;
         VkImageLayout  depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool           depthSampled = false;   ///< the back depth was made SAMPLED (SceneDepth)
+        // HD LV27 (Claude 2026-11-15): the depth as it was before the liquids, kept while the Cata water writes its own
+        // for the lamp reflections (SaveSceneDepth / RestoreSceneDepth); made at first use, at the back depth's size.
+        VkExtent2D     depthExtent      = { 0, 0 };
+        VkImage        depthSaved       = VK_NULL_HANDLE;
+        VkImageView    depthSavedView   = VK_NULL_HANDLE;
+        memory::Block  depthSavedBlock;
+        VkImageLayout  depthSavedLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bool           depthSavedValid  = false;
         // The own back buffer.
         bool           ownBack     = false;
         bool           modeLogged  = false;
@@ -545,8 +567,15 @@ namespace wxlvk::native::present::detail
 
     // Pass.cpp
     bool GBufferWanted();
-    void EndPass();
-    VkCommandBuffer BeginPass(const present::PassClear* pending = nullptr, uint32_t* folded = nullptr);
+    /// Claude CPU-B: `queue` = the caller allows the pass's end (begin) to go through the record thread's queue in
+    /// order (hdVkPassQueue) instead of draining first; taken only when it can be (BeginQueued() says so for a begin).
+    void EndPass(bool queue = false);
+    /// Claude CPU-E: a pass end and a layer copy can be queued now (hdVkCopyQueue on, the queue running, overlay room).
+    bool CopyQueueable();
+    VkCommandBuffer BeginPass(const present::PassClear* pending = nullptr, uint32_t* folded = nullptr, bool queue = false);
+    bool BeginQueued();
+    /// Claude CPU-B: a clear in the open pass, queued in order. False: not queued (drain, then record it).
+    bool QueueClear(uint32_t n, const VkClearAttachment* a, const VkClearRect& r);
     void EndPrePass(FrameSlot& slot);
     void RecordPresentCopy(VkCommandBuffer cmd);
 

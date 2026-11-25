@@ -131,7 +131,7 @@ local reset=CreateFrame("Button",nil,advanced,"UIPanelButtonTemplate");reset:Set
 reset:SetScript("OnClick",function()if available()then for _,d in ipairs(advancedDefs)do Write(d[1],d[6])end end;advanced:GetScript("OnShow")(advanced)end)
 InterfaceOptions_AddCategory(advanced)
 
--- HD 2026-11-02, lots L2/L3/G1: third page to compare the lamps (For Ever colours), the relief shadow and the
+-- Claude 2026-11-02, lots L2/L3/G1: third page to compare the lamps (For Ever colours), the relief shadow and the
 -- Seyris grass wind. Every value written here is read again by the engine each frame; nothing else is changed.
 local cmp=CreateFrame("Frame","WaystoneHDLumenCompare",UIParent);cmp:Hide();cmp.name="Lumenveil - Lampes, ombres, herbe";cmp.parent="Waystone HD"
 local ct=cmp:CreateFontString(nil,"ARTWORK","GameFontNormalLarge");ct:SetPoint("TOPLEFT",16,-16);ct:SetText("Lampes For Ever, ombre du relief, vent de l'herbe")

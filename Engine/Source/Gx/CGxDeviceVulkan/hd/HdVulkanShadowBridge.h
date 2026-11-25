@@ -31,8 +31,9 @@ inline float diagZ[4][2]{};        // light-space depth of the chunk origins per
 inline float diagC49[2]{},diagC50[2]{}; // c49.z (Forever flag) and c50.x (ambient strength) over the terrain draws: min, max
 inline uint32_t diagZn=0;
 inline void DiagReset(){for(float& n:diagNear)n=1e30f;diagNan=0;diagZn=0;diagDraws=0;diagOr=0;diagAnd=0xFFFFFFFFu;diagBound=0;diagUnknown=0;diagUnknownId=0;diagPs[0][0]=diagPs[1][0]=0;diagMaxDiff=0;diagRecGbuf=diagRecNull=diagRecPlain=0;}
+inline bool diagWanted=false; // Claude 2026-11-04 lot T1: set by HdVulkanShadows.cpp from WantDiagnostics(); the text is dropped otherwise
 inline void DiagTerrain(const wxlvk::vk::texture::Image* const* textures,uint32_t mask,const char* ps,const float (*v)[4]) {
- if(!enabled)return;++diagDraws;diagOr|=mask;diagAnd&=mask;
+ if(!enabled||!diagWanted)return;++diagDraws;diagOr|=mask;diagAnd&=mask;
  for(uint32_t slot=5;slot<9;++slot)if(textures[slot]&&textures[slot]->id){diagBound|=1u<<slot;if(!(mask&(1u<<slot))){diagUnknown|=1u<<slot;diagUnknownId=textures[slot]->id;}}
  // the draw's shadow matrices (vertex c37..c48) against the captured ones
  if(v){float d=0;for(int r=0;r<12;++r)for(int k=0;k<4;++k){float e=v[37+r][k]-diagRows[r][k];if(e<0)e=-e;if(!(e<=d))d=e;}

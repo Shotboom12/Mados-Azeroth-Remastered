@@ -1,3 +1,4 @@
+#include "native/record/RecordThread.hpp"
 // The native device's frame: one command buffer open across the slots, render passes on the current
 // target (the own back buffer or a texture), the transfer rule, the queries, and the present.
 // Copyright (C) 2026 WarcraftXL
@@ -16,6 +17,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "native/present/Internal.hpp"
+#include "capture/Aside.hpp"   // Claude CPU-A
 #ifdef WOWDECOMP_FSR
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrPass.h" // HD: FSR frame generation (step D)
 #endif
@@ -86,6 +88,10 @@ namespace wxlvk::native::present
         detail::serialNow = s.serial;   // Serial() answers the frame being opened from here on
         if (s.drawPath) pipelines::BeginFrame(s.fi);
 
+        // Claude CPU-A: the frame starts again in its first piece (the slot's fence waited: every piece is free).
+        if (slot.first) slot.main = slot.first;
+        slot.chainCount = 0;
+        slot.pieces     = 0;
         VkCommandBufferBeginInfo begin = {};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -121,10 +127,10 @@ namespace wxlvk::native::present
     }
 
     /// Ends the open pass so the next one takes the class the draws want now: a break, counted.
-    static void SwitchClass()
+    static void SwitchClass(bool queue = false)
     {
         s.breakView = s.passColour.view;
-        EndPass();
+        EndPass(queue);   // Claude CPU-B
         ++s.stats.gbufferSwitches;
         ++s.stats.passBreaks;
         ++s.breaksThisFrame;
@@ -132,23 +138,51 @@ namespace wxlvk::native::present
 
     VkCommandBuffer Pass()
     {
+        // HD MT2 (Claude 2026-11-04): the record thread writes into main. Any caller but slot 42 records into main
+        // itself, so it waits first; slot 42's own request waits only when it begins a frame or ends/begins a pass.
+        const bool async = wxlvk::recordthread::Async();
+        if (async && (!wxlvk::recordthread::inDraw || !s.open)) { wxlvk::recordthread::DrainTag("Pass() hors dessin ou debut d image"); wxlvk::recordthread::Drain(); }
         if (!EnsureFrame()) return nullptr;
         if (s.passOpen && !ClassChanged()) return s.slots[s.fi].main;
-        if (s.passOpen) SwitchClass();
-        return BeginPass();
+        // Claude CPU-B: the draw's own pass change goes through the queue, in order, when it can (hdVkPassQueue).
+        const bool queue = async && wxlvk::recordthread::inDraw && wxlvk::recordthread::OpsQueued();
+        if (async && !queue)
+        {
+            wxlvk::recordthread::DrainFor(wxlvk::recordthread::Boundary::Pass);
+            wxlvk::recordthread::Drain();
+        }
+        if (s.passOpen) SwitchClass(queue);
+        return BeginPass(nullptr, nullptr, queue);
     }
 
-    VkCommandBuffer PassClearing(const PassClear& clear, uint32_t& folded)
+    VkCommandBuffer PassClearing(const PassClear& clear, uint32_t& folded, bool* queued)
     {
+        // Claude CPU-B: with `queued`, the caller records its clear through QueueClear when *queued says the pass is
+        // the queue's (its begin queued, or no begin): no drain. Otherwise as before, the record thread idle first.
+        const bool queue = queued && s.open && wxlvk::recordthread::OpsQueued();
+        if (queued) *queued = false;
+        if (wxlvk::recordthread::Async() && !queue)
+        {
+            wxlvk::recordthread::DrainFor(wxlvk::recordthread::Boundary::Pass);
+            wxlvk::recordthread::Drain();   // HD MT2: the record thread idle first
+        }
         folded = 0;
         if (!EnsureFrame()) return nullptr;
-        if (s.passOpen && !ClassChanged()) return s.slots[s.fi].main;
-        if (s.passOpen) SwitchClass();
-        return BeginPass(&clear, &folded);
+        if (s.passOpen && !ClassChanged())
+        {
+            if (queued) *queued = queue;
+            return s.slots[s.fi].main;
+        }
+        if (s.passOpen) SwitchClass(queue);
+        VkCommandBuffer cmd = BeginPass(&clear, &folded, queue);
+        if (queued) *queued = queue && cmd && BeginQueued();
+        return cmd;
     }
 
-    VkCommandBuffer Outside()
+    VkCommandBuffer Outside(const char* tag)
     {
+        if (tag && wxlvk::recordthread::Async()) wxlvk::recordthread::DrainTag(tag);   // Claude CPU-E (measure): who waits
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Outside);
         if (!EnsureFrame()) return nullptr;
         if (s.passOpen)
         {
@@ -160,8 +194,70 @@ namespace wxlvk::native::present
         return s.slots[s.fi].main;
     }
 
+    bool OutsideQueued()
+    {
+        // Claude CPU-E: what Outside() does to the pass, the end queued (CopyQueueable: room for its op and the copy's).
+        if (!s.open || s.failed || !CopyQueueable()) return false;
+        if (s.passOpen)
+        {
+            s.breakView = s.passColour.view;
+            EndPass(true);
+            ++s.stats.passBreaks;
+            ++s.breaksThisFrame;
+        }
+        return true;
+    }
+
+    VkCommandBuffer CurrentMain() { return s.open ? s.slots[s.fi].main : nullptr; }
+
+    VkCommandBuffer SplitForAside(VkCommandBuffer aside)
+    {
+        // Claude CPU-A: the main buffer ended at this point; `aside` and a new piece follow it in the submit, in order.
+        if (!aside || !s.open || s.failed || s.passOpen || !s.dapi) return nullptr;
+        if (wxlvk::recordthread::Async()) { wxlvk::recordthread::DrainTag("CPU-A coupe du tampon"); wxlvk::recordthread::Drain(); }   // the record thread done with this piece
+        FrameSlot& slot = s.slots[s.fi];
+        if (slot.pieces >= kMaxAsideSegments || slot.chainCount + 2 > 2 * kMaxAsideSegments) return nullptr;
+        const loader::Device& d = *s.dapi;
+        if (!slot.spare[slot.pieces])
+        {
+            VkCommandBufferAllocateInfo alloc = {};
+            alloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            alloc.commandPool        = s.pool;
+            alloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            alloc.commandBufferCount = 1;
+            if (d.AllocateCommandBuffers(s.device, &alloc, &slot.spare[slot.pieces]) != VK_SUCCESS)
+            {
+                slot.spare[slot.pieces] = nullptr;
+                return nullptr;
+            }
+        }
+        VkCommandBuffer next = slot.spare[slot.pieces];
+        VkResult r = d.EndCommandBuffer(slot.main);
+        if (r != VK_SUCCESS)
+        {
+            Fail("vkEndCommandBuffer (aside split)", r);
+            return nullptr;
+        }
+        VkCommandBufferBeginInfo begin = {};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        r = d.BeginCommandBuffer(next, &begin);
+        if (r != VK_SUCCESS)
+        {
+            Fail("vkBeginCommandBuffer (aside split)", r);
+            return nullptr;
+        }
+        slot.chain[slot.chainCount++] = slot.main;
+        slot.chain[slot.chainCount++] = aside;
+        slot.main = next;
+        ++slot.pieces;
+        pipelines::InvalidateBindings();   // a new buffer: nothing bound (the tracking also keys on the handle)
+        return next;
+    }
+
     VkCommandBuffer PrePass()
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::PrePass);
         if (!EnsureFrame()) return nullptr;
         FrameSlot& slot = s.slots[s.fi];
         if (s.preBegun) return slot.pre;
@@ -382,6 +478,7 @@ namespace wxlvk::native::present
 
     bool WaitSerial(uint64_t serial)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Submit);
         if (serial <= s.completed) return true;
         if (serial > s.submitted || !s.dapi) return false;   // the open frame: nothing to wait for yet
         for (FrameSlot& slot : s.slots)
@@ -405,6 +502,7 @@ namespace wxlvk::native::present
 
     void Collect()
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Submit);
         Poll();
         CollectRetired();
     }
@@ -435,6 +533,7 @@ namespace wxlvk::native::present
 
     void Present(bool visible)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Submit);
         if (s.failed) return;
 
         // The time since the previous present, at the moment slot 38 hands the frame over (after the
@@ -481,6 +580,7 @@ namespace wxlvk::native::present
         }
 
         FinishFrame(visible);
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::EndAuditFrame();
         // Empty memory blocks go back to the driver after a few seconds (vulkan/Memory.cpp).
         memory::Tick();
 
@@ -606,6 +706,7 @@ namespace wxlvk::native::present
 
     void ReleaseSwapchain()
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Shutdown);
         if (!s.dapi || !s.device || !context::Live()) return;
         FinishFrame(false);
         s.dapi->DeviceWaitIdle(s.device);
@@ -618,6 +719,7 @@ namespace wxlvk::native::present
 
     void GetStats(Stats& out)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);
         out         = s.stats;
         out.ownBack = s.ownBack;
         out.queryPrecise = s.queryControl != 0;

@@ -1,3 +1,4 @@
+#include "native/record/RecordThread.hpp"
 // The stages: consumers' compute over the frame (wxl.vk.render RegisterStage), run in order at their
 // point of the engine's frame.
 // Copyright (C) 2026 WarcraftXL
@@ -28,6 +29,7 @@
 
 #include "wxl/Script.hpp"
 
+#include <cstdio>   // Claude GPU0
 #include <cstring>
 
 namespace
@@ -274,12 +276,19 @@ namespace
                 continue;
             }
             timing::Start(io.cmd, s.lane);
+            if (present::GpuZonesOn())   // Claude GPU0 (mesure)
+            {
+                char zone[64];
+                std::snprintf(zone, sizeof zone, "HD : %s", s.name);
+                present::GpuMarkDirect(io.cmd, zone);
+            }
             s.desc.Run(s.desc.user, &ctx);
             timing::Stop(io.cmd, s.lane);
             gpu::ComputeToCompute(io.cmd);
             ++s.runs;
             ++ran;
         }
+        if (ran) present::GpuMarkDirect(io.cmd, nullptr);   // Claude GPU0 : retour a la zone du moteur
         return ran;
     }
 
@@ -296,7 +305,7 @@ namespace
     /// The run proper, preconditions met.
     Outcome Execute(Point p, bool colour, bool depth, Io& io)
     {
-        io.cmd    = present::Outside();
+        io.cmd    = present::Outside("hors-passe Chain:300");
         io.slot   = present::Slot();
         io.serial = present::Serial();
         if (!io.cmd) return Outcome::NoFrame;
@@ -435,6 +444,7 @@ namespace wxlvk::stages::chain
 
     void Run(Point point)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stage);
         if (point >= Point::Count) return;
         if (point == Point::AfterOpaqueWorld) NoteWorld();
         PointState& ps = g.points[static_cast<size_t>(point)];

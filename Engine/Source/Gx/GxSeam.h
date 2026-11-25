@@ -64,17 +64,37 @@ extern GxCataPlane g_gxCataPlane;
 // draw that binds one sample this frame's image instead: 0 the scene copied before the water, 1 the reflection,
 // 2 the copy's depth. Each frame the device sets m_ready (and m_mirror) at BeforeLiquids, before the engine draws its
 // liquids, and clears them at BeforeUi; the engine draws the Cata material only while m_enabled and m_ready.
+// HD LV28: one Cata water as its shaders draw it, for the lamp reflections: its surface normals texture (s5, a CGxTex*),
+// its vertex rows 26..41 and 50, its pixel row 23, and its UVs (CataProcWater's v3) as a function of the world:
+// v3.x = uv[0] . (x, y, z, 1), v3.y = uv[1] . (x, y, z, 1). A chunk's (0.06 x the world x, y, MapChunkLiquid.cpp) is
+// global; a map object's (0.24 x its group space from the liquid corner, MapObj.cpp WriteLiquidVertex) holds in `box`
+// (world min x, y, z, max x, y, z).
+struct GxCataLampWater {
+    void* normals;
+    float rows[17][4];
+    float pixel[4];
+    double uv[2][4];
+    float box[6];
+    int32_t global;
+};
+
 struct GxCataWater {
     int32_t m_enabled;   // device: hdCataWater 1 and the services are up
     int32_t m_ready;     // device: this frame's scene copy (colour and depth) is there
     int32_t m_mirror;    // device: this frame's reflection is there, drawn for g_gxCataPlane.m_height
     void* m_proxy[3];    // engine: the CGxTex* standing for the scene colour, the reflection, the depth
     uint32_t m_drawn;     // engine: water instances drawn with the Cata material (the device logs these)
-    uint32_t m_kept[12];  // engine: instances left to the 3.3.5 material, by reason (HdCataWater.cpp CataWaterKept)
+    uint32_t m_kept[12];  // engine: instances not drawn, by reason (HdCataWater.cpp Kept; Claude BLZ1: no 3.3.5 material behind)
     char m_info[256];     // engine: hdCataWaterInfo's text
     void* m_proxySky;     // engine: the CGxTex* standing for the sky's reflection (the water without a mirror)
     int32_t m_sky;        // device: this frame's sky reflection is there
     void* m_proxyBlur;    // HD: engine: the CGxTex* standing for Cata's blurred back buffer (s3 without a mirror)
+    int32_t m_keepDepth;  // HD LV27: engine: this liquid pass, the Cata water writes its depth (hdLvWaterLamps); the device keeps
+                          // the depth before the liquids and puts it back after AfterLiquids (wxl native/api/Points.cpp)
+    // HD LV28: engine: the Cata waters drawn in this liquid pass, one per kind (m_lampWaterCount, reset at every pass),
+    // for the lamp reflections (Lumen WaterLamps).
+    GxCataLampWater m_lampWaters[8];
+    uint32_t m_lampWaterCount;
 };
 
 extern GxCataWater g_gxCataWater;
@@ -119,6 +139,7 @@ struct GxCataRipples {
     float m_size[2][2];               // its size in yards
     uint32_t m_texSize[2];            // its texels a side
     float m_interpolation[2];         // between its last two steps (Cata GetDynamicDisplMapInterpolation)
+    void* m_views[2];                 // HD LV28: each map's VkImageView (SHADER_READ_ONLY_OPTIMAL), for the lamp reflections
 };
 
 extern GxCataRipples g_gxCataRipples;

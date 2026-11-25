@@ -15,6 +15,7 @@
 #include "WoW/Common/ComponentCore/CharacterComponent.h"
 #include "WoW/Source/Client.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
+#include "WoW/Source/WorldClient/HD/HdArLight.h"
 #include "WoW/Source/DB/Rec/CreatureDisplayInfoRec.h"
 #include "WoW/Source/DB/Rec/CreatureFamilyRec.h"
 #include "WoW/Source/DB/Rec/CreatureModelDataRec.h"
@@ -345,7 +346,7 @@ void CCharacterSelection::GenericLightingCallback(CM2Model* model, CM2Lighting* 
             sphere.r = 0.0f;
             lighting->Initialize(model->m_scene, sphere);
 
-            LightParamsRec* paramsRec = g_lightParamsDB.GetRecord(3);
+            const LightParamsRec* paramsRec = HD::ArLight::Params(3); // AR1: was g_lightParamsDB
             CImVector direct = DayNight::LoadLightIntBand(0, paramsRec, 0);
             CImVector ambient = DayNight::LoadLightIntBand(0, paramsRec, 1);
 

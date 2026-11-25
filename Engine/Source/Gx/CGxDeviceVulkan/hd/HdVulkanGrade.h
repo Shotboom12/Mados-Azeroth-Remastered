@@ -11,7 +11,7 @@ constexpr uint32_t LutWidth=1024,LutHeight=32;
 constexpr size_t LutBytes=size_t(LutWidth)*LutHeight*4;
 using Texels=std::array<uint8_t,LutBytes>; // BGRA bytes, matching existing BLP files
 struct alignas(16) Parameters {
-    float blend=0,strength=1,debug=0,reserved=0;
+    float blend=0,strength=1,reserved0=0,reserved=0; // AR1: reserved0 was the split-screen debug
     uint32_t swapRB=0,pad[3]{};
 };
 static_assert(sizeof(Parameters)==32,"GLSL push constant layout");

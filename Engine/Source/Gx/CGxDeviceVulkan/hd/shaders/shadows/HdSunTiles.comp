@@ -1,0 +1,37 @@
+#version 450
+// Claude SOLMM1, 19 nov 2026: the least and the greatest depth of each tile of a sun map (pass 0), then of every tile within k tiles
+// of each tile (the "dilated" tiles: pass 1 across, pass 2 down; the least and the greatest over a square are those over its rows,
+// then over its column). The contact pass reads one dilated tile per PCSS call: when every texel its taps can reach is above every
+// reference (no blocker: the PCSS returns 1) or below every reference (all in shadow: it returns 0), the taps are not read. Same
+// image: those are the values the taps give.
+// A texel that is not a number counts as +big in both: never a blocker (as d < ref is false) and never a sure shadow (the
+// all-shadow test then fails and the taps are read as before).
+// Claude OMBRE1, 24 nov 2026: tiles of 4, 8 or 16 texels (p.z = the log2), a group of 8 x 8 tiles in pass 0 (four texels a gather;
+// a tile on the edge repeats the map's last texels), runs of 64 tiles along the axis in passes 1 and 2 (each tile read once or twice
+// and kept for the run, instead of 2k + 1 reads a tile).
+layout(local_size_x=64) in;
+layout(set=0,binding=0) uniform sampler2D source;            // pass 0: the map (R32F); passes 1, 2: the tiles (RG32F)
+layout(rg32f,set=0,binding=1) uniform writeonly image2D target;
+layout(push_constant) uniform Pass {ivec4 p;} pc;           // p.x = pass, p.y = k (passes 1, 2, at most 48), p.z = log2 of the side
+shared vec2 run[160];
+vec2 Join(vec2 a,vec2 b){return vec2(min(a.x,b.x),max(a.y,b.y));}
+void main(){
+ ivec2 n=imageSize(target);
+ if(pc.p.x==0){
+  ivec2 tile=ivec2(gl_WorkGroupID.xy)*8+ivec2(gl_LocalInvocationIndex&7u,gl_LocalInvocationIndex>>3);
+  if(any(greaterThanEqual(tile,n)))return;
+  vec2 size=vec2(textureSize(source,0)),m=vec2(3.0e38,-3.0e38);ivec2 at=tile<<pc.p.z;int side=1<<pc.p.z;
+  for(int y=1;y<side;y+=2)for(int x=1;x<side;x+=2){vec4 d=textureGather(source,vec2(at+ivec2(x,y))/size,0);d=mix(d,vec4(3.0e38),isnan(d));
+   m=Join(m,vec2(min(min(d.x,d.y),min(d.z,d.w)),max(max(d.x,d.y),max(d.z,d.w))));}
+  imageStore(target,tile,vec4(m,0,0));
+ }else{
+  // no write through a component index here (first[axis]): the NVIDIA compiler gave wrong tiles
+  bool across=pc.p.x==1;int k=pc.p.y,l=int(gl_LocalInvocationIndex);
+  ivec2 dir=across?ivec2(1,0):ivec2(0,1),first=ivec2(gl_WorkGroupID.xy)*(across?ivec2(64,1):ivec2(1,64));
+  for(int e=l;e<64+2*k;e+=64){ivec2 q=first+dir*(e-k);run[e]=any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,n))?vec2(3.0e38,-3.0e38):texelFetch(source,q,0).rg;}
+  barrier();
+  ivec2 tile=first+dir*l;if(any(greaterThanEqual(tile,n)))return;
+  vec2 m=vec2(3.0e38,-3.0e38);for(int o=0;o<=2*k;++o)m=Join(m,run[l+o]);
+  imageStore(target,tile,vec4(m,0,0));
+ }
+}

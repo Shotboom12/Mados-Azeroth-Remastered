@@ -192,6 +192,9 @@ namespace wxlvk::vk::memory
      */
     bool FlushHost(const Block& block);
 
+    /// Whether completed device writes may be read through the mapping without invalidation.
+    bool HostCoherent(const Block& block);
+
     /**
      * What the allocator has done, for the log and for the address-space accounting.
      *

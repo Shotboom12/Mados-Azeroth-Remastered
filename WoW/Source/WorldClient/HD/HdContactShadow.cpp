@@ -55,7 +55,7 @@ float4 cDepth   : register(c3); // projection c2, -d2, sky threshold, unused
 float4 cParams  : register(c4); // ray length (yards), strength, debug, occluder thickness (yards)
 float4 cBlur    : register(c5); // blur step in uv (xy), fade start (yards), 1 / fade length
 float4 cLight   : register(c6); // view-space direction to the world light (the shadow maps' light), unused
-float4 cAmbient : register(c7); // the client's ambient light now (gamma, as the shaders), 1 = Forever ground lighting
+float4 cAmbient : register(c7); // the client's ambient light now (gamma, as the shaders), unused
 float4 cDiffuse : register(c8); // the client's world light colour now (gamma, as the shaders), unused
 float4 cShadow  : register(c9); // 1 = shadow maps bound, 1 = hardware depth compare (D24), unused, unused
 float4 cSmat[9] : register(c10); // view space -> shadow map, 3 rows per cascade (CShadowCache::s_shadowMatrices 3..11)
@@ -221,10 +221,10 @@ float4 Generate(float2 vpos : VPOS) : COLOR0
     }
     // fade out with distance (the depth gets coarse far away, and far scenery is fogged)
     occ *= (1.0 - saturate((p.z - cBlur.z) * cBlur.w)) * cParams.y;
-    // HD (v3): k = what the shaders' own shadow leaves of this colour (gamma): Forever ground lighting keeps the
-    // ambient on the ground (facing up), the 3.3.5 shaders keep 70% (everything else)
+    // HD (v3): k = what the shaders' own shadow leaves of this colour (gamma): our ground lighting keeps the
+    // ambient on the ground (facing up, always since AR1), the other shaders keep 70% (everything else)
     float3 forever = cAmbient.rgb / max(cAmbient.rgb + cDiffuse.rgb * ndl, 1e-4);
-    float3 k = lerp(0.7, forever, cAmbient.w * saturate((dot(n, cUp.xyz) - 0.55) * 3.3));
+    float3 k = lerp(0.7, forever, saturate((dot(n, cUp.xyz) - 0.55) * 3.3));
     float s = cParams.z > 1.5 ? 1.0 : vis;                 // test view 2: without the shadow-map check
     // the shadows' union over what the shaders drew: lerp(k, 1, s * (1 - occ)) / lerp(k, 1, s)
     float3 keep = (k + (1.0 - k) * s * (1.0 - occ)) / (k + (1.0 - k) * s);
@@ -294,7 +294,6 @@ float4 Apply(float2 vpos : VPOS) : COLOR0
     CVar* s_units = nullptr; // HD: hdContactShadowUnits
     CVar* s_debug = nullptr;
     CVar* s_info = nullptr;
-    CVar* s_terrainLight = nullptr; // HD: hdTerrainLight (HdTerrain.cpp), 1 = Forever ground lighting
     char s_lastInfo[160] = "";
 
     std::vector<DWORD> s_code[PS_Count]; // compiled once; the shader objects are remade after a device reset
@@ -528,9 +527,7 @@ void HD::ContactShadowRenderOpaque() {
     const float strength = CVarValue(s_strength, 1.0f, 0.0f, 1.0f);
     const int32_t debug = s_debug ? (s_debug->m_intValue < 0 ? 0 : (s_debug->m_intValue > 2 ? 2 : s_debug->m_intValue)) : 0;
     // HD: the client's light this frame (CWorldScene's map light, m_light1: DayNight at the hdTime hour), in gamma
-    // as the shaders use it; and whether the ground has WoW Forever's lighting (its shadow then keeps the ambient only)
-    if (!s_terrainLight) s_terrainLight = CVar::Lookup("hdTerrainLight");
-    const bool forever = s_terrainLight && s_terrainLight->m_intValue == 1;
+    // as the shaders use it (the ground always has our lighting: its shadow keeps the ambient only)
     const CImVector& amb = DayNight::g_dnInfo.m_light1.m_ambient;
     const CImVector& dif = DayNight::g_dnInfo.m_light1.m_diffuse;
     const float ambR = amb.r * (1.0f / 255.0f), ambG = amb.g * (1.0f / 255.0f), ambB = amb.b * (1.0f / 255.0f);
@@ -554,7 +551,7 @@ void HD::ContactShadowRenderOpaque() {
         length, strength, static_cast<float>(debug), kThickness,
         0.0f, 0.0f, kFadeStart, 1.0f / kFadeLength,
         lx, ly, lz, 0.0f,
-        ambR, ambG, ambB, forever ? 1.0f : 0.0f,
+        ambR, ambG, ambB, 0.0f,
         difR, difG, difB, 0.0f,
         shadows ? 1.0f : 0.0f, depthCompare ? 1.0f : 0.0f, 0.0f, 0.0f,
     };
@@ -660,10 +657,9 @@ void HD::ContactShadowRenderOpaque() {
     ps.dirtyMin = 0;
     if (ps.dirtyMax < kConstRegs - 1) ps.dirtyMax = kConstRegs - 1;
     char text[160];
-    snprintf(text, sizeof(text), "on%s, shadow maps %s, ground shadow %s, characters %s, v4",
+    snprintf(text, sizeof(text), "on%s, shadow maps %s, ground shadow ours (ambient), characters %s, v4",
              debug == 2 ? ", test view (hdContactShadowDebug 2)" : (debug ? ", test view (hdContactShadowDebug 1)" : ""),
              shadows ? (depthCompare ? "D24" : "R32F") : "none (shadow quality below high: no check)",
-             forever ? "Forever (ambient)" : "3.3.5 (70%)",
              (s_units && s_units->m_intValue) ? "cast too" : "receive only");
     SetInfo(text);
 }

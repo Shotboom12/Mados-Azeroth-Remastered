@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Shared.h"
 #include "Engine/Source/Tempest/C2Vector.h"
@@ -38,6 +39,27 @@ class CM2Scene;
 class CM2Shared;
 class CTexture;
 class M2ModelBone;
+
+// Claude CACHE1d (17 nov 2026): sun shadow draw of the fixed models, independent of the camera.
+// The original draw puts a model in light space as world * (-camera) * camera rotation (bone 0), then
+// camera rotation inverse * light matrix (c14..c16): the float rounding of that chain follows every camera
+// turn, so the same scenery drawn twice with the camera turned in between differs by tiny depth steps and a
+// few edge texels. With this state active, a one-bone section (bone 0) of a model that isWorld() accepts is
+// drawn with world * (-origin) and the light matrix built around origin (the band centre): the result then
+// depends on the scenery, the band centre and the sun only, the same in every pass that draws it.
+namespace HD::ShadowWorld {
+    struct State {
+        bool active = false;
+        C3Vector origin;
+        float light[12] = {};   ///< c14..c16 for the origin-relative draw (light matrix around origin, transposed)
+        float camera[12] = {};  ///< c14..c16 of the original draw
+        int32_t current = -1;   ///< which of the two is in c14..c16 now (-1 unknown)
+        bool (*isWorld)(const CM2Model* model) = nullptr;
+    };
+    extern State g_state;
+    // True when this section of this model is drawn origin-relative (bone 0 alone, see above).
+    bool WorldSection(const CM2Model* model, const M2SkinSection* section);
+}
 template <class T>
 class M2ModelTrack;
 class M2ModelBoneSeq;
@@ -52,6 +74,8 @@ class M2ModelTextureTransform;
 typedef void (*M2EventCallback)(CM2Model* model, uint32_t boneId, uint32_t eventId, uint32_t data, const C3Vector* position, uint32_t time, uint64_t param);
 typedef void (*M2SequenceCallback)(CM2Model* model, uint32_t boneId, uint32_t sequenceId, int32_t interrupted, uint32_t time, uint64_t param);
 
+extern int g_hdGpuFixedReason;   // Claude voie B (diagnostic), M2Model.cpp
+
 class CModelBatch {
     public:
     /* 0000 */ CM2Model* m_model;
@@ -64,9 +88,13 @@ class CModelBatchList {
     /* 0000 */ CModelBatch* m_batches;
     /* 0004 */ uint32_t m_count;
     /* 0008 */ uint32_t m_maxCount;
+    // Claude BANDE1 (2026-11-18): true when m_batches is an SMemAlloc array this list owns. Add() then doubles it
+    // instead of dropping the batch (the sun bands' 0x2000 lists overflowed at Extreme distance in Darkshire).
+    bool m_grows = false;
 
     void Add(CM2Model* model, uint32_t batchIndex);
     void Optimize();
+    bool Grow(); // Claude BANDE1
 };
 
 class SModelBatchLessThan {
@@ -286,6 +314,29 @@ class CM2Model {
     void AttachToScene(CM2Scene* scene);
     void AttachToSceneRecursive(CM2Scene* scene);
     void GatherModelBatchesShadowMap(CModelBatchList& untextured, CModelBatchList& textured);
+    // Claude PARQ2: GatherModelBatchesShadowMap cut in two (see M2Model.cpp). Prepare writes, Collect only reads.
+    void HdPrepareShadowGather();
+    void HdCollectShadowBatches(CModelBatchList& untextured, CModelBatchList& textured);
+    // Claude voie B: the batches HdCollectShadowBatches takes for this model, when every one of them can be drawn by the
+    // GPU (one bone, combo 0, shared vertices, nothing AnimateSM would animate, bone 0 = world * view in both Animate
+    // and AnimateSM). Per batch: its index, textured (blend mode != 0), its texture (textured), its bone influences.
+    // false: the model stays on the CPU path.
+    // Claude voie B: every shadow batch this model can ever take is drawable from bone rows the CPU writes (the INST1
+    // conditions: shared vertices, no optimized geometry, no attachment, 1..75 bones a section). Animated models,
+    // several bones and billboards included: the CPU still animates them (AnimateSM) and writes their rows.
+    bool HdGpuFixedCpuOk() const;
+    // Claude B4: `bones` (not null) = the animated form: several bones, the full Animate's bones (HdGpuAnimRecord), each
+    // batch's bone count in `bones`.
+    bool HdGpuFixedBatches(uint16_t* batches, uint8_t* textured, CTexture** textures, uint16_t* influences, uint32_t max,
+                           uint32_t& count, uint16_t* bones = nullptr) const;
+    // Claude B4: this model's bones for the GPU (GpuFixedCull.comp, ANIM): those the batches use and their parents, with
+    // their keys. `relocs`: the places of `rec` holding an offset into `rec`. `slots`: bone -> its place in the record.
+    // false: the CPU keeps it (a bone or a track of a kind the GPU does not do exactly).
+    bool HdGpuAnimRecord(const uint16_t* batches, uint32_t count, std::vector<uint32_t>& rec, std::vector<uint32_t>& relocs,
+                         std::vector<uint16_t>& slots) const;
+    // Claude B4: this frame's words of an animated model: bone 0's time and sequence (AnimateMT's), then the loops' times.
+    // false: not playing one sequence as the GPU does it this frame (the CPU animates it).
+    bool HdGpuAnimFrame(uint32_t* words) const;
     uint32_t GetBillboardBoneCount() const;
     void CallCallbacks();
     void CallSequenceCallback(M2ModelCallback* entry);

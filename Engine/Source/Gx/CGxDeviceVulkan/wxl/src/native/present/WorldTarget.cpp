@@ -1,3 +1,4 @@
+#include "native/record/RecordThread.hpp"
 // The FSR world target: the world scene drawn at the render size, the interface at the native size.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -39,6 +40,11 @@ namespace wxlvk::native::present::detail
             std::swap(s.depthView, w.depthView);
             std::swap(s.depthBlock, w.depthBlock);
             std::swap(s.depthLayout, w.depthLayout);
+            std::swap(s.depthExtent, w.depthExtent);   // Claude FSRFIX1: the LV27 kept depth with its depth
+            std::swap(s.depthSaved, w.depthSaved);
+            std::swap(s.depthSavedView, w.depthSavedView);
+            std::swap(s.depthSavedBlock, w.depthSavedBlock);
+            std::swap(s.depthSavedLayout, w.depthSavedLayout);
             std::swap(s.extent, w.extent);
             for (uint32_t i = 0; i < kGBufferAttachments; ++i)
             {
@@ -81,6 +87,9 @@ namespace wxlvk::native::present::detail
             WorldSet& w = s.world;
             Release(w.colour, w.colourView, w.colourBlock, serial, now);
             Release(w.depth, w.depthView, w.depthBlock, serial, now);
+            Release(w.depthSaved, w.depthSavedView, w.depthSavedBlock, serial, now);   // Claude FSRFIX1
+            w.depthSavedLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            w.depthExtent      = VkExtent2D{ 0, 0 };
             for (uint32_t i = 0; i < kGBufferAttachments; ++i) Release(w.gbufImage[i], w.gbufView[i], w.gbufBlock[i], serial, now);
             Release(w.fsrDepth, serial, now);
             Release(w.motion, serial, now);
@@ -118,7 +127,9 @@ namespace wxlvk::native::present::detail
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                          VK_IMAGE_USAGE_SAMPLED_BIT,
                      "FSR world colour")
-                && Make(depth, s.depthFormat, render, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                // Claude FSRFIX1: TRANSFER too, like the back depth (LV27 keeps it before the liquids and puts it back)
+                && Make(depth, s.depthFormat, render, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                                         | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                         "FSR world depth")
                 && Make(w.fsrDepth, VK_FORMAT_R32_SFLOAT, render, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                         "FSR normalized depth")
@@ -133,6 +144,7 @@ namespace wxlvk::native::present::detail
             w.depth = depth.image;
             w.depthView = depth.view;
             w.depthBlock = depth.block;
+            w.depthExtent = render;   // Claude FSRFIX1
             w.extent = render;
             if (!ok)
             {
@@ -237,6 +249,7 @@ namespace wxlvk::native::present
 {
     bool WorldTargetBegin(VkExtent2D render, bool objectMotion)
     {
+        if (wxlvk::recordthread::Async()) { wxlvk::recordthread::DrainTag("cible monde (FSR)"); wxlvk::recordthread::Drain(); }   // HD MT2: the record thread idle first
         WorldSet& w = s.world;
         if (w.active || !s.open || s.failed || s.noImage || render.width == 0 || render.height == 0) return false;
         if (!BackBufferReadable() || !s.depthSampled || s.depthImage == VK_NULL_HANDLE) return false;
@@ -294,7 +307,7 @@ namespace wxlvk::native::present
         // Never end a live occlusion query, touch an auxiliary target, or invent a frame.
         if(!s.world.active||s.world.serial!=Serial()||!FrameOpen()||!OnBackBuffer()||s.activeRun)return false;
         if(layout!=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL&&layout!=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)return false;
-        cmd=Outside();VkImage image{};VkFormat format{};VkExtent2D extent{};
+        cmd=Outside("hors-passe WorldTarget:299");VkImage image{};VkFormat format{};VkExtent2D extent{};
         if(!cmd||!BackBuffer(cmd,layout,image,format,extent))return false;
         out.image=image;out.view=s.backView;out.format=format;out.extent=extent;
         out.usage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -325,6 +338,7 @@ namespace wxlvk::native::present
 
     bool WorldTargetEnd(WorldImages& out)
     {
+        if (wxlvk::recordthread::Async()) { wxlvk::recordthread::DrainTag("cible monde (FSR)"); wxlvk::recordthread::Drain(); }   // HD MT2: the record thread idle first
         out = WorldImages();
         WorldSet& w = s.world;
         if (!w.active) return false;

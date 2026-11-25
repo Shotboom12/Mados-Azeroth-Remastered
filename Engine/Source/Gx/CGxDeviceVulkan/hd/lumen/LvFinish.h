@@ -23,7 +23,7 @@ public:bool Init(Gpu&g){g_=&g;return stage_.Init(g);}bool Resize(uint32_t w,uint
  bool Shutdown(uint64_t completed);unsigned Skipped()const{return skipped_;}
 private:Gpu*g_=nullptr;SpellStage stage_;Target scene_,now_,depth_;VkRect2D viewport_{};Readback ring_[3];bool discard_[3]{};Source::EffectFrame frames_[3]{},baselineFrame_{};uint64_t baselineSerial_=0;uint32_t w_=0,h_=0;unsigned skipped_=0;
 };
-struct CompositeSettings {bool surfaces=false,fog=false,halos=false;float lampGain=1;};
+struct CompositeSettings {bool surfaces=false,fog=false,halos=false;float lampGain=1;float lampView=0;}; // Claude LV11: lampView = hdLvLampView
 class Composite {
 public:bool Init(Gpu&g){g_=&g;return true;}bool Resize(uint32_t w,uint32_t h);
  bool Record(const WXL_VkStageContext&,const Uniforms&,const WXL_VkGBuffer*,Texture lamps,Texture fog,Texture halos,VkExtent2D lowExtent,CompositeSettings);

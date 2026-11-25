@@ -232,8 +232,15 @@ float4 LvPixel(float2 targetPixel)
     [branch] if (BeyondFarClip(depth))
         return centre;
     float z = LinearDepth(depth);
+#ifdef HD_LAMP_BLUR_OPT
+    const float aheadZ = ViewZAt(pixel + BlurStep());
+    const float behindZ = ViewZAt(pixel - BlurStep());
+    float ahead = aheadZ - z;
+    float behind = z - behindZ;
+#else
     float ahead = ViewZAt(pixel + BlurStep()) - z;
     float behind = z - ViewZAt(pixel - BlurStep());
+#endif
     float slope = abs(ahead) < abs(behind) ? ahead : behind;
     float tolerance = kDepthToleranceYards + kDepthTolerancePerViewZ * z;
     float3 sum = centre.rgb;
@@ -244,7 +251,12 @@ float4 LvPixel(float2 targetPixel)
         {
             float offset = (k + 1) * side;
             float2 tap = BlurStep() * offset;
+#ifdef HD_LAMP_BLUR_OPT
+            float tapZ = k == 0 ? (side < 0 ? behindZ : aheadZ) : ViewZAt(pixel + tap);
+            float miss = (tapZ - z - slope * offset) / tolerance;
+#else
             float miss = (ViewZAt(pixel + tap) - z - slope * offset) / tolerance;
+#endif
             float weight = kPairWeights[k] * saturate(1 - miss * miss);
             sum += LightAt(centreTexel + tap).rgb * weight;
             weights += weight;

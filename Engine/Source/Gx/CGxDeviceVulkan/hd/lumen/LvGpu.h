@@ -5,11 +5,13 @@
 #include <cstdint>
 #include <cstddef>
 namespace HD::Lumen {
-enum class Kernel:uint32_t {LampSurfaces,LampVisibility,LampHalos,LampBlur,FogTemporal,EdgeOccluders,MemoryKeep,EffectGather,EffectReduce,Fog1Memory0,Fog1Memory1,Fog2Memory0,Fog2Memory1,Fog3Memory0,Fog3Memory1,MemorySeed,MemoryResolve,MemoryScatter,MemoryRealign,MemoryFill,DepthCopy,SceneComposite,Count};
+enum class Kernel:uint32_t {LampSurfaces,LampVisibility,LampHalos,LampBlur,FogTemporal,EdgeOccluders,MemoryKeep,EffectGather,EffectReduce,Fog1Memory0,Fog1Memory1,Fog2Memory0,Fog2Memory1,Fog3Memory0,Fog3Memory1,MemorySeed,MemoryResolve,MemoryScatter,MemoryRealign,MemoryFill,DepthCopy,SceneComposite,WaterLamps /* Claude LV27 */,LampSurfacesOptimized,LampBlurOptimized,LampGroupLists /* Claude GPU-B : listes de lampes par carre 16x16 */,WaterLampsOptimized /* Claude EAU1 */,EffectGatherOptimized /* Claude GATHER1 */,Fog1Fast /* Claude BRUME1 */,Fog2Fast,Fog3Fast,Count};
+// Claude G1 2026-11-05: GPU time of each kernel (timestamps), only while hdLvGpuTimes is 1 (LvClient.cpp). Nothing on screen changes.
+namespace GpuTiming {inline bool on=false,available=false;inline double ms[size_t(Kernel::Count)]{};inline uint64_t runs[size_t(Kernel::Count)]{};inline uint64_t frames=0,barriers=0,dispatches=0,surfacesSkipped=0;}
 struct alignas(16) Uniforms {std::array<std::array<float,4>,128> r{};};
 static_assert(sizeof(Uniforms)==2048,"source c0..c127 register contract");
-struct Texture {VkImageView view{};VkImageLayout layout=VK_IMAGE_LAYOUT_GENERAL;};
-struct Target {void* handle=nullptr;WXL_VkImageInfo info{};VkExtent2D extent{};VkFormat format=VK_FORMAT_UNDEFINED;VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;uint64_t last=0; uint32_t depth=1,mipLevels=1; VkDeviceMemory volumeMemory{};};
+struct Texture {VkImageView view{};VkImageLayout layout=VK_IMAGE_LAYOUT_GENERAL;uint64_t identity=0; /* DP2: 0 means external, never cache across frames */};
+struct Target {void* handle=nullptr;WXL_VkImageInfo info{};VkExtent2D extent{};VkFormat format=VK_FORMAT_UNDEFINED;VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;uint64_t last=0,identity=0; uint32_t depth=1,mipLevels=1; VkDeviceMemory volumeMemory{}; bool readReady=false; /* Claude 2026-11-05 lot L21: the last barrier left it GENERAL for shader reads, nothing wrote it since */};
 struct Readback {VkBuffer buffer{};VkDeviceMemory memory{};void*mapped=nullptr;VkDeviceSize bytes=0,usedBytes=0;uint64_t serial=0,last=0;};
 class Gpu {
 public:
@@ -20,6 +22,7 @@ public:
  void Retire(Target&);
  bool Begin(const WXL_VkStageContext&);
  bool Run(Kernel,const Uniforms&,const std::array<Texture,16>&,Target&,Target* second=nullptr,VkExtent2D dispatch={});
+ bool Supports(Kernel)const;
  bool Upload(Target&,const void*,size_t);
  bool CopyFrame(Target&);
  bool CopyFrameRegion(Target&,VkRect2D);

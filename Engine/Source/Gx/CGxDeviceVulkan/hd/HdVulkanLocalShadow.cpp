@@ -49,8 +49,11 @@ Vec3 Cross(Vec3 a,Vec3 b){return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.
 bool Finite(Vec3 a){return std::isfinite(a.x)&&std::isfinite(a.y)&&std::isfinite(a.z);}
 }
 uint32_t Face(Vec3 d){float x=std::abs(d.x),y=std::abs(d.y),z=std::abs(d.z);if(x>=y && x>=z)return d.x>=0?0:1;if(y>=z)return d.y>=0?2:3;return d.z>=0?4:5;}
-bool BuildMatrices(const Light&light,float(&out)[6][16]){
-    if(!light.key || !Finite(light.position)||!std::isfinite(light.radius)||!std::isfinite(light.nearPlane)||light.nearPlane<.01f||light.radius<=light.nearPlane||light.radius>64)return false;
+bool BuildMatrices(const Light&light,float(&out)[6][16]){return BuildMatricesUpTo(light,64,out);}
+// Claude LV35: the same six faces, with the caller's own most radius (Lumen's lamp cubes reach the water up to twice a lamp's
+// distance to the camera); BuildMatrices keeps its 64 for the local shadows that use it.
+bool BuildMatricesUpTo(const Light&light,float maxRadius,float(&out)[6][16]){
+    if(!light.key || !Finite(light.position)||!std::isfinite(light.radius)||!std::isfinite(light.nearPlane)||light.nearPlane<.01f||light.radius<=light.nearPlane||!(light.radius<=maxRadius))return false;
     const Vec3 directions[6]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}},ups[6]={{0,0,1},{0,0,1},{0,0,1},{0,0,1},{0,-1,0},{0,1,0}};
     float c=light.radius/(light.radius-light.nearPlane),d=-light.nearPlane*c;
     for(int f=0;f<6;++f){Vec3 z=directions[f],x=Cross(ups[f],z),y=Cross(z,x);float view[16]={x.x,y.x,z.x,0,x.y,y.y,z.y,0,x.z,y.z,z.z,0,-Dot(x,light.position),-Dot(y,light.position),-Dot(z,light.position),1};

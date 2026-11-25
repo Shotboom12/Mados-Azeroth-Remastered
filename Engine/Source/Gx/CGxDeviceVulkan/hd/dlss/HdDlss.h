@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HD 2026-11-02 (DLSS): NVIDIA DLSS Super Resolution (SDK 310.9.16) in place of the FSR upscaler.
+// Claude 2026-11-02 (DLSS): NVIDIA DLSS Super Resolution (SDK 310.9.16) in place of the FSR upscaler.
 // It reuses everything the FSR pass already makes (hd/fsr/HdFsrPass.cpp): the world at the render size, the
 // normalized depth (R32F, 0 near), the motion vectors (RG16F, previous minus current UV, no jitter), the measured
 // jitter and the output image (RGBA8, storage). Frame generation stays FSR's (DLSS FG needs an RTX 40).

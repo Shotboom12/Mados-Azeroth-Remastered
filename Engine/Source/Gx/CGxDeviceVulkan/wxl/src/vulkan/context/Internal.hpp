@@ -210,6 +210,7 @@ namespace wxlvk::vk::context::detail
         VkPhysicalDevice16BitStorageFeatures      storage16 = {};
         VkPhysicalDeviceShaderFloat16Int8Features float16   = {};
         VkPhysicalDeviceMultiviewFeatures         multiview = {};
+        VkPhysicalDeviceDescriptorIndexingFeatures indexing = {};   // Claude B3
 #ifdef WOWDECOMP_FSR
         VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives = {};
         VkPhysicalDeviceTimelineSemaphoreFeatures            timeline    = {};

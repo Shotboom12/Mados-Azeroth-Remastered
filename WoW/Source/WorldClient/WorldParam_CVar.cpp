@@ -144,6 +144,14 @@ bool CWorldParam::LodCallback(CVar* var, const char* oldValue, const char* value
     return true;
 }
 
+// Claude B2 (23 nov 2026, mesure du plafond seulement) : hdTestDoodads 0 = les objets du decor ne vont plus dans la scene
+// (la coupe se fait encore, l'animation, la lumiere et le dessin non) ; 1 = normal (defaut).
+static bool HdTestDoodadsCallback(CVar*, const char*, const char* value, void*) {
+    if (SStrToInt(value)) CWorld::enables |= Enable_Doodads;
+    else CWorld::enables &= ~Enable_Doodads;
+    return true;
+}
+
 // VERIFY: fb93d195 auto
 // OFFSET: 0x0078D660
 bool CWorldParam::MapShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
@@ -678,4 +686,5 @@ void CWorldParam::Initialize() {
     HD::CataRenderPerf::Initialize();
     HD::CataOptim::Native335::InitializeSettings(); // HD: Cata terrain/grass optimisation switches, all 0
     HD::CataViewDistance::Initialize(); // HD: apply only after the native CVars exist
+    CVar::Register("hdTestDoodads", "HD (Claude B2, mesure seulement) : 0 = objets du decor hors de la scene ; 1 = normal", 0, "1", HdTestDoodadsCallback, CATEGORY_DEBUG, false, nullptr, false);
 }

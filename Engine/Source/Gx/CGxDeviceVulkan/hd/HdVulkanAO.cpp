@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // HD: Vulkan AO port. XeGTAO (MIT) algorithm; existing engine entry points preserved.
 #include "HdVulkanAO.h"
+#include "HdPassTimer.h" // HD (Claude) lot D1
 #include <cstring>
 #include <new>
 
@@ -22,8 +23,9 @@ namespace {
 #include "shaders/ao/HdAOBlur.spv.h"
 #include "shaders/ao/HdAOApply.spv.h"
 #include "shaders/ao/HdAOTemporal.spv.h"
+PassTimer::Timer s_passTimer; // HD (Claude) lot D1: GPU time of each AO pass, measure only (hdGpuPasses)
 constexpr uint32_t MaxSlots = 8, PassCount = 11, PipelineCount = 9;
-// HD: row-vector 4x4 helpers in double; world positions are large, the products are not.
+// HD (Claude): row-vector 4x4 helpers in double; world positions are large, the products are not.
 bool Invert(const double* m,double* out) {
     double a[4][8];
     for(int r=0;r<4;++r)for(int k=0;k<8;++k)a[r][k]=k<4?m[r*4+k]:(k-4==r?1:0);
@@ -129,6 +131,7 @@ bool Effect::Init(const WXL_VkRenderApi* api) {
     AO_FUNCTIONS(AO_LOAD)
 #undef AO_LOAD
     state_=s;
+    s_passTimer.Init(s->device); // HD (Claude) lot D1
     auto fail=[&](const char* why) { s->error=why;Shutdown(0);return false; };
     auto formats=reinterpret_cast<PFN_vkGetPhysicalDeviceFormatProperties>(s->device.getInstanceProcAddr(s->device.instance,"vkGetPhysicalDeviceFormatProperties"));
     if(!formats) return fail("format query missing");
@@ -216,14 +219,14 @@ bool Effect::Record(const WXL_VkStageContext&ctx,const Settings&settings){
         WXL_VkGBuffer g{};g.structSize=sizeof g;if(s->api->GetGBuffer(&g)&&g.valid&&g.serial==ctx.serial&&g.normalView&&g.extent.width==ctx.extent.width&&g.extent.height==ctx.extent.height&&
         (g.layout==VK_IMAGE_LAYOUT_GENERAL||g.layout==VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)&&(g.normalFormat==VK_FORMAT_R16G16B16A16_SFLOAT||g.normalFormat==VK_FORMAT_R32G32B32A32_SFLOAT)){
             normal=g.normalView;normalLayout=g.layout;c.flags[2]=1;}}
-    // HD: passes 0-4 depth mips, 5 GTAO, 6-8 denoise, 9 temporal (optional), 10 apply.
+    // HD (Claude): passes 0-4 depth mips, 5 GTAO, 6-8 denoise, 9 temporal (optional), 10 apply.
     const bool temporal=settings.temporal;const uint32_t previous=s->historyIndex,current=previous^1u;
     float reprojection[12]{};
     const bool reuse=temporal&&s->historySerial&&ctx.serial==s->historySerial+1&&s->Reprojection(ctx,settings.halfResolution,reprojection);
     c.blur[0]=temporal?float(ctx.serial%64):0; // noise frame index; 0 = the fixed pattern
-    slot.serial=s->lastSerial=ctx.serial;s->Barrier(ctx.cmd,slot);
+    slot.serial=s->lastSerial=ctx.serial;s_passTimer.Begin(ctx.cmd,ctx.frameSlot);s->Barrier(ctx.cmd,slot); // HD (Claude) lot D1: Begin
     for(uint32_t pass=0;pass<PassCount;++pass){
-        if(pass==9&&!temporal)continue;
+        if(pass==9&&!temporal){s_passTimer.Stamp(ctx.cmd,ctx.frameSlot);continue;} // HD (Claude) lot D1: Stamp
         uint32_t src=pass==7||pass>=9?6:5,dst=pass==6||pass==8?6:5;
         VkImageView ao=pass==10&&temporal?s->historyInfo[current].view:slot.images[src].view;
         VkImageView output=pass==9?s->historyInfo[current].view:slot.images[pass<5?pass:dst].view;
@@ -240,7 +243,7 @@ bool Effect::Record(const WXL_VkStageContext&ctx,const Settings&settings){
             push.blur[0]=16;push.blur[1]=reuse?1.0f:0.0f;push.blur[2]=.02f;push.blur[3]=.04f;} // max frames, history usable, clamp margin, depth tolerance
         uint32_t w=pass==10?s->width:(s->aoWidth+block-1)/block,h=pass==10?s->height:(s->aoHeight+block-1)/block;
         s->CmdBindPipeline(ctx.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,s->pipeline[pipeline]);s->CmdBindDescriptorSets(ctx.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,s->pipelineLayout,0,1,&slot.sets[pass],0,nullptr);
-        s->CmdPushConstants(ctx.cmd,s->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof push,&push);s->CmdDispatch(ctx.cmd,(w+7)/8,(h+7)/8,1);s->Between(ctx.cmd);
+        s->CmdPushConstants(ctx.cmd,s->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof push,&push);s->CmdDispatch(ctx.cmd,(w+7)/8,(h+7)/8,1);s->Between(ctx.cmd);s_passTimer.Stamp(ctx.cmd,ctx.frameSlot); // HD (Claude) lot D1: Stamp
     }
     slot.initialized=true;
     if(temporal){s->historyIndex=current;s->historySerial=ctx.serial;}else s->historySerial=0;
@@ -258,6 +261,7 @@ bool Effect::Shutdown(uint64_t completed) {
     for(auto pipeline:s->pipeline) if(pipeline) s->DestroyPipeline(s->device.device,pipeline,nullptr);
     if(s->pipelineLayout) s->DestroyPipelineLayout(s->device.device,s->pipelineLayout,nullptr);
     if(s->setLayout) s->DestroyDescriptorSetLayout(s->device.device,s->setLayout,nullptr);
+    s_passTimer.Shutdown(); // HD (Claude) lot D1
     delete s;state_=nullptr;return true;
 }
 uint64_t Effect::LastUsed() const {return state_?state_->lastSerial:0;}
@@ -270,6 +274,7 @@ Effect effect;
 Settings config;
 const WXL_VkRenderApi* renderApi=nullptr;
 void* registration=nullptr;
+CVar* gpuPasses=nullptr; // HD (Claude) lot D1
 CVar *enabled=nullptr,*radius=nullptr,*strength=nullptr,*debug=nullptr,*half=nullptr,*normals=nullptr,*info=nullptr,*quality=nullptr,*temporal=nullptr;
 bool gbRequested=false;
 const char* lastInfo="";
@@ -289,11 +294,14 @@ bool Init() {
     radius=Var("hdAORadius","HD: AO radius in yards (0.25..6)","1");
     strength=Var("hdAOStrength","HD: AO strength (0..3)","0.85");
     debug=Var("hdAODebug","HD: 1 shows AO alone","0",0);
-    half=Var("hdAOHalfRes","HD: GTAO: 0 full resolution / 1 bilateral half resolution","0");
+    half=Var("hdAOHalfRes","HD: GTAO: 0 full resolution / 1 bilateral half resolution","1"); // HD (Claude) lot A1: half resolution by default (Max 2026-11-05, -0.9 ms GPU)
     normals=Var("hdAONormals","HD: 0 depth normals (reference) / 1 valid wxl G-buffer normals","0");
     quality=Var("hdAOQuality","HD: XeGTAO 0 low / 1 medium / 2 high / 3 ultra","1");
     temporal=Var("hdAOTemporal","HD: GTAO 1 accumulates over frames (removes the grain) / 0 single frame","1");
     info=Var("hdAOInfo","HD: ambient occlusion status","off",0);
+    // HD (Claude) lot D1: measure only, set back to 0 at every start
+    gpuPasses=Var("hdGpuPasses","HD: 1 = GPU time of each AO and sun shadow pass in Logs\\ao-gpu.txt and Logs\\soleil-gpu.txt every 2 s (measure only, off at every start)","0",0);
+    if(gpuPasses&&gpuPasses->m_intValue!=0)gpuPasses->InternalSet("0",true,false,false,false);
     renderApi=wxl::ScriptMgr::GetInterface<const WXL_VkRenderApi>(WXL_VK_RENDER_API_NAME,WXL_VK_RENDER_API_VERSION);
     if(!renderApi || renderApi->structSize<offsetof(WXL_VkRenderApi,UnregisterStage)+sizeof(renderApi->UnregisterStage) ||
         !renderApi->RegisterStage || !renderApi->UnregisterStage || !effect.Init(renderApi)) {Info("AO Vulkan: Init failed");return false;}
@@ -320,6 +328,8 @@ void Resize() {
         Info("AO Vulkan: Resize failed; frame skipped");
 }
 void Record(const WXL_VkStageContext& ctx) {
+    {static const char* const names[11]={"0 profondeur","1 mip 1","2 mip 2","3 mip 3","4 mip 4","5 GTAO","6 flou 1","7 flou 2","8 flou 3","9 temporel","10 application"}; // HD (Claude) lot D1
+     s_passTimer.Poll(gpuPasses&&gpuPasses->m_intValue!=0,"Logs\\ao-gpu.txt","AO",names,11);}
     if(!effect.Record(ctx,config)) {Info(effect.Error());return;}
     static const char* const names[2][2][2]={{{"Vulkan XeGTAO: full resolution","Vulkan XeGTAO: full resolution, temporal"},
         {"Vulkan XeGTAO: bilateral half resolution","Vulkan XeGTAO: bilateral half resolution, temporal"}},

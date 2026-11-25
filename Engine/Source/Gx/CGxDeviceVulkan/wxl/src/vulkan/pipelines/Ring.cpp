@@ -36,34 +36,15 @@ namespace wxlvk::vk::pipelines::detail
      * its own). The cursor restarts at 0 in it; BeginFrame() moves the slot back to its own ring.
      *
      * @param uint32 slot : the frame slot
-     * @return bool ok : false past kRingSpill, or when a create failed
+     * @return bool ok : false only when a create failed (no fixed count, Claude RING1)
      */
     bool SpillRing(uint32_t slot)
     {
-        if (s.ringActive[slot] >= kRingSpill) return false;
         const uint32_t i = s.ringActive[slot];   // the spill index the slot moves to
         const loader::Device& d = *s.dapi;
-        if (s.ringSpill[slot][i].handle == VK_NULL_HANDLE)
+        if (i >= s.ringSpill[slot].size())        // Claude RING1: one more, as many as the frame needs
         {
-            if (s.ringSpillPool == VK_NULL_HANDLE)
-            {
-                VkDescriptorPoolSize size = {};
-                size.type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-                size.descriptorCount = wxlvk::vk::pipelines::kFrameSlots * kRingSpill;
-                VkDescriptorPoolCreateInfo pool = {};
-                pool.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-                pool.maxSets       = wxlvk::vk::pipelines::kFrameSlots * kRingSpill;
-                pool.poolSizeCount = 1;
-                pool.pPoolSizes    = &size;
-                const VkResult r = d.CreateDescriptorPool(s.device, &pool, nullptr, &s.ringSpillPool);
-                if (r != VK_SUCCESS)
-                {
-                    s.ringSpillPool = VK_NULL_HANDLE;
-                    SpillFailed("the ring spill's descriptor pool", r);
-                    return false;
-                }
-            }
-            memory::Buffer& b = s.ringSpill[slot][i];
+            memory::Buffer b;
             if (!memory::CreateBuffer(kRingBytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, memory::Where::Stream, b)
                 || !b.block.mapped)
             {
@@ -72,15 +53,32 @@ namespace wxlvk::vk::pipelines::detail
                 return false;
             }
             std::memset(b.block.mapped, 0, kRingBytes);   // as the slot's own ring (CreateRing)
-            VkDescriptorSetAllocateInfo alloc = {};
-            alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            alloc.descriptorPool     = s.ringSpillPool;
-            alloc.descriptorSetCount = 1;
-            alloc.pSetLayouts        = &s.regsLayout;
-            const VkResult r = d.AllocateDescriptorSets(s.device, &alloc, &s.ringSpillSets[slot][i]);
+            VkDescriptorPoolSize size = {};
+            size.type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+            size.descriptorCount = 1;
+            VkDescriptorPoolCreateInfo pool = {};
+            pool.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool.maxSets       = 1;
+            pool.poolSizeCount = 1;
+            pool.pPoolSizes    = &size;
+            VkDescriptorPool setPool = VK_NULL_HANDLE;
+            VkResult r = d.CreateDescriptorPool(s.device, &pool, nullptr, &setPool);
             if (r != VK_SUCCESS)
             {
-                s.ringSpillSets[slot][i] = VK_NULL_HANDLE;
+                memory::DestroyBuffer(b);
+                SpillFailed("a ring spill's descriptor pool", r);
+                return false;
+            }
+            VkDescriptorSetAllocateInfo alloc = {};
+            alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            alloc.descriptorPool     = setPool;
+            alloc.descriptorSetCount = 1;
+            alloc.pSetLayouts        = &s.regsLayout;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            r = d.AllocateDescriptorSets(s.device, &alloc, &set);
+            if (r != VK_SUCCESS)
+            {
+                d.DestroyDescriptorPool(s.device, setPool, nullptr);
                 memory::DestroyBuffer(b);
                 SpillFailed("a ring spill descriptor set", r);
                 return false;
@@ -91,12 +89,15 @@ namespace wxlvk::vk::pipelines::detail
             info.range  = kRingRange;
             VkWriteDescriptorSet write = {};
             write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet          = s.ringSpillSets[slot][i];
+            write.dstSet          = set;
             write.dstBinding      = 0;
             write.descriptorCount = 1;
             write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
             write.pBufferInfo     = &info;
             d.UpdateDescriptorSets(s.device, 1, &write, 0, nullptr);
+            s.ringSpill[slot].push_back(b);
+            s.ringSpillSets[slot].push_back(set);
+            s.ringSpillPools[slot].push_back(setPool);
             ++s.stats.ringSpillBuffers;
             wxl::ScriptMgr::Log(WXL_LOG_DEBUG, "vulkan: pipelines: frame slot %u spilled into ring buffer "
                                 "#%u (%u KiB more uniform room per frame)", slot, i + 2, kRingBytes / 1024);
@@ -113,14 +114,14 @@ namespace wxlvk::vk::pipelines::detail
      * on first use with the same size as the slot's own. BeginFrame() resets them all.
      *
      * @param uint32 slot : the frame slot
-     * @return bool ok : false past kPoolSpill, or when the create failed
+     * @return bool ok : false only when the create failed (no fixed count, Claude RING1)
      */
     bool SpillPool(uint32_t slot)
     {
-        if (s.poolActive[slot] >= kPoolSpill) return false;
         const uint32_t i = s.poolActive[slot];
-        if (s.poolSpill[slot][i] == VK_NULL_HANDLE)
+        if (i >= s.poolSpill[slot].size())        // Claude RING1: one more, as many as the frame needs
         {
+            VkDescriptorPool made = VK_NULL_HANDLE;
             VkDescriptorPoolSize size = {};
             size.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             size.descriptorCount = kSetsPerPool * 4;
@@ -129,13 +130,13 @@ namespace wxlvk::vk::pipelines::detail
             pool.maxSets       = kSetsPerPool;
             pool.poolSizeCount = 1;
             pool.pPoolSizes    = &size;
-            const VkResult r = s.dapi->CreateDescriptorPool(s.device, &pool, nullptr, &s.poolSpill[slot][i]);
+            const VkResult r = s.dapi->CreateDescriptorPool(s.device, &pool, nullptr, &made);
             if (r != VK_SUCCESS)
             {
-                s.poolSpill[slot][i] = VK_NULL_HANDLE;
                 SpillFailed("a spill descriptor pool", r);
                 return false;
             }
+            s.poolSpill[slot].push_back(made);
             ++s.stats.poolSpillPools;
         }
         s.poolActive[slot] = i + 1;
@@ -335,7 +336,7 @@ namespace wxlvk::vk::pipelines::detail
         binding.binding         = 0;
         binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
         binding.descriptorCount = 1;
-        binding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT;
+        binding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;   // Claude B3: the terrain's pixel twins read the chunk's rows
         VkDescriptorSetLayoutCreateInfo layout = {};
         layout.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layout.bindingCount = 1;
@@ -359,6 +360,8 @@ namespace wxlvk::vk::pipelines::detail
             }
             std::memset(s.boneRing[i].block.mapped, 0, kBoneRingBytes);
             s.boneCursor[i] = 0;
+            s.boneBytes[i]  = kBoneRingBytes;   // Claude OS2
+            s.boneWanted[i] = 0;
         }
 
         VkDescriptorPoolSize size = {};
@@ -410,4 +413,52 @@ namespace wxlvk::vk::pipelines::detail
                             "palettes of up to %u bytes at minStorageBufferOffsetAlignment %u",
                             kBoneRingBytes / 1024, kFrameSlots, kBoneRange, s.boneAlign);
     }
+
+    /**
+     * Claude OS2: gives one slot a larger palette ring. Called by BeginFrame() after the wait on the slot's
+     * fence (no frame of the slot in flight) and after the record thread's drain (nothing queued reads it):
+     * a new buffer, its set rewritten to it, the old buffer destroyed. On failure the slot keeps its ring.
+     *
+     * @param uint32_t slot  : the frame slot
+     * @param uint32_t bytes : the new size
+     * @return bool : true when the slot now has the new ring
+     */
+    bool GrowBones(uint32_t slot, uint32_t bytes)
+    {
+        if (!s.bonesReady || slot >= kFrameSlots || bytes <= s.boneBytes[slot]) return false;
+        memory::Buffer grown;
+        if (!memory::CreateBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, memory::Where::Stream, grown) || !grown.block.mapped)
+        {
+            if (grown.handle != VK_NULL_HANDLE) memory::DestroyBuffer(grown);
+            wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: pipelines: bone-palette ring of slot %u could not grow to %u KiB "
+                                "(Claude OS2); it keeps %u KiB", slot, bytes / 1024, s.boneBytes[slot] / 1024);
+            return false;
+        }
+        std::memset(grown.block.mapped, 0, bytes);
+        VkDescriptorBufferInfo info = {};
+        info.buffer = grown.handle;
+        info.offset = 0;
+        info.range  = kBoneRange;
+        VkWriteDescriptorSet write = {};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = s.bonesSets[slot];
+        write.dstBinding      = 0;
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+        write.pBufferInfo     = &info;
+        s.dapi->UpdateDescriptorSets(s.device, 1, &write, 0, nullptr);
+        memory::DestroyBuffer(s.boneRing[slot]);
+        s.boneRing[slot] = grown;
+        wxl::ScriptMgr::Log(WXL_LOG_INFO, "vulkan: pipelines: bone-palette ring of slot %u grown from %u to %u KiB "
+                            "(Claude OS2: its last frame asked for more)", slot, s.boneBytes[slot] / 1024, bytes / 1024);
+        s.boneBytes[slot] = bytes;
+        ++s.boneGrowths;
+        return true;
+    }
+}
+
+namespace wxlvk::vk::pipelines
+{
+    // Claude voie B: the bone-palette set layout (set 2), for the GPU-driven draws' own palette (vulkan/GpuFixed.cpp).
+    VkDescriptorSetLayout BonesLayout() { return detail::s.bonesReady ? detail::s.bonesLayout : VK_NULL_HANDLE; }
 }

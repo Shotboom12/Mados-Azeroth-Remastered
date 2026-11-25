@@ -30,7 +30,7 @@ constexpr float kSurfaceReachPerLampReach = 2.0f;
 constexpr float kPointFalloffPerYard = 0.7f;
 constexpr float kPointFalloffPerSquareYard = 0.03f;
 constexpr float kMinRankYards = 1.0f;
-constexpr int kWindowSlots = 32;
+constexpr int kWindowSlots = 128; // Claude LV41: was 32 (dense quarters lost their farther windows)
 constexpr float kWindowOutsetYards = 0.3f;
 constexpr float kWindowLightPerSquareYard = 0.5f;
 constexpr float kMinWindowLight = 0.3f;
@@ -86,6 +86,13 @@ enum LampTableRow
     kLampViewRow,
     kLampEmitRow,
     kLampCoreRow,
+    // Claude LV34: the light's shadow cube (LvSuite, after the selection): x the cube + 1 (0: none ready), y its radius,
+    // z how far it has faded in (0..1, from its first build, kLampFadeSeconds), w 1 = the light wants a cube (fixed lamp, window).
+    kLampCubeRow,
+    // Claude LV37: where the light's cube was drawn (xyz, camera-relative, in view space) and its near plane (w > 0: the side
+    // faces', the up and down faces taking the atlas row's; w < 0: -w for all six, a moving light's). A moving light's cube is
+    // drawn where it stood the frame before (the cubes are drawn before the table): its shadow is read from there.
+    kLampCubeCentreRow,
     kLampTableRows,
 };
 

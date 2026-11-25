@@ -28,6 +28,8 @@ class C44Matrix;
 namespace HD {
     // Starts compiling our grass shaders on a background thread (once; called from CDetailDoodad::Initialize).
     void DetailDoodadShadersStart();
+    // Claude BLZ1: called at the end of CWorld::LoadMap (under the loading screen): returns once the compile is over.
+    void DetailDoodadShadersWait();
 
     // Called in CDetailDoodad::InitializeRenderState just before the grass pixel shader is bound, once per frame:
     // gives the 6 vertex and 8 pixel grass shaders our code or Blizzard's (all of them together), to match
@@ -39,7 +41,7 @@ namespace HD {
     // matrix) (nothing when Blizzard's shaders are in place).
     void DetailDoodadVertexConstants(const C44Matrix& world);
 
-    // Called in CDetailDoodad::Destroy before the shaders are released: gives them Blizzard's code back.
+    // Called in CDetailDoodad::Destroy before the shaders are released (Claude BLZ1: their code stays ours).
     void DetailDoodadShadersForget();
 
     // hdGrassBuffers (DetailDoodad.cpp): called in CWorldScene::RenderDetailDoodads before the first grass draw,
@@ -49,6 +51,10 @@ namespace HD {
     // HD: hdGrassKeep. Frames a chunk's grass stays (buffers filled, instances placed) after it was last drawn,
     // instead of 3.3.5's 10 (buffers) and 20 (instances): turning the camera then finds it ready. 0 = native.
     uint32_t DetailDoodadKeepFrames();
+
+    // Claude 2026-11-04 lot C2: grass clock, +1 per CMap::ProcessDetailDoodadUpdateList. CDetailDoodadInst::m_age holds
+    // the clock of the instance's last draw; its age (3.3.5's frame counter) is g_detailDoodadClock - m_age.
+    extern uint32_t g_detailDoodadClock;
 }
 
 #endif

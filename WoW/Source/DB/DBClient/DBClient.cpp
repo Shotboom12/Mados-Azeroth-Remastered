@@ -1,4 +1,5 @@
 #include "WoW/Source/DB/DBClient/DBClient.h"
+#include "WoW/Source/WorldClient/HD/HdArLight.h" // AR1: the world tables, ours
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/Storm/H/storm.h"
@@ -731,17 +732,8 @@ WowClientDB<SoundFilterRec> g_soundFilterDB;
 // STATIC: 0x00AD5120
 WowClientDB<SoundFilterElemRec> g_soundFilterElemDB;
 
-// STATIC: 0x00AF4998
-WowClientDB<LightSkyboxRec> g_lightSkyboxDB;
-
-// STATIC: 0x00AF49BC
-WowClientDB_RLE<LightIntBandRec> g_lightIntBandDB;
-
-// STATIC: 0x00AF49E0
-WowClientDB_RLE<LightFloatBandRec> g_lightFloatBandDB;
-
-// STATIC: 0x00AF4A04
-WowClientDB<LightParamsRec> g_lightParamsDB;
+// AR1 (20 nov 2026): LightSkybox, LightIntBand, LightFloatBand and LightParams are no longer loaded
+// (were 0x00AF4998..0x00AF4A04). Their converted copy is forever_data\ar_world_light.txt (HD/HdArLight.h).
 
 // STATIC: 0x00AF4A28
 WowClientDB<LightRec> g_lightDB;
@@ -861,13 +853,6 @@ static void StaticDBLoadAll(void (WowClientDB_Base::*loadFunction)(const char*, 
     (g_lfgDungeonExpansionDB.*loadFunction)(__FILE__, __LINE__);
     (g_lfgDungeonGroupDB.*loadFunction)(__FILE__, __LINE__);
     (g_lfgDungeonsDB.*loadFunction)(__FILE__, __LINE__);
-    (g_lightDB.*loadFunction)(__FILE__, __LINE__);
-    (g_lightFloatBandDB.*loadFunction)(__FILE__, __LINE__);
-    (g_lightIntBandDB.*loadFunction)(__FILE__, __LINE__);
-    (g_lightParamsDB.*loadFunction)(__FILE__, __LINE__);
-    (g_lightSkyboxDB.*loadFunction)(__FILE__, __LINE__);
-    (g_liquidTypeDB.*loadFunction)(__FILE__, __LINE__);
-    (g_liquidMaterialDB.*loadFunction)(__FILE__, __LINE__);
     (g_loadingScreensDB.*loadFunction)(__FILE__, __LINE__);
     (g_loadingScreenTaxiSplinesDB.*loadFunction)(__FILE__, __LINE__);
     (g_lockDB.*loadFunction)(__FILE__, __LINE__);
@@ -1141,6 +1126,8 @@ void ClientDBInitialize() {
     }
 
     StaticDBLoadAll(&WowClientDB_Base::Load);
+    // AR1 (20 nov 2026): Light, LiquidType and LiquidMaterial come from forever_data\ar_world_light.txt, not the .dbc.
+    HD::ArLight::LoadWorldTables(g_lightDB, g_liquidTypeDB, g_liquidMaterialDB);
     GameTablesInitialize();
     InitResistances();
     InitTerrainTypeFlags();

@@ -301,7 +301,7 @@ void Frame() {
                                                                     : "TEST impossible: fonctions GPU indisponibles";
         }
     }
-    // HD 2026-11-02 (DLSS): the upscaler's own status is hdDLSSInfo (DLSS, or FSR when DLSS cannot run).
+    // Claude 2026-11-02 (DLSS): the upscaler's own status is hdDLSSInfo (DLSS, or FSR when DLSS cannot run).
     if (o.dlss && (g_mode == Upscale::CameraOnly || g_mode == Upscale::CameraOnlyFlipped))
         g_applied.upscaleWhy = "TEST 2: DLSS demande (etat dans hdDLSSInfo)";
     if (g_failure && g_mode != Upscale::Off) g_applied.upscaleWhy = g_failure;

@@ -269,6 +269,7 @@ class CWorldScene {
     static void Render(const C3Vector& cameraPos, float time);
     static void RenderChunks();
     static void RenderMapObjDefGroups();
+    static void HdRenderGround(); // Claude ORDRE1
     static void RenderDetailDoodads();
     static void RenderOccluders();
     static void RenderDebugFrustum();

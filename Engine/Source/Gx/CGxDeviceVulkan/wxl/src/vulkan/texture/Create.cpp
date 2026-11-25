@@ -19,6 +19,20 @@
 
 namespace wxlvk::vk::texture::detail
 {
+    // HD TEX1 (6 nov 2026): the live image count in the journal each time it has moved by 1024 since the last line,
+    // up or down, so a long session shows whether textures come back (zone changes) or only pile up.
+    void NoteCount()
+    {
+        static uint32_t logged = 0;
+        const uint32_t now = s.ownedCount;
+        if (now >= logged + 1024 || now + 1024 <= logged)
+        {
+            logged = now;
+            wxl::ScriptMgr::Log(WXL_LOG_INFO, "vulkan: texture: %u image(s) live (at most %u), %u made since the start (HD TEX1)",
+                                now, kMaxImages, s.nextId);
+        }
+    }
+
     /**
      * The one create path behind CreateMipped(), CreateCube() and CreateTarget(): a 2D image with `levels` mip
      * levels and, for a cube, six array layers, CUBE_COMPATIBLE and a cube view. One function
@@ -227,6 +241,7 @@ namespace wxlvk::vk::texture::detail
         s.owned[s.ownedCount].block  = block;
         HashInsert(s.ownedCount);
         ++s.ownedCount;
+        NoteCount();
 
         out.handle = image;
         out.view   = imageView;

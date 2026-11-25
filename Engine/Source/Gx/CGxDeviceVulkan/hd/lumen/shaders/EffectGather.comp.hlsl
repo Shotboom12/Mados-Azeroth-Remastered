@@ -287,7 +287,67 @@ EffectSums LvPixel(float2 texel)
     return sums;
 }
 
+#ifdef HD_GATHER_OPT
+// GATHER1 : un groupe par case 8x8, un fil par pixel ; le fil 0 additionne dans le meme ordre y,x.
+groupshared float4 gLight[64];
+groupshared float4 gPlace[64];
+groupshared uint gCounted[2];
+[numthreads(8,8,1)] void CSMain(uint3 cell : SV_GroupID, uint3 lid : SV_GroupThreadID, uint index : SV_GroupIndex) {
+uint w,h;LvOutput.GetDimensions(w,h);
+if (index < 2) gCounted[index] = 0;
+GroupMemoryBarrierWithGroupSync();
+float2 local = float2(cell.xy) * kCellPixels + float2(lid.xy) + 0.5;
+float2 uv = local * SceneTexelSize();
+float3 now = sSceneNow.SampleLevel(LvPoint,uv,0).rgb;
+float3 before = sSceneBefore.SampleLevel(LvPoint,uv,0).rgb;
+if(LvConstants[11].x>0.5){now=now.bgr;before=before.bgr;}
+float3 added = max(now - before, 0);
+float gained = dot(added, kLuminanceWeights);
+float energy = all(uv < 1) ? max(gained - Threshold(), 0) : 0;
+[branch] if (energy > 0)
+{
+    float2 pixel = ViewportOrigin() + local;
+    float depthBefore = SampleDepth(sDepthBefore, pixel);
+    float depthNow = SampleDepth(sDepthNow, pixel);
+    float viewZ = LinearDepth(depthBefore);
+    bool counted = abs(depthNow - depthBefore) <= DepthChange() && !BeyondFarClip(depthBefore) &&
+                   viewZ <= FarthestYards();
+    [branch] if (counted)
+    {
+        float inverseDepth = 1 / max(viewZ, NearestYards());
+        // les facteurs, pas les produits : le fil 0 refait chaque multiplication-addition (mad) comme la boucle d'origine
+        gLight[index] = float4(added, energy / gained);
+        gPlace[index] = float4(uv, energy, inverseDepth);
+        InterlockedOr(gCounted[index >> 5], 1u << (index & 31));
+    }
+}
+GroupMemoryBarrierWithGroupSync();
+if (index != 0 || cell.x >= w || cell.y >= h) return;
+float4 light = 0;
+float4 place = 0;
+// seuls les pixels comptes, dans l'ordre croissant (y puis x), comme la boucle d'origine
+[loop] for (uint half = 0; half < 2; half++)
+{
+    uint bits = gCounted[half];
+    [loop] while (bits != 0)
+    {
+        uint i = half * 32 + firstbitlow(bits);
+        bits &= bits - 1;
+        float4 a = gLight[i];
+        float4 p = gPlace[i];
+        light.xyz = mad(a.xyz, a.w, light.xyz);
+        light.w = mad(p.z, p.w, light.w);
+        place.xy = mad(p.z, p.xy, place.xy);
+        place.z += 1;
+        place.w = max(place.w, p.w);
+    }
+}
+LvOutput[cell.xy] = light * SumScale();
+LvOutput1[cell.xy] = float4(place.xyz * SumScale(), place.w);
+}
+#else
 [numthreads(8,8,1)] void CSMain(uint3 id : SV_DispatchThreadID) {
 uint w,h;LvOutput.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;
 EffectSums sums=LvPixel(float2(id.xy));LvOutput[id.xy]=sums.light;LvOutput1[id.xy]=sums.place;
 }
+#endif

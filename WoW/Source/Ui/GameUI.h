@@ -518,6 +518,10 @@ struct TAINTEVENT : public TSHashObject<TAINTEVENT, HASHKEY_STR> {
 
 void LoadScriptFunctions();
 int32_t IsInFlyableArea();
+// Claude 2026-11-12 lot CF1 : vol en Azeroth selon la regle Cataclysm 15595 (hdCataFlight, 0 par defaut = WotLK inchange)
+void CataFlightRegisterCVars();
+int32_t CataFlightEnabled();
+uint32_t CataFlightLicenseSpell();
 int32_t CanEquipInSlotCallback(const CGItem_C* item, void* param);
 int32_t FindItemClassTypeCallback(const CGItem_C* item, void* param);
 void UnloadScriptFunctions();

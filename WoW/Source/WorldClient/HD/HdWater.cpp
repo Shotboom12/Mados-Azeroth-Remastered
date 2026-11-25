@@ -136,17 +136,12 @@ void main(float4 iPos : POSITION0, float4 iUv0 : TEXCOORD0, float4 iUv1 : TEXCOO
 }
 )HLSL";
 
-    // Pixel shader (ps_3_0): HD_ORIGINAL 1 = psLiquidProcWater rewritten from its bytecode (hdWater 2, checked equal on
-    // 2000 random pixels), HD_ORIGINAL 0 = Forever's PBR water (hdWater 1).
+    // Pixel shader (ps_3_0): Forever's PBR water. AR1: the 3.3.5 rewrite (old hdWater 2) is gone.
     const char* kPixelShader =
-R"HLSL(// Waystone HD water pixel shader (ps_3_0), used with hd_water_vs.hlsl when hdWater is on.
-//   HD_ORIGINAL 1: psLiquidProcWater.bls rewritten from its bytecode (hdWater 2: must look exactly like hdWater 0).
-//   HD_ORIGINAL 0: WoW Forever's PBR water. The lighting is Forever's deferred water shader (PBRWater, "DEF" in
+R"HLSL(// Waystone HD water pixel shader (ps_3_0), used with hd_water_vs.hlsl.
+//   WoW Forever's PBR water. The lighting is Forever's deferred water shader (PBRWater, "DEF" in
 //                  water_spec.md 3.6) moved into this forward pass: ForeverWater() below is that shader's math line
 //                  for line; what feeds it (slopes, foam, sky, sun lobe) is approximated from what 3.3.5 has.
-#ifndef HD_ORIGINAL
-#define HD_ORIGINAL 0
-#endif
 #ifndef HD_FFT
 #define HD_FFT 0      // HD: 1 = slopes from the FFT wave cascades (hdWaterWaves 1) instead of the 3.3.5 normal maps
 #endif
@@ -157,10 +152,8 @@ sampler2D depthRamp : register(s2); // 3.3.5 procedural depth colour ramp (textu
 sampler2D lakeTex   : register(s3); // 3.3.5 animated lake/ocean texture (texture 5): alpha = 3.3.5 glint mask, our foam
 sampler2D bumpA     : register(s4); // 3.3.5 animated normal map, near
 sampler2D bumpB     : register(s5); // 3.3.5 animated normal map, far
-#if !HD_ORIGINAL
 sampler2D sceneDepth : register(s6); // HD: linear view depth of the world drawn so far (R32F, yards)
 sampler2D sceneColor : register(s7); // HD: copy of the world image drawn so far (gamma)
-#endif
 #if HD_FFT
 // HD: FFT wave cascades (HdWaterWaves.cpp): r, g = slopes dh/dx, dh/dy, b = height (yards), a = Jacobian
 sampler2D fft0 : register(s8);
@@ -178,7 +171,6 @@ float4 cDiffuse    : register(c8);   // CM2Lighting sun colour (gamma)
 float4 cSpecular   : register(c9);   // CM2Lighting specular, w = 50
 float4 cParams0    : register(c10);  // 3.3.5 LiquidType floats 11-14 (x = near/far normal blend rate)
 float4 cParams1    : register(c11);  // 3.3.5 LiquidType floats 15-17
-#if !HD_ORIGINAL
 // HD: our constants, set by HD::WaterBindProcWater (HdWater.cpp)
 float4 cModelView3[3] : register(c12); // rows of the model -> view rotation (xyz)
 float4 cSunView    : register(c15);  // xyz = direction to the sun, view space
@@ -206,7 +198,6 @@ sampler2D planarReflection : register(s13); // HD: hdWaterPlanar's mirror image 
 float4 cPlanar : register(c38);             // HD: xy = 1 / its size
 float4 cMainToMirror[4] : register(c39);    // HD: rows: view space (this water's) -> the mirror image's clip space
 #endif
-#endif
 
 // 3.3.5: one tap of a normal map, z rebuilt from xy
 float3 DecodeN(float2 t)
@@ -216,47 +207,6 @@ float3 DecodeN(float2 t)
     return float3(n, z);
 }
 
-#if HD_ORIGINAL
-
-float4 main(float3 iT : TEXCOORD4, float3 iB : TEXCOORD5, float3 iN : TEXCOORD6, float4 iUvA : TEXCOORD0,
-            float4 iUvB : TEXCOORD1, float4 iUvC : TEXCOORD2, float3 iWorld : TEXCOORD3, float iFog : FOG) : COLOR0
-{
-    float4 a0 = tex2D(bumpA, iUvA.xy);
-    float4 a1 = tex2D(bumpA, iUvA.wz);
-    float4 b0 = tex2D(bumpB, iUvB.xy);
-    float4 b1 = tex2D(bumpB, iUvB.wz);
-    float2 na0 = a0.xy * 2.0 + -1.0;
-    float2 na1 = a1.wz * 2.0 + -1.0;
-    float2 nb0 = b0.xy * 2.0 + -1.0;
-    float2 nb1 = b1.wz * 2.0 + -1.0;
-    float3 nA = float3(na0, 1.0 / rsqrt(1.0 - dot(na0, na0))) + float3(na1, 1.0 / rsqrt(1.0 - dot(na1, na1)));
-    float3 nB = normalize(float3(nb0, 1.0 / rsqrt(1.0 - dot(nb0, nb0))) + float3(nb1, 1.0 / rsqrt(1.0 - dot(nb1, nb1))));
-    float3 rel = iWorld - cCamera.xyz;
-    float invH = rsqrt(dot(rel.xy, rel.xy));
-    float blend = saturate((1.0 / invH) * cParams0.x + 0.5);
-    float3 n = blend * (nA * rsqrt(dot(nA, nA)) - nB) + nB;
-    float3 N = float3(dot(iT, n), dot(iB, n), dot(iN, n));
-    float3 V = rel * invH;
-    float3 H = normalize(rel * invH + cSunDirPS.xyz);
-    float3 spec = pow(saturate(dot(H, N)), cSpecular.w) * cSpecular.rgb;
-    float F = 1.0 - saturate(dot(-V, N));
-    F = F * F;
-    float4 ramp = tex2D(depthRamp, iUvC.xy);
-    float cosI = dot(V, N);
-    float k = 1.0 - cParams0.y * cParams0.y * (1.0 - cosI * cosI);
-    float ok = k >= 0.0 ? 1.0 : 0.0;
-    float rt = 1.0 / rsqrt(k * ok);
-    float3 refr = (ok * cParams0.y) * V.xzy - (ok * cParams0.y * cosI + rt) * N.xzy;
-    float3 refl = N.xzy * -(cosI + cosI) + V.xzy;
-    float3 under = texCUBE(cubeA, refr).rgb + ramp.rgb;
-    float3 over = texCUBE(cubeB, refl).rgb;
-    float3 col = lerp(under, over, cParams0.w * F + cParams0.z);
-    float4 glint = tex2D(lakeTex, iUvC.wz);
-    col = spec * glint.a * 4.0 * (cParams1.z * F + cParams1.y) + col;
-    return float4(lerp(cFogColor.rgb, col, iFog), cParams1.x * F + ramp.a);
-}
-
-#else
 
 // ---------------------------------------------------------------------------------------------------------------
 // The inputs ForeverWater() reads where Forever reads its textures. Approximations (water_spec.md 4, Stage 2):
@@ -709,7 +659,6 @@ float4 main(float3 iT : TEXCOORD4, float3 iB : TEXCOORD5, float3 iN : TEXCOORD6,
     return float4(lerp(cFogColor.rgb, outG, iFog), 1.0);
 }
 
-#endif
 )HLSL";
 
     // The world depth (INTZ) to linear view depth (R32F), before the liquids.
@@ -737,7 +686,7 @@ float4 main(float2 vpos : VPOS) : COLOR0
     typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 
     enum { StateIdle, StateCompiling, StateReady, StateFailed };
-    enum { CodeVertex = 0, CodePbr = 1, CodeOriginal = 2, CodeDepth = 3, CodePbrFft = 4, CodePlanar = 5, CodePlanarFft = 6, CodePlanarLite = 7, CodePlanarLiteFft = 8, CodeCount = 9 }; // HD: + FFT variant, + hdWaterPlanar (SSR on top, or alone)
+    enum { CodeVertex = 0, CodePbr = 1, CodeDepth = 2, CodePbrFft = 3, CodePlanar = 4, CodePlanarFft = 5, CodePlanarLite = 6, CodePlanarLiteFft = 7, CodeCount = 8 }; // HD: + FFT variant, + hdWaterPlanar (SSR on top, or alone)
 
     // Pixel constants we add (hd_water_ps.hlsl): c12..c33
     const uint32_t kFirstConst = 12;
@@ -751,7 +700,6 @@ float4 main(float2 vpos : VPOS) : COLOR0
     std::vector<uint8_t> s_code[CodeCount]; // written by the compile thread before s_state = StateReady
     char s_threadInfo[200] = "";            // written by the compile thread before s_state changes to Ready/Failed
 
-    CVar* s_mode = nullptr;
     CVar* s_debug = nullptr;
     CVar* s_body = nullptr;
     CVar* s_reflect = nullptr;
@@ -760,7 +708,7 @@ float4 main(float2 vpos : VPOS) : COLOR0
     char s_lastInfo[260] = "";
 
     // Our shaders as client shader objects (the client binds them and keeps its state cache right); never deleted.
-    CGxShader* s_shaders[8] = {}; // vertex, PBR pixel, 3.3.5-copy pixel, HD: PBR pixel with FFT waves, HD: planar (+ FFT),
+    CGxShader* s_shaders[7] = {}; // vertex, PBR pixel, HD: PBR pixel with FFT waves, HD: planar (+ FFT),
                                   // planar alone (+ FFT)
     int32_t s_longShaders = -1;   // HD: the card takes ps_3_0 shaders longer than 512 slots (-1 = not asked yet)
     const float kWhitecapThreshold = 0.75f; // HD: Jacobian under which the FFT crests foam (ours, not Forever's)
@@ -832,7 +780,6 @@ float4 main(float2 vpos : VPOS) : COLOR0
         static bool registered = false;
         if (registered) return;
         registered = true;
-        s_mode = CVar::Register("hdWater", "HD: 1 = WoW Forever PBR water, 2 = our shaders with the 3.3.5 look (test), 0 = Blizzard water", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_debug = CVar::Register("hdWaterDebug", "HD: 1 = water depth, 2 = scattering, 3 = reflections, 4 = foam, 5 = roughness, 6 = world depth, 7 = world under the water, 8 = reflection hits and steps (test views)", 0, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_body = CVar::Register("hdWaterBody", "HD: strength of the water's own colour, 1 = Forever", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_reflect = CVar::Register("hdWaterReflect", "HD: screen-space reflections of the world on the water, 1 = on (Forever), 0 = sky only", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -844,10 +791,6 @@ float4 main(float2 vpos : VPOS) : COLOR0
         if (!s_info || !strcmp(s_lastInfo, text)) return;
         snprintf(s_lastInfo, sizeof(s_lastInfo), "%s", text);
         s_info->Set(text, true, false, false, false);
-    }
-
-    int32_t Mode() {
-        return s_mode ? s_mode->m_intValue : 0;
     }
 
     float Clamp(float v, float lo, float hi) {
@@ -870,25 +813,23 @@ float4 main(float2 vpos : VPOS) : COLOR0
             s_state.store(StateFailed);
             return;
         }
-        struct Job { const char* source; const char* name; const char* profile; const char* original; const char* fft; const char* planar; };
+        struct Job { const char* source; const char* name; const char* profile; const char* fft; const char* planar; };
         const Job jobs[CodeCount] = {
-            { kVertexShader, "HdWaterVS", "vs_3_0", nullptr, nullptr, nullptr },
-            { kPixelShader, "HdWaterPS", "ps_3_0", "0", nullptr, nullptr },
-            { kPixelShader, "HdWaterPS335", "ps_3_0", "1", nullptr, nullptr },
-            { kDepthShader, "HdWaterDepth", "ps_3_0", nullptr, nullptr, nullptr },
-            { kPixelShader, "HdWaterPSFft", "ps_3_0", "0", "1", nullptr }, // HD: FFT waves (hdWaterWaves 1)
-            { kPixelShader, "HdWaterPSPlanar", "ps_3_0", "0", nullptr, "2" }, // HD: hdWaterPlanar + the SSR (about 550 slots)
-            { kPixelShader, "HdWaterPSPlanarFft", "ps_3_0", "0", "1", "2" },
-            { kPixelShader, "HdWaterPSPlanarLite", "ps_3_0", "0", nullptr, "1" }, // HD: hdWaterPlanar alone (512-slot cards)
-            { kPixelShader, "HdWaterPSPlanarLiteFft", "ps_3_0", "0", "1", "1" },
+            { kVertexShader, "HdWaterVS", "vs_3_0", nullptr, nullptr },
+            { kPixelShader, "HdWaterPS", "ps_3_0", nullptr, nullptr },
+            { kDepthShader, "HdWaterDepth", "ps_3_0", nullptr, nullptr },
+            { kPixelShader, "HdWaterPSFft", "ps_3_0", "1", nullptr }, // HD: FFT waves (hdWaterWaves 1)
+            { kPixelShader, "HdWaterPSPlanar", "ps_3_0", nullptr, "2" }, // HD: hdWaterPlanar + the SSR (about 550 slots)
+            { kPixelShader, "HdWaterPSPlanarFft", "ps_3_0", "1", "2" },
+            { kPixelShader, "HdWaterPSPlanarLite", "ps_3_0", nullptr, "1" }, // HD: hdWaterPlanar alone (512-slot cards)
+            { kPixelShader, "HdWaterPSPlanarLiteFft", "ps_3_0", "1", "1" },
         };
         for (int32_t i = 0; i < CodeCount; i++) {
-            D3D_SHADER_MACRO macros[4] = {};
-            if (jobs[i].original) { macros[0].Name = "HD_ORIGINAL"; macros[0].Definition = jobs[i].original; }
-            if (jobs[i].fft) { macros[1].Name = "HD_FFT"; macros[1].Definition = jobs[i].fft; }
+            D3D_SHADER_MACRO macros[3] = {};
+            if (jobs[i].fft) { macros[0].Name = "HD_FFT"; macros[0].Definition = jobs[i].fft; }
             // HD: hdWaterPlanar's permutations (the macro array stays contiguous without HD_FFT)
             if (jobs[i].planar) {
-                int slot = jobs[i].fft ? 2 : 1;
+                int slot = jobs[i].fft ? 1 : 0;
                 macros[slot].Name = "HD_PLANAR"; macros[slot].Definition = jobs[i].planar;
             }
             ID3DBlob* code = nullptr;
@@ -925,8 +866,8 @@ float4 main(float2 vpos : VPOS) : COLOR0
     bool EnsureShaders() {
         if (s_state.load() != StateReady) return false;
         if (s_shaders[0]) return true;
-        const int32_t codes[8] = { CodeVertex, CodePbr, CodeOriginal, CodePbrFft, CodePlanar, CodePlanarFft, CodePlanarLite, CodePlanarLiteFft };
-        for (int32_t i = 0; i < 8; i++) {
+        const int32_t codes[7] = { CodeVertex, CodePbr, CodePbrFft, CodePlanar, CodePlanarFft, CodePlanarLite, CodePlanarLiteFft };
+        for (int32_t i = 0; i < 7; i++) {
             if (s_code[codes[i]].empty()) continue;
             CGxShader* shader = new CGxShader();
             shader->m_refCount = 1;
@@ -1219,21 +1160,10 @@ void HD::WaterBeginLiquidPass(bool cameraInLiquid) {
     s_passActive = false;
     s_drawsPbr = 0;
     s_drawsKept = 0;
-    int32_t mode = Mode();
-    if (mode == 0) {
-        SetInfo("off");
-        return;
-    }
-    StartCompile();
+    StartCompile(); // AR1: always our water (no hdWater: the Blizzard / 3.3.5 modes are gone)
     int32_t state = s_state.load();
     if (state == StateFailed) { SetInfo(s_threadInfo); return; }
     if (state != StateReady || !EnsureShaders()) { SetInfo("compiling (Blizzard water until done)"); return; }
-    if (mode != 1) {
-        char text[260];
-        snprintf(text, sizeof(text), "2 = our shaders with the 3.3.5 look | %s", s_threadInfo);
-        SetInfo(text);
-        return;
-    }
     LoadTypes();
     if (cameraInLiquid) { s_passNote = "camera under water: Blizzard water"; ShowPassInfo(); return; }
 
@@ -1264,7 +1194,7 @@ void HD::WaterBeginLiquidPass(bool cameraInLiquid) {
     }
     // HD: hdWaterPlanar: the mirrored sky + terrain, before the world image and depth are copied (its own target and
     // depth; it puts the client's state back)
-    if ((s_shaders[4] || s_shaders[5] || s_shaders[6] || s_shaders[7]) && (!s_reflect || s_reflect->m_floatValue > 0.0f)) HD::WaterPlanarRender(device, desc.Width, desc.Height);
+    if ((s_shaders[3] || s_shaders[4] || s_shaders[5] || s_shaders[6]) && (!s_reflect || s_reflect->m_floatValue > 0.0f)) HD::WaterPlanarRender(device, desc.Width, desc.Height);
     // the world image before the liquids (hdFog's scene texture; hdFog copies the finished world into it later)
     s_sceneTex = HD::FogCopyWorldColor(color, desc.Width, desc.Height);
     if (!s_sceneTex) {
@@ -1283,24 +1213,17 @@ void HD::WaterBeginLiquidPass(bool cameraInLiquid) {
 }
 
 void HD::WaterEndLiquidPass() {
-    if (s_passActive || (Mode() == 1 && (s_drawsPbr || s_drawsKept))) ShowPassInfo();
+    if (s_passActive || s_drawsPbr || s_drawsKept) ShowPassInfo();
     s_passActive = false;
 }
 
 bool HD::WaterBindProcWater(Liquid::CMaterialSettings* settings, uint32_t lightCount, const CAaSphere* bounds) {
     s_rawBound = false;
-    int32_t mode = Mode();
-    if (mode == 0 || !settings || !s_shaders[0]) return false;
+    if (!settings || !s_shaders[0]) return false;
     if (lightCount > 3) lightCount = 3;
     // only over the shader model 3 code (a ps_2_x device keeps Blizzard's water)
     if (!IsModel3(Liquid::CMaterialProcWater::s_pixelShader, 0xFFFF0300u) || !IsModel3(Liquid::CMaterialProcWater::s_vertexShaders[lightCount], 0xFFFE0300u)) return false;
 
-    if (mode != 1) {
-        // hdWater 2: our vertex shader and our copy of the 3.3.5 pixel shader, the client's constants and states
-        g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_shaders[0]);
-        g_theGxDevicePtr->RsSet(GxRs_PixelShader, s_shaders[2]);
-        return true;
-    }
     if (!s_passActive) { s_drawsKept++; return false; }
     IDirect3DDevice9* device = Device();
     if (!device) return false;
@@ -1367,12 +1290,12 @@ bool HD::WaterBindProcWater(Liquid::CMaterialSettings* settings, uint32_t lightC
         D3DCAPS9 caps = {};
         s_longShaders = SUCCEEDED(device->GetDeviceCaps(&caps)) && caps.MaxPixelShader30InstructionSlots >= 1024 ? 1 : 0;
     }
-    CGxShader* planarShader = s_shaders[(s_longShaders ? 4 : 6) + (fft ? 1 : 0)];
+    CGxShader* planarShader = s_shaders[(s_longShaders ? 3 : 5) + (fft ? 1 : 0)];
     bool planar = !interior && HD::WaterPlanarForBounds(bounds) && planarShader && planarShader->Valid();
     if (planar) HD::WaterPlanarConstants(&c[104]);
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, kFirstConst, c, planar ? kConstCount : 26);
     g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_shaders[0]);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, planar ? planarShader : s_shaders[fft ? 3 : 1]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, planar ? planarShader : s_shaders[fft ? 2 : 1]);
     // the shader mixes the world behind the water itself and writes alpha 1: keep the target's alpha (glow);
     // write the water's depth, so hdFog and what is drawn after see the surface
     g_theGxDevicePtr->RsSet(GxRs_ColorWrite, 7);
@@ -1406,7 +1329,7 @@ void HD::WaterAfterDraw() {
 bool HD::WaterWantsDepth() {
     RegisterCVars();
     HD::WaterPlanarReset(); // HD: hdWaterPlanar's cvars exist from the first frame
-    return Mode() == 1;
+    return true;
 }
 
 void HD::WaterReleaseDeviceResources() {
@@ -1415,7 +1338,7 @@ void HD::WaterReleaseDeviceResources() {
     HD::WaterWavesRelease(); // HD: FFT wave textures
     HD::WaterRipplesRelease(); // HD: ripple texture
     if (s_depthShader) { s_depthShader->Release(); s_depthShader = nullptr; }
-    for (int32_t i = 0; i < 8; i++) {
+    for (int32_t i = 0; i < 7; i++) {
         CGxShader* shader = s_shaders[i];
         if (!shader) continue;
         if (shader->m_apiSpecific) static_cast<IUnknown*>(shader->m_apiSpecific)->Release();

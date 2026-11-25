@@ -243,6 +243,7 @@ namespace wxlvk::vk::pipelines::detail
         dr.reuse     = false;
         dr.firstDiff = 0;
         dr.diffRow   = 0;
+        dr.diffSectionRow = 0;
         if (entry->usesRing)
         {
             const State::LastSlice& ls = s.lastSlice[frameSlot];
@@ -252,7 +253,12 @@ namespace wxlvk::vk::pipelines::detail
                 for (; dr.firstDiff < 4; ++dr.firstDiff)
                 {
                     const SliceSection& sec = dr.sections[dr.firstDiff];
-                    if (sec.rows && !wxlvk::simd::EqualRows(copy + dr.diffRow * 16u, sec.src, sec.rows)) break;
+                    const size_t equal = sec.rows ? wxlvk::simd::FirstDifferentRow(copy + dr.diffRow * 16u, sec.src, sec.rows) : 0;
+                    if (equal != sec.rows) {
+                        dr.diffSectionRow = static_cast<uint32_t>(equal);
+                        dr.diffRow += dr.diffSectionRow;
+                        break;
+                    }
                     dr.diffRow += sec.rows;
                 }
                 dr.reuse = dr.firstDiff == 4;
@@ -262,12 +268,12 @@ namespace wxlvk::vk::pipelines::detail
         if (entry->usesRing && !dr.reuse && s.ringCursor[frameSlot] + kRingRange > kRingBytes && !SpillRing(frameSlot))
         {
             ++s.stats.uniformExhausted;
-            CountSkip(kSkipUniforms, dr.key, c, entry, -1, 0, "the frame slot's uniform ring and its spills are full");
+            CountSkip(kSkipUniforms, dr.key, c, entry, -1, 0, "the frame slot's uniform ring could not grow (Claude RING1)");
             if (!s.loggedUniformExhausted)
             {
                 s.loggedUniformExhausted = true;
                 wxl::ScriptMgr::Log(WXL_LOG_WARN,
-                                    "vulkan: pipelines: the uniform ring for slot %u is full (%u KiB, kRingBytes); the "
+                                    "vulkan: pipelines: the uniform ring for slot %u could not grow (a spill of %u KiB failed to be made, Claude RING1); the "
                                     "frame has more ring draws than fit. Further exhaustions are counted only",
                                     frameSlot, kRingBytes / 1024);
             }
@@ -436,8 +442,11 @@ namespace wxlvk::vk::pipelines::detail
         uint32_t at   = dr.diffRow;
         for (uint32_t i = dr.firstDiff; i < 4; ++i)
         {
-            if (dr.sections[i].rows) wxlvk::simd::CopyRows(copy + at * 16u, dr.sections[i].src, dr.sections[i].rows);
-            at += dr.sections[i].rows;
+            const uint32_t skip = i == dr.firstDiff ? dr.diffSectionRow : 0;
+            const uint32_t rows = dr.sections[i].rows - skip;
+            if (rows) wxlvk::simd::CopyRows(copy + at * 16u,
+                static_cast<const char*>(dr.sections[i].src) + skip * 16u, rows);
+            at += rows;
         }
         dr.dynamicOffset = s.ringCursor[frameSlot];
         s.ringCursor[frameSlot] += dr.padded;
@@ -464,6 +473,7 @@ namespace wxlvk::vk::pipelines::detail
     {
         dr.paletteOffset = 0;
         if (!dr.entry->bones) return;
+        if (c.gpuIndirect) { dr.paletteOffset = c.gpuPaletteOffset; return; }   // Claude voie B: the GPU's own palette
         const uint32_t frameSlot = dr.frameSlot;
         State::LastPalette& lp = s.lastPalette[frameSlot];
         if (lp.valid && lp.serial == c.paletteSerial && lp.count == c.paletteCount)

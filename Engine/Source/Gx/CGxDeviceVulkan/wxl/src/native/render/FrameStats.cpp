@@ -126,7 +126,7 @@ namespace wxlvk::native::render::framestats
         return true;
     }
 
-    void Log(const char* when)
+    void Log(const char* when, bool includeSession)
     {
         WXL_VkFrameStats f = {};
         f.structSize = sizeof f;
@@ -147,6 +147,7 @@ namespace wxlvk::native::render::framestats
                             "pyramid %s; %u draw(s) received, "
                             "%u recorded, %u pass break(s) the latest frame%s",
                             when, g.count, f.cpuFrameAvgMs, f.cpuFrameMaxMs, gpu, copy, pyramid, f.draws, f.drawn, f.passBreaks, split);
+        if (!includeSession) return;
         // The session's whole: what a before / after of two sessions over the same walk compares.
         present::GpuTimes gt;
         present::GetGpuTimes(gt);

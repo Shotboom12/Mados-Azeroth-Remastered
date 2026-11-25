@@ -1,3 +1,4 @@
+#include "WoW/Source/WorldClient/HD/HdGpuFixed.h" // Claude B4
 #include "MapDoodadDef.h"
 #include "Engine/Source/Model2/M2Data.h"
 #include "Engine/Source/Model2/M2Light.h"
@@ -101,6 +102,7 @@ void CMapDoodadDef::UpdateBounds() {
         }
     }
 
+    if (this->m_fadeLevel != fadeLevel) HD::GpuFixed::Touch();   // Claude B4: the chunks' lists keep it
     this->m_fadeLevel = fadeLevel;
 
     if (!(CWorld::enables & Enable_NoAnimation) && fadeLevel < 3) {

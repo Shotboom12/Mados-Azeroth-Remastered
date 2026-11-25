@@ -15,6 +15,12 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "vulkan/context/Internal.hpp"
+#include <cstdlib>   // Claude GPU0
+
+// Claude GPU0 (mesure) : vkCmdBegin/EndDebugUtilsLabelEXT quand VK_EXT_debug_utils est allume, sinon null (FrameGpu.cpp).
+// Des plages (debut, fin) et non des points : Nsight GPU Trace mesure chaque zone de hdGpuZones separement.
+PFN_vkCmdBeginDebugUtilsLabelEXT g_gpu0BeginLabel = nullptr;
+PFN_vkCmdEndDebugUtilsLabelEXT   g_gpu0EndLabel   = nullptr;
 #ifdef WOWDECOMP_DLSS
 #include "../../../../hd/dlss/HdDlssVk.h"
 #endif
@@ -66,8 +72,17 @@ namespace wxlvk::vk::context::detail
         extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
         extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
         wxlvk::host::ExtendInstance(available, extensions);   // WXL_HOST only: the interop capabilities
+        // Claude GPU0 (mesure) : WXL_VK_LABELS=1 au lancement = VK_EXT_debug_utils, pour que Nsight et VulkanProfiler
+        // lisent les noms des zones de hdGpuZones. Sans la variable, rien ne change.
+        bool gpu0Labels = false;
+        if (const char* e = std::getenv("WXL_VK_LABELS"))
+            if (e[0] == '1' && HasExtension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
+            {
+                extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                gpu0Labels = true;
+            }
 #ifdef WOWDECOMP_DLSS
-        HD::Dlss::AddInstanceExtensions(available, extensions);   // HD 2026-11-02: what NGX asks for, only if offered
+        HD::Dlss::AddInstanceExtensions(available, extensions);   // Claude 2026-11-02: what NGX asks for, only if offered
 #endif
 
         std::vector<const char*> layers;
@@ -98,7 +113,7 @@ namespace wxlvk::vk::context::detail
             if (layerPresent && HasExtension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
             {
                 layers.push_back(kValidationLayer);
-                extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                if (!gpu0Labels) extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);   // Claude GPU0 : pas deux fois
                 g.validation = true;
                 g.debugUtils = true;
             }
@@ -203,6 +218,14 @@ namespace wxlvk::vk::context::detail
             return false;
         }
 
+        if ((gpu0Labels || g.debugUtils) && api.GetInstanceProcAddr)   // Claude GPU0
+        {
+            g_gpu0BeginLabel = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+                api.GetInstanceProcAddr(g.instance, "vkCmdBeginDebugUtilsLabelEXT"));
+            g_gpu0EndLabel = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+                api.GetInstanceProcAddr(g.instance, "vkCmdEndDebugUtilsLabelEXT"));
+            if (!g_gpu0BeginLabel || !g_gpu0EndLabel) g_gpu0BeginLabel = nullptr, g_gpu0EndLabel = nullptr;
+        }
         if (g.debugUtils && g.iapi.CreateDebugUtilsMessengerEXT)
         {
             const VkResult m = g.iapi.CreateDebugUtilsMessengerEXT(g.instance, &messenger, nullptr,

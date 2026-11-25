@@ -1,3 +1,4 @@
+#include "Engine/Source/Base/HdCpuF.h" // CPU-F R2: host write publication
 // A texture region upload: staged ahead of the frame, or inline.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -348,6 +349,8 @@ namespace wxlvk::vk::texture
         submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers    = &s.cmd;
+
+        HD::CpuF::PublishHostWrites();
 
         r = d.QueueSubmit(s.queue, 1, &submit, s.fence);
         if (r != VK_SUCCESS)

@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstdint>
 #include "Engine/Source/Gx/CGxTex.h"
 
@@ -25,6 +26,14 @@ CGxTex::CGxTex(EGxTexTarget target, uint32_t width, uint32_t height, uint32_t de
     this->m_userArg = userArg;
     this->m_char5D = 1;
     this->m_flags = flags;
+    this->unused_0054 = CGxTexNextGeneration(); // Claude CACHE1d: content generation (unique, see CGxTex.h)
+}
+
+// Claude CACHE1d: one counter for every texture, so a texture freed and re-made at the same address never
+// shows the generation it had before.
+uint32_t CGxTexNextGeneration() {
+    static std::atomic<uint32_t> s_generation{0};
+    return ++s_generation;
 }
 
 // VERIFY: bd9c61cb manual

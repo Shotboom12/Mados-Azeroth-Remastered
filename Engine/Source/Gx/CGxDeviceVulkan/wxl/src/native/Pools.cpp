@@ -90,6 +90,7 @@ namespace
     /// Byte ranges of a dynamic pool one frame's draws bound, before the list gives up and calls
     /// the whole pool drawn (every overlapping lock then renames).
     constexpr uint32_t kMaxDrawnRanges = 64;
+    constexpr uint32_t kManyDrawnRanges = 512;   // Claude B3: a water page's (HdPoolManyRanges)
 
     struct Range
     {
@@ -116,8 +117,11 @@ namespace
         uint32_t       drawnCount  = 0;
         bool           drawnAll    = false;     ///< the range list overflowed
         Range          drawn[kMaxDrawnRanges];
+        Range*         many        = nullptr;   ///< Claude B3: kManyDrawnRanges of them instead of drawn
+        Range*         Drawn() { return many ? many : drawn; }
+        const Range*   Drawn() const { return many ? many : drawn; }
 
-        ~PoolRec() { delete[] shadow; }
+        ~PoolRec() { delete[] shadow; delete[] many; }
     };
 
     /// One outstanding lock per target, as the engine's locked-buf table has one (+0x2778).
@@ -343,8 +347,9 @@ namespace
     {
         if (r.drawnSerial == 0 || !present::UsedThisFrame(r.drawnSerial)) return false;
         if (r.drawnAll) return true;
+        const Range* const drawn = r.Drawn();
         for (uint32_t i = 0; i < r.drawnCount; ++i)
-            if (begin < r.drawn[i].end && r.drawn[i].begin < end) return true;
+            if (begin < drawn[i].end && drawn[i].begin < end) return true;
         return false;
     }
 
@@ -476,7 +481,7 @@ namespace
         if (present::UsedThisFrame(r.chunkUsed[0]))
         {
             // A draw recorded earlier in this frame reads this pool: the copy must land after it.
-            VkCommandBuffer cmd = present::Outside();
+            VkCommandBuffer cmd = present::Outside("hors-passe Pools:479");
             if (!cmd) return;
             VkMemoryBarrier before = {};
             before.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;   // write-after-read: execution only
@@ -537,6 +542,15 @@ namespace
     }
 }
 
+/// Claude B3: a pool whose many buffers are drawn in any order (a water page): its ranges of the frame are all kept, so
+/// that a buffer written for the first time does not copy the whole page.
+void HdPoolManyRanges(void* device, void* pool)
+{
+    PoolRec* r = Ensure(device, pool);
+    if (r && !r->many) r->many = new (std::nothrow) Range[kManyDrawnRanges];
+    if (r) r->drawnSerial = 0;
+}
+
 namespace wxlvk::native::impl
 {
     bool g_dynamicPoolResolved = false;
@@ -588,20 +602,21 @@ namespace wxlvk::native::impl
         if (r->drawnAll) return;
         const uint32_t begin = At<const uint32_t>(buf, gxdev::kBufOffset);
         const uint32_t end   = begin + At<const uint32_t>(buf, gxdev::kBufBytes);
+        Range* const drawn = r->Drawn();
         for (uint32_t i = 0; i < r->drawnCount; ++i)
-            if (begin <= r->drawn[i].end && r->drawn[i].begin <= end)
+            if (begin <= drawn[i].end && drawn[i].begin <= end)
             {
                 // Touching or overlapping: one range, so a run of neighbouring bufs stays one entry.
-                if (begin < r->drawn[i].begin) r->drawn[i].begin = begin;
-                if (end > r->drawn[i].end) r->drawn[i].end = end;
+                if (begin < drawn[i].begin) drawn[i].begin = begin;
+                if (end > drawn[i].end) drawn[i].end = end;
                 return;
             }
-        if (r->drawnCount == kMaxDrawnRanges)
+        if (r->drawnCount == (r->many ? kManyDrawnRanges : kMaxDrawnRanges))
         {
             r->drawnAll = true;
             return;
         }
-        r->drawn[r->drawnCount++] = Range{ begin, end };
+        drawn[r->drawnCount++] = Range{ begin, end };
     }
 
     char* __fastcall BufLock(void* device, void* edx, CGxBuf* buf)

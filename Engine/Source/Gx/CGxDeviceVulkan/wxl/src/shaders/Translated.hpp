@@ -73,4 +73,14 @@ namespace wxlvk::shaders::translated
      * @return bool known : false when unknown or not armed
      */
     bool Known(const void* code, uint32_t size);
+
+    /**
+     * Claude 2026-11-05 lot SOL1: how many times a record this session created was resolved to a
+     * module (a first create, or the same name created again with other bytes: an HD shader swapped
+     * in, hdTerrainLight). A pipeline whose build failed is tried again once this number has moved,
+     * so a pair refused while only one of its two shaders had been swapped is not refused for good.
+     *
+     * @return uint32 generation : grows only
+     */
+    uint32_t Generation();
 }

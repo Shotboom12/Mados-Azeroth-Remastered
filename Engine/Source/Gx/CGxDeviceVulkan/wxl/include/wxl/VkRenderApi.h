@@ -566,6 +566,34 @@ typedef struct WXL_VkShadowPass
 /// the map objects' are unaffected). A local light's live faces: the units, and the weapons and sheaths an unskinned model
 /// draws (which the mover test misses), drawn where the units stand. A device without the boxes ignores the flag.
 #define WXL_VK_REPLAY_BOXES_KEEP 0x1000u
+/// (Claude LV25) Each draw with its OWN face culling, its material's, instead of both faces: a two-sided material (leaves,
+/// cloth, a railing) still casts from both, a one-sided surface only from the faces it shows the light. A lamp's cube: the
+/// lantern round its flame is seen from inside (its back faces) and lets the light out; a solid arm or post still shows the
+/// light its front faces and casts whole. A device without the flag ignores it (both faces, as before).
+#define WXL_VK_REPLAY_OWN_CULL 0x2000u
+/// With WXL_VK_REPLAY_OWN_CULL: the front face reversed, for views whose matrices mirror the scene's winding.
+#define WXL_VK_REPLAY_OWN_CULL_MIRRORED 0x4000u
+/// Claude PREUVE1: cull each draw with its bound as it was before PERF2 (Capture.hpp boundOld), for the same-frame check.
+#define WXL_VK_REPLAY_OLD_BOUNDS 0x8000u
+/// Claude CUBES1 (ReplayWorldViews only): each kept draw is drawn ONCE per run of consecutive views of its mask (instanced:
+/// the view's matrix and viewport index from a per-instance buffer, gl_ViewportIndex), with the module's `shadowmv` variant
+/// (tools/bls_tools/shadowmvgen.py, the shadow variant with only the matrix's source changed). A draw without that variant,
+/// or a device without multi-viewport and the vertex stage's viewport index, keeps the per-view path.
+#define WXL_VK_REPLAY_MULTI_FACES 0x10000u
+/// Claude CPU-A (ReplayWorldViews only, appended): with an aside segment open (BeginReplayAside, from the same MidPass) and
+/// WXL_VK_REPLAY_NO_CASTERS, the call is checked and prepared at once (the views, the boxes copied: the caller's arrays may go
+/// on return) and walked and recorded by the device's replay thread into the segment, in the order of the calls; it returns
+/// with `captured` alone in its stats. The GPU runs the same commands, in the same order, as without the flag. Without a
+/// segment the flag is ignored (the call is recorded into desc->cmd at once, as before).
+#define WXL_VK_REPLAY_ASIDE 0x20000u
+/// Claude INST1-CUBES (proof only, hdShadowBoundsCheck 2): the models (units and M2 doodads) never culled -- no light sphere, no
+/// view planes: the reference every cull is compared with.
+#define WXL_VK_REPLAY_NO_MODEL_CULL 0x80000u
+/// Claude ANIM1 (hdLvCubeSkin): with WXL_VK_REPLAY_MULTI_FACES, a unit's opaque draw is animated ONCE a frame (its clip positions kept
+/// in the device's buffer by the module's .shadowskin.spv variant), then drawn into every face by one small shader reading them back:
+/// the same positions, the same matrices, the same rectangles. _CONTROL (proof only) reads every vertex's neighbour instead.
+#define WXL_VK_REPLAY_PRESKIN 0x100000u
+#define WXL_VK_REPLAY_PRESKIN_CONTROL 0x200000u
 
 /// One replay into one cascade (ReplayWorld).
 typedef struct WXL_VkReplayDesc
@@ -909,6 +937,7 @@ typedef struct WXL_VkGBuffer
 #define WXL_VK_CAP_COMPUTE_DERIVATIVES      0x00010000u   /**< VK_KHR_compute_shader_derivatives (FSR builds only) */
 #define WXL_VK_CAP_TIMELINE_SEMAPHORE       0x00020000u   /**< timelineSemaphore (FSR builds only) */
 #define WXL_VK_CAP_SUBGROUP_SIZE_CONTROL    0x00040000u   /**< VK_EXT_subgroup_size_control (FSR builds only) */
+#define WXL_VK_CAP_VERTEX_STORES            0x00080000u   /**< Claude ANIM1: vertexPipelineStoresAndAtomics */
 
 typedef struct WXL_VkDeviceCaps
 {
@@ -1333,6 +1362,22 @@ typedef struct WXL_VkRenderApi
      * @return 1 once the device presents, 0 before.
      */
     int (__cdecl* GetFrameStats)(WXL_VkFrameStats* out);
+
+    /**
+     * @brief (Claude LV28, appended) The Vulkan view of an engine texture (a CGxTex*) as the draws bind it, in
+     *        SHADER_READ_ONLY_OPTIMAL: for a stage that samples a texture the engine drew with this frame (the Cata
+     *        water's surface normals). 0 when it has no image (not uploaded yet) or is a render target.
+     */
+    int (__cdecl* GetTextureView)(const void* gxTex, VkImageView* view, VkImageLayout* layout);
+
+    /**
+     * @brief (Claude CPU-A, appended) From a MidPass at AfterOpaqueWorld, outside any pass: opens an aside segment at this
+     *        point. The frame's main command buffer is ended here and continued in a new one, returned: every later command
+     *        of this MidPass goes into it (ctx->cmd is the old one). ReplayWorldViews calls with WXL_VK_REPLAY_ASIDE until the
+     *        MidPass returns are recorded by the device's replay thread into the segment, which the GPU runs between the two
+     *        pieces. NULL: no segment (record as before).
+     */
+    VkCommandBuffer (__cdecl* BeginReplayAside)(void);
 } WXL_VkRenderApi;
 
 #ifdef __cplusplus

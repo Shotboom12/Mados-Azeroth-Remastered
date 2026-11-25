@@ -641,6 +641,7 @@ void Ripples::Record(const WXL_VkStageContext& ctx) {
         io.m_texSize[i] = kTexSize;
         io.m_interpolation[i] = interpolation_[i];
         const Image& image = images_[current_[i]];
+        io.m_views[i] = reinterpret_cast<void*>(image.info.view);   // HD LV28: the lamp reflections read the same map
         proxy::Set(kProxySlot + i, io.m_proxy[i],
                    {image.info.image, image.info.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kMapFormat, {kTexSize, kTexSize}}, ctx.serial);
     }

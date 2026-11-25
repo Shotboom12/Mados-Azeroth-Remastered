@@ -1,0 +1,1952 @@
+{
+  "upstream_files": 7750,
+  "upstream_parts_have_no_duplicates": true,
+  "upstream_crc_checks": "passed",
+  "baseline_commit": "c9c2ce203b2c6271cf3a09d2b3ae42ec94052ecd",
+  "upstream_content_files_imported": 320,
+  "unchanged_upstream_files": 4911,
+  "line_ending_only_files_preserved": 2513,
+  "english_addon_files_preserved": [
+    "Interface/AddOns/WaystoneHD/WaystoneHD.lua",
+    "Interface/AddOns/WaystoneHD/WaystoneHD.toc",
+    "Interface/AddOns/WaystoneHD/WaystoneHD_Bouton.lua",
+    "Interface/AddOns/WaystoneHD/WaystoneHD_Heures.lua"
+  ],
+  "excluded": [
+    "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/data/lampdata.bin"
+  ],
+  "existing_repository_only_files_preserved": [
+    ".gitattributes",
+    ".gitignore",
+    "NOTICE.md",
+    "ThirdParty/FidelityFX/signedbin/amd_fidelityfx_framegeneration_vk.dll",
+    "ThirdParty/FidelityFX/signedbin/amd_fidelityfx_loader_vk.dll",
+    "ThirdParty/FidelityFX/signedbin/amd_fidelityfx_upscaler_vk.dll",
+    "docs/ENGLISH-UPDATE-v1.0.4.txt",
+    "docs/english-panel-runtime-checks-v1.0.4.json"
+  ],
+  "compile_install_launch": "not performed",
+  "exact_binary_reproduction": "unverified",
+  "files": [
+    {
+      "path": "CMakeLists.txt",
+      "bytes": 10635,
+      "sha256": "1f213089bc6d9a6cf3c7e2e0d96b2202f2d0c2c664009e05d8ffd3fc71ba2d6b",
+      "git_blob": "ccdc6e7933e25ac6f2e28d13a821aa16b18de5b7"
+    },
+    {
+      "path": "Engine/Source/ConsoleBase/ConsoleVar.cpp",
+      "bytes": 24409,
+      "sha256": "75b60bff10437db9c935537a3be6b5d482b922f0cb19d706806e01aa52188ca4",
+      "git_blob": "0068aae81ce35d424ee6fec387bdddc978e5eedf"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxTex.cpp",
+      "bytes": 1490,
+      "sha256": "14c6164171db8028aebfc0344c458a140ad40b91b4805316939e2c53938e4a67",
+      "git_blob": "d29e6a77e97b191fdcf7df34966072e0b3671e13"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxTex.h",
+      "bytes": 2325,
+      "sha256": "9e17ebfaddb20bcda270d13789816caf996d73ad1af2e01fee1ef5759d01e85e",
+      "git_blob": "98c1c560cd615062cd5d616e2c0b69912249aaf2"
+    },
+    {
+      "path": "Engine/Source/Gx/CMakeLists.txt",
+      "bytes": 2080,
+      "sha256": "ae1e2781bccd6243cc6ee2b1f24c587e289088101e5d58d2714717cbf8dcc045",
+      "git_blob": "58488f62cdbfd56dce735d20124dc1ab07065c8e"
+    },
+    {
+      "path": "Engine/Source/Gx/GxSeam.h",
+      "bytes": 8687,
+      "sha256": "fcfb3013d6bf9d8a32d9a5c09ee09af9dca02b7240eecce3ee4ced9cb52499ab",
+      "git_blob": "c5891121eb944dcd57f75d03e8f4d3f5b7e86849"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDevice/CGxDevice.cpp",
+      "bytes": 70420,
+      "sha256": "d725ccba3ceae519982c7bfad96716317708d3cb518faaaf9d01b703d5dc3d42",
+      "git_blob": "37eeb8c9457dce6fee8cf75c6ee831f1a5848277"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/CGxDeviceVulkan.cpp",
+      "bytes": 40116,
+      "sha256": "1c3d44064d4f807467122703f23470058fd6bce48ee9bb94ae827d7ebd5c3d0a",
+      "git_blob": "1244bf7422a8aaeb37c6ac4edac703a66d218cf2"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/CataMirror.cpp",
+      "bytes": 43236,
+      "sha256": "1ccdc660a3c42f550621d47fcca9df9f3e5bfdb3b4d7de5db088dd587c05a430",
+      "git_blob": "8914565f3da1d5bd36d60cd19b8fee8582b77ac9"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/CataMirror.h",
+      "bytes": 5553,
+      "sha256": "319649d356098387dab245c6f8d271f4d3630c0b94f6669ac2e4ca0f0d4dfbc3",
+      "git_blob": "974a2f064ffdbfd086e118b7c97e2fdfc40e7493"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/CataRipples.cpp",
+      "bytes": 34808,
+      "sha256": "cace695eb76a4322c401034a2145dddf8c8497309bdb21e2bd7999523c48f8db",
+      "git_blob": "f86dfd3e97421073ede897a3684c103e93567406"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/CataWaterService.cpp",
+      "bytes": 24431,
+      "sha256": "af0620eb55e55f311658032c10a73351a22ac858249ad3cdd78c18da6f3bd3f4",
+      "git_blob": "aeb109053a454dd785b01498ecab149925adaa59"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdLumenBridge.cpp",
+      "bytes": 35693,
+      "sha256": "cd02dbdf639382c7b82a581d6a87b4bdf6ffe9a01c7513f8fd5b895ddf7e0492",
+      "git_blob": "3ef5fbf5b7e068bf2604143bd0499296e4d50bb7"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdLumenBridge.h",
+      "bytes": 556,
+      "sha256": "cf72e09a8b3bd35f15b15ad2123b8197815965df8aa377487245dbb6e636f791",
+      "git_blob": "6bf02d14aafd530bedaf9672db1c1bd4beb32c2e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanAO.cpp",
+      "bytes": 26541,
+      "sha256": "1654e7a19cb1e1e9c53d56392e88683526ad056b4d4b95b19a7a6a6fdbe1a90d",
+      "git_blob": "e79af2c88f24710143d549b34e31654196940352"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanAO.h",
+      "bytes": 5214,
+      "sha256": "83c82105b9e6d178e260653fc0cfaee185ed264b1a948f0989f634d615b726c6",
+      "git_blob": "bb8e3e920b6dde95405adc8780c356e9fbaeae32"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanBloom.cpp",
+      "bytes": 23252,
+      "sha256": "7805c1b31a0b889ee3b6b8706c268cabffe659afbbd46e04c0e5d132b8bb4b38",
+      "git_blob": "e739fc6b3154a6e2e75fef7c74301bbf92c956a3"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanFog.cpp",
+      "bytes": 33126,
+      "sha256": "9a03f4bded559371c312b4cc9ed32124c9817de84920c78b3f3a971b34a5d3bd",
+      "git_blob": "542672bd0939392f9ec963e6f80cf656d391803f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanFog.h",
+      "bytes": 2958,
+      "sha256": "54b69acafde2d053292a42e70317c41531d728ffe63fb0ac3830cbae5cea6d69",
+      "git_blob": "ef8fe2fe2054a8a994f9d548af354f4537756e5f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanGrade.cpp",
+      "bytes": 29511,
+      "sha256": "623bb3bb3c92911a7b1293d37a5da290baea901f0949529426273ac4b47ef20c",
+      "git_blob": "60a7cfcd414708255ed1c3297995d5ed4f7623bd"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanGrade.h",
+      "bytes": 2234,
+      "sha256": "6a67499737f3b5f7ca5ab385b8bd93d11a44d27b6383a62cc6aefb0179ed9c46",
+      "git_blob": "707573a6c9e4704447ea486758568c8f49e6b329"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanLocalShadow.cpp",
+      "bytes": 27660,
+      "sha256": "3e511b55bc64c27d3062bf80e98ab99da119bd90747a076cca1872c3f3f83f92",
+      "git_blob": "27e433f13ca0bb274a382114c5f948dc7208187e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanLocalShadow.h",
+      "bytes": 2590,
+      "sha256": "8ab41aebad9550833edd725bca235665ed80acfd712c4f4c4080e5db2b735958",
+      "git_blob": "910efd95ece57bfc6aa4ed23225194580e9cd93c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanShadowBridge.h",
+      "bytes": 4170,
+      "sha256": "6fc14243be3ca386a7c08fdcc1063d2ac9d6412c0f4253f221d0a1f0d63590a3",
+      "git_blob": "f2bbc96980567f9b5c16827c55a36ffccc0c0498"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanShadows.cpp",
+      "bytes": 54027,
+      "sha256": "20135dfae7fe0ca180626565f81a705550c79388dbfbf46a27b8bcc435671853",
+      "git_blob": "0c0fc04b920d1a6d7c8c18f412216de3500a100f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanShadows.h",
+      "bytes": 3127,
+      "sha256": "ca12968eafc6a87facf97e48a00c1e6802e5d794176ecc2b28d1e72707df9ea6",
+      "git_blob": "2862af052467f2743579eebdac07ac6a5e459b78"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/dlss/HdDlss.cpp",
+      "bytes": 32677,
+      "sha256": "53f820f0c84f826013cbac61e679057807accd48b17a51036da1ccacec301a86",
+      "git_blob": "97908a6790882c274251761ec90619ccae0f795f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/dlss/HdDlss.h",
+      "bytes": 2251,
+      "sha256": "033ba905c4a67e6551caf950b075c0cee812841c87b67ad8fcdbc19f1ef8fa61",
+      "git_blob": "ccc5fa1ca0cadc2e2320d5eada862f3aca9574f8"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/dlss/HdDlssSettings.cpp",
+      "bytes": 2057,
+      "sha256": "c31f0b8720ae7fba9afa07d67d2d63501a26d9242e414c5ccac3284ef3e2eb3c",
+      "git_blob": "5c5dd65bbed22be98184090906fc148c5a0c3773"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/dlss/HdDlssSettings.h",
+      "bytes": 962,
+      "sha256": "5ab91fe6cde6fa7fd7c8b3c4f2e4657b21ec03da0af1b19721e2a7fef10a8a3b",
+      "git_blob": "cef3cb47c0ae845231bb3ceca529ee0cdb9eabc3"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/dlss/HdDlssVk.h",
+      "bytes": 898,
+      "sha256": "b938b94f642d6ee2102898dc2854a4fbda17247fdc58e376e2bbfcc2df204a10",
+      "git_blob": "866191efaaabfeb02ef99d4bd35212ef40001be2"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/dlss/shaders/HdDlssRcas.comp",
+      "bytes": 2032,
+      "sha256": "d995f50c65f70a509cc41c812d44180ef96349c5aa40dc929bc9cc7524e302a9",
+      "git_blob": "7e18e5f93fcf3f055ed2aebe7f172e9965e8e8ff"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrMotion.cpp",
+      "bytes": 14627,
+      "sha256": "6fc42947e439064f44635013d27f5b8e8f30d82a04ff430c3f0dc608e3e907c6",
+      "git_blob": "f466eae01ac6cab3bc429bdbb7e7ec0c0c7bb213"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrPass.cpp",
+      "bytes": 57633,
+      "sha256": "cb71d576861980b45d8756ff7eb9a464ec2eb9275e5701f665bd49a733c4ca53",
+      "git_blob": "ef211dc06e1777622d62dcd4e2a7c3d32da18f27"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrPolicy.h",
+      "bytes": 2893,
+      "sha256": "76bf7943c39331bfd8cc7a1aed6bdf891faf92de266b09561775cf2ea30b8205",
+      "git_blob": "1a3cb3825dae7add74e00ba20801dac65a71f594"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRigid.cpp",
+      "bytes": 11876,
+      "sha256": "a5a766e9c596e423d5898adbdb9c424f1ee3e78e59bf81a5c2303348c0747abf",
+      "git_blob": "afe1d8498e1b8818ae582d4a0a7fbb2223cf4954"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRigid.h",
+      "bytes": 2628,
+      "sha256": "f029eca6f3ed50479b12d5015951b41d81c659e6fb4c368666f1ebe587e94867",
+      "git_blob": "0c21fceca4a8df0a2039db2cfd003f94052252f5"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRigidMath.h",
+      "bytes": 6647,
+      "sha256": "a62cf34ca167e0d67f34f58b3e44bc9c90b90e1be72d37e9e6bd4d636a986882",
+      "git_blob": "46b47715877ae68aa2fa5ea644154256000e059d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRuntime.cpp",
+      "bytes": 20364,
+      "sha256": "5c1171e329a66642f009c08b8f8978d59bbfa26385a29928842751864d9ea034",
+      "git_blob": "c36c49f693e0e1430b5961acd5e3c7416ea9623e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrRuntime.h",
+      "bytes": 2638,
+      "sha256": "224d620c315f37fadde09ff51bc670db7a75d918bd61fde79bd44984eeb22bd7",
+      "git_blob": "e0f43a2ddcbe87143b5a4e4aa910fb547070736d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrSettings.cpp",
+      "bytes": 5615,
+      "sha256": "6cf5e8dd31a04d46d42f9fdd2c25f938aef9bf1573438d7e8c5696bd8eb9d912",
+      "git_blob": "11f41090db701d393f11c27fd3747ae45873668e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrSkin.cpp",
+      "bytes": 11948,
+      "sha256": "86347ad832386a2444cd14051dc3c018f1b3aeceeb4c05450823e3e8ec3017e1",
+      "git_blob": "bd8b9434bbb8ef80cf59e550e582b1c3db89279a"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrSkin.h",
+      "bytes": 1447,
+      "sha256": "9519444c018b46741cad87235f6b435f83aac26492b5a42c7bc96545b4af8f3b",
+      "git_blob": "863560767d83bc8a4587e29945c9bd77f74287d2"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrSkinCache.h",
+      "bytes": 4131,
+      "sha256": "03cc00df7a9aafe0feb8bc1d02c5f4c05cf06dc7b6732eac5be57f0a7a937a29",
+      "git_blob": "18692f6dfa59819bde95fd7a5d0c6304680e1650"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/HdFsrWindCache.h",
+      "bytes": 4847,
+      "sha256": "346e85bdc4a2d3e4b54cef4199339a7bb9a9639be90076f1f0ec9a9a7edab338",
+      "git_blob": "5f272905fcf60b09a89bf3fdb54008353b197d53"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/fsr/shaders/HdFsrMotionDebugObject.comp",
+      "bytes": 1015,
+      "sha256": "6ede078d4945166bf98fdcbd68adcd3715f12088e4ad704f7437e58c79f32085",
+      "git_blob": "ec434b125061c8c82fe1d99fbaf6f56e06d7e526"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lamp/HdLampHooks.h",
+      "bytes": 1158,
+      "sha256": "78249399c5c15dab931b474f73b0c96f316bd4d7e3e914c0c5de38c2979304f0",
+      "git_blob": "75d00f3e3f57f9a23b187b4d1eae23d8e3b6c167"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lamp/HdLampNative.cpp",
+      "bytes": 9116,
+      "sha256": "529c59a4a741761b8053a61610258984f4604e195fa42e078ac7301a57e5d6a2",
+      "git_blob": "0101147d0183838f84656399ecafe997c1f2d4b9"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvClient.cpp",
+      "bytes": 33551,
+      "sha256": "1b0148ccc1b9e400e33868ec4708122ec95dcf7daebe33bfc090e6934ad2aedf",
+      "git_blob": "02185a3be68125227814469c62e78066171c137f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvClient.h",
+      "bytes": 775,
+      "sha256": "63d70f96b05ff670651031facdb7a6f1fa198a13d4851581cdbd97f955a4e33e",
+      "git_blob": "89a985bf4c1c355806e3918babb2bde9de4e1a2f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvControls.cpp",
+      "bytes": 5034,
+      "sha256": "8a55aa077bba660b736cbb4e574047d8e9a85c879fb9ef493be8aeadd9f7532d",
+      "git_blob": "02834f268fa483eb2c1d50e9d052801efc6d379a"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvControls.h",
+      "bytes": 5490,
+      "sha256": "1e6e6bdf7e51d928d13cd4260a9e46d2c537254b5ce41b39279e6511ebb485d5",
+      "git_blob": "08a0eeeafadc358a082a26ab380cac38e31820fb"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvFinish.cpp",
+      "bytes": 13956,
+      "sha256": "b9f3a4ab534eb1e5392c82eb8ab48057342a93876731189d2d2bc895354a326f",
+      "git_blob": "10350f3d8b773ee4bcc8b796e8927c8e1b72622e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvFinish.h",
+      "bytes": 2824,
+      "sha256": "7eb28bb613c6afe5b4c4f9e5ebeb4784e991d66d4cefc0ab63be6e10422c2f77",
+      "git_blob": "a231a93042834c8e3b91c1eb29f5fab9a34ab3e1"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvGpu.cpp",
+      "bytes": 33878,
+      "sha256": "90e93a8391d37379d8e0b392e5b8f53d2b7d907ef854287ede26cfe5546fee5c",
+      "git_blob": "e470e85f3e084c8780c597edf2f97ab6ee01f979"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvGpu.h",
+      "bytes": 3228,
+      "sha256": "5d9b50ea4ac1ed60626acd987148c92e36e92880fcfa7dc482a81e26cd418ca5",
+      "git_blob": "3c714258139f563cf0a26fd6df094bae802b10d9"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvNativeData.cpp",
+      "bytes": 5447,
+      "sha256": "b9a0c2e64e73e1a588ee0469f7beaa8b8b66e7e13773b927bb4269abe783a6ed",
+      "git_blob": "f944cdc6f83bfc938b2a10c963b0a3e71418b45a"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvStages.cpp",
+      "bytes": 77280,
+      "sha256": "e4580f76cdb670f9c6f917fc1370d3f248b7b8be793b6e691028b3c0b333ba3f",
+      "git_blob": "a0e5d25ecb5aa4caa9ab8eea726470cbe080ab87"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvStages.h",
+      "bytes": 13982,
+      "sha256": "9172087f08b91a22445a9eb56029607fb6180a8b95af892eeccc43101597354f",
+      "git_blob": "ed3ff3d42116944c16d69e4d42c5017c74f36c45"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvSuite.cpp",
+      "bytes": 41817,
+      "sha256": "e0a22f19e6a4ef80569f9b7c153e42808508905c21bc005bd6e6327af6eb3a1c",
+      "git_blob": "843e30ad253d28c9571ee0a423055e95c9ba470e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvSuite.h",
+      "bytes": 6730,
+      "sha256": "bb9c52fe21cdbac0ae6f03905c93369bd251fe3565202fb66e59b5ddc0905230",
+      "git_blob": "066f8ebf420b12f37a53d577c60384f76227e2eb"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/EffectGather.comp.hlsl",
+      "bytes": 10550,
+      "sha256": "7eef7d072352866c0ee9552ceccdde68e63da776581749969f19f21c9a51d51c",
+      "git_blob": "1a41cca1f35351d02960a87e8bb2191a7f4ef673"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog1Memory0.comp.hlsl",
+      "bytes": 35980,
+      "sha256": "b7e14f663cfa316498aebd8dc564999e9d066dcfb8c620f2363efd2cbea8059b",
+      "git_blob": "57d137f284b162ed2eae321925eaddb0aff2dea4"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog1Memory0.spv.h",
+      "bytes": 77268,
+      "sha256": "01d26e74d18d1175880d4799ea649452d3a55b4f93e8870e0c04ee2bfb5bd4d9",
+      "git_blob": "aeaa59125d6335e0b9e91ba4930ecd0a72b61736"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog1Memory1.comp.hlsl",
+      "bytes": 35980,
+      "sha256": "879abcbad3339363ee98ebf92c6b41ba554935c933e28d6887ded9973257f558",
+      "git_blob": "5c2594d39a7985fd0034b8ac662f0ea7714126f3"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog1Memory1.spv.h",
+      "bytes": 77694,
+      "sha256": "cd8283ea4e140df8fa8bdeeba3ed1eeba8fe15f9f77f7d846cd4d256630bc58a",
+      "git_blob": "5f191de8da549afabf4a4ade61b8f2ef224cac7d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog2Memory0.comp.hlsl",
+      "bytes": 36691,
+      "sha256": "d5a91bf697366928dc74cfd24d397d756aab3ff8479d18fb097b508beb845155",
+      "git_blob": "3ea0c663ef097e257b8d7799a3f22c1cba3429d1"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog2Memory0.spv.h",
+      "bytes": 56426,
+      "sha256": "c8558c3db6893f5b9a35d83f72f6e5bb329c935e771d3c43e15ee50a387f4cd6",
+      "git_blob": "279746577b3a3671e88288aced25348d59107839"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog2Memory1.comp.hlsl",
+      "bytes": 36691,
+      "sha256": "c05482bc78e220f1c52d6d8a8a272e7bb7e4318c4eb00a793574298c0e309e74",
+      "git_blob": "1ab03ba1836ab686fc1f44c7377043a03980b6d1"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog2Memory1.spv.h",
+      "bytes": 56173,
+      "sha256": "29f85f656355cbcc8a1db5b13488e3cc8f3bffb05e799f59e8d5f6efd0da3838",
+      "git_blob": "2e38abaca30d02b38e877ba4f5324451a087a3da"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog3Memory0.comp.hlsl",
+      "bytes": 35980,
+      "sha256": "7e3b74a03af169d0d2e3d31d3e70e1b2bf4278a282b1ae68e93a960dc40135fb",
+      "git_blob": "f49ed0db818b822d3e5f541dc52a13070c41ce9e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog3Memory0.spv.h",
+      "bytes": 77270,
+      "sha256": "60258c701770bdb61c571a0e78f64f7670db19f043641b89be7ce5882b166592",
+      "git_blob": "48a8ddafe727efce8b5f28e66e2657997df7e9b2"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog3Memory1.comp.hlsl",
+      "bytes": 35980,
+      "sha256": "fa1875e5cbcdc842bfc96790cdba9befd03512e2ec9df5975f0e3f5e3a4bcef1",
+      "git_blob": "9838f13369f7cb5de6851860334e5fa7a814e440"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog3Memory1.spv.h",
+      "bytes": 77758,
+      "sha256": "04f6be4c6c491203cf31a18bc712022f9574317ff5457b3b9838ce6ea1d0d0e3",
+      "git_blob": "404b861202c16a4235df6ed70d612636e6235347"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampBlur.comp.hlsl",
+      "bytes": 7592,
+      "sha256": "826e2eaab33832d151ffea4d3545016480b7a68a14272143675b794b21ae5a46",
+      "git_blob": "e2e6b18bd1185f1f7308e501b9a5548c0d605326"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampHalos.comp.hlsl",
+      "bytes": 12823,
+      "sha256": "76260c4d5357e74ee871ddcfb3618cb21632aaee906e7b25269aa36c2e1bfb09",
+      "git_blob": "67ee9e072efea702e5847b4fed3c7bd17f4ad7b9"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampHalos.spv.h",
+      "bytes": 22015,
+      "sha256": "a9805c67a1c94985b680ebe6b92f5be0f5deef549183a396c9665539dd26fe0a",
+      "git_blob": "dd85d99ee6aa953a9a2f76deecde1eb9c055c371"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampSurfaces.comp.hlsl",
+      "bytes": 40287,
+      "sha256": "f26cc9f59e036ca390f881910723599d06e3013fa8a850dfa9ce8d5cac9dfdc5",
+      "git_blob": "1d38f7a5fae34cf4cf6ab576538ede45bce67757"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampSurfaces.spv.h",
+      "bytes": 154076,
+      "sha256": "dd8c135d19e91c814450907807a280ddc092eb4b7b601232ab301bb23bcba2cf",
+      "git_blob": "d3479c50607bdf6c212aa272d144c6a9c487241c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampVisibility.comp.hlsl",
+      "bytes": 7804,
+      "sha256": "e34d6dc744e6c4f852ef6c41c88ae91ca18e7b804c012be023738b40e58affad",
+      "git_blob": "2488b2493be82661f8058e5975321d6fbcfafc54"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampVisibility.spv.h",
+      "bytes": 17358,
+      "sha256": "1af847bbcb67a586a67771f2adeb5624e3a05e4844681a211e14feebb188de36",
+      "git_blob": "987f5c84ec087a38eb230cf2b9a10111cd8ab3c0"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/SceneComposite.comp.hlsl",
+      "bytes": 10300,
+      "sha256": "0102855bf90cb1b717ef48440a24d4fa9969095d52798c4a46074c9a0040f160",
+      "git_blob": "df6358c277c7834f630a215086c684e89c37e67c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/SceneComposite.spv.h",
+      "bytes": 38450,
+      "sha256": "ff94a1c31bf0a16269d8472290a0cfe3bdeceaef96a0e1f59791f672cc41c8d5",
+      "git_blob": "58959ebd40bc7aeeff591f690e46a32da0a158b2"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/belt_lantern.cpp",
+      "bytes": 11876,
+      "sha256": "a5e955c611e772460d1ff1740ac2a50901a6e744aad992167db8e2e70a870982",
+      "git_blob": "0edd6f80289fb7bb27572b88b79cb6dc0ca675c2"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/config.h",
+      "bytes": 17784,
+      "sha256": "f5612f5d271348d193860dc425fa235e86669b446db404df78e2e7dda96891e1",
+      "git_blob": "ad7132fc4ae4a793d0079b74d7992cc8010e082b"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/effect_lights.cpp",
+      "bytes": 40154,
+      "sha256": "60424545def4834d1341054e8f468b6c9f78617dda1d284b37236c2cd5da6536",
+      "git_blob": "c0a716fe860e0c887286db3bec37ba397b9d6250"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/effect_lights.h",
+      "bytes": 10424,
+      "sha256": "bfad54d1256733038be8010f24cc5b6d709ec6e434c683fa70de4f6a8050c25c",
+      "git_blob": "32e50e6e55e9efe4a7d278136ab93314f9d86bc4"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/fog_model.cpp",
+      "bytes": 69705,
+      "sha256": "522c4308914022af9af8ef79be25c4c1fcaeab522b8c1383b6f03ce92cda8668",
+      "git_blob": "d7d2ac8c210c0db3d34e4ee7cd4406458b4e8853"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/fog_model.h",
+      "bytes": 8439,
+      "sha256": "d6c300ce46b839559f33e557b9bcc5975545c7a40529317a9d8be199ee0e3325",
+      "git_blob": "4160eb8ef4a002e050f6cc51cea39994acb37c7d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/lamp_selection.cpp",
+      "bytes": 30645,
+      "sha256": "f615a2f0c33e22061e488d73e7921176cdbec658583795b1dc495183b4dad80a",
+      "git_blob": "80bfc3ee2a2d275adc142b219b5c0458e7137bab"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/lamp_selection.h",
+      "bytes": 7629,
+      "sha256": "3a93f4faaaabcaa01940f75772d4c5c14157755abb168ec2557d29c1a6266a35",
+      "git_blob": "932a900efcf5b15bc223ddd6de947c7bdda44aa9"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/lamp_tiles.cpp",
+      "bytes": 8252,
+      "sha256": "ee54c3fd1cb4f88353124c365bf84675ec9abc446a227e5199bc748c9f546499",
+      "git_blob": "b49c85e1919b27482b5ce328ba43714064515648"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/source/lamp_tiles.h",
+      "bytes": 3287,
+      "sha256": "9af2c91478e4374b5164c10d86244f632ec361d50db434eb980324b2828a5822",
+      "git_blob": "959e359fd75362199411474e65b263ea1106669f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/ui/WaystoneHD_Lumen.lua",
+      "bytes": 13133,
+      "sha256": "32f81574d28fb1fc51e66a0c32f183e99aea386d2c76fa8219d60cbe78556ec0",
+      "git_blob": "bde89c1158d5829af480f31420d6d96bcdfbd81c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/seyris/SxCore.h",
+      "bytes": 4990,
+      "sha256": "f1edad57643b84356d92c7bbc81ef266818e5f5b45f434a5c1edc0cc7632c3e5",
+      "git_blob": "c48c5bfd130df79eec8daa6cbd40f3eca55ca250"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/ao/HdAOApply.spv.h",
+      "bytes": 41808,
+      "sha256": "83190adaccdf80e8b8f7553f3fa6e4acb8b1f17e3a91056f1e654098a997b91d",
+      "git_blob": "67ec934a94effa0f8c30c8c646fcfd1890ecc20c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/ao/HdAOGenerate.spv.h",
+      "bytes": 117867,
+      "sha256": "e6081f69636d4ba0d6ba8e541b6080f3f27027b00c7002198f4a1069828a674b",
+      "git_blob": "b4283bb0bbf823dd5993d882293dba77127048fa"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/ao/HdAOMainHigh.spv.h",
+      "bytes": 117867,
+      "sha256": "94175b28b2deb8ec1bb7d423ae45cbb6e0bbbd27c87fa5b4be158079ec19185f",
+      "git_blob": "0ee1243c86b37c224df0cb0e1d8b5e63c298ec71"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/ao/HdAOMainLow.spv.h",
+      "bytes": 117866,
+      "sha256": "1b45e8dbf1b060a68cad36e6c3850776a4ce3ead1b84694abe86c101d839530e",
+      "git_blob": "57f77795f2f1e098ed0fb17c267d5af9d2fc2644"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/ao/HdAOMainUltra.spv.h",
+      "bytes": 117977,
+      "sha256": "c0e51f9acb25a3cb083aa8ad6416f717f0eb6ee604ce2e63443e28298c804912",
+      "git_blob": "5f57d5d0a059fdc96eedad17cb4d796335262c42"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/ao/HdVulkanAO.comp",
+      "bytes": 14290,
+      "sha256": "c942ef258d582c6992d5c1790836b123b1cc2080b83d6591767246e1128e3f86",
+      "git_blob": "dfa050d83594db2eefd9d12494c7b40004c00a7b"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/ao/XeGTAO.glsl",
+      "bytes": 3279,
+      "sha256": "88a26f1f6d980aeb759c3686bbdccc70433584005539da3b60fa04c19dd193b1",
+      "git_blob": "28d252b5e8efe48fd15defb127a8b284ccd6f819"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/fog/HdVulkanFog.comp",
+      "bytes": 12234,
+      "sha256": "62a0fad067149bb94b934f9c7f1c007e6f149d36dacc87778ea4eac21fc86e49",
+      "git_blob": "99d51c36e78a3c8ba26544284da0d01cb90d370b"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/grade/HdVulkanGrade.comp",
+      "bytes": 1287,
+      "sha256": "77607bb294c6dafed48ba3c1402de440f7eb2ba6de6f9233946f098bbc651ef4",
+      "git_blob": "434cb79c7f60c2c4b71bb2a7959c7c5130a381d7"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/grade/HdVulkanGrade.spv.h",
+      "bytes": 15002,
+      "sha256": "124015afff4cfce1417fa4de24602d100bbc7d3857a7caca1437e065619e876b",
+      "git_blob": "bbd13c84063a6be4621f6d4491a97e0631c38c43"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunApply.comp",
+      "bytes": 2570,
+      "sha256": "f98f26b8bfb9b0a278f5d176b85b5ae951f4194e97ae4dc8b38253102f503417",
+      "git_blob": "26702d34e39e7fe01a6c89be52028296005bd444"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunApply.spv.h",
+      "bytes": 55851,
+      "sha256": "5ed23c5a9a6d89a37965dcec70ffe7c3e869ec114e28a0c19fb521a54bf7b4c4",
+      "git_blob": "63dcbabb3a32918f267ff594e6ceaa4ba3ba4329"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunCommon.glsl",
+      "bytes": 16017,
+      "sha256": "101a259e912b874eb647671e171be0854babaae6c7e828eeaaad513fadba6ba9",
+      "git_blob": "769c4a8ad4f4e335a92f0e8e85d51a49516f9f6d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunContact.comp",
+      "bytes": 8652,
+      "sha256": "95cd79dbc507daf45a254d4968a09615642d9209bb3ccab7c65eb44713cc8a45",
+      "git_blob": "a28d9dc85ec459cc0108125291b1351f7e2b8ab8"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunContact.spv.h",
+      "bytes": 172609,
+      "sha256": "c07085e0f5381c40c1fb51d8112f45882b036027e2a3ac9fb19efee8f99a606c",
+      "git_blob": "f8e3dd2b04a175614e3495e34715a897407d998f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/include/wxl/VkRenderApi.h",
+      "bytes": 86058,
+      "sha256": "44682215d9bbc2f4b45af85dba8be0554d29ecf4142effa9a2783e0123429cb1",
+      "git_blob": "506c37df93eea8d054a1cf07395613ff8c14705f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/capture/Capture.cpp",
+      "bytes": 4249,
+      "sha256": "32f772c9621400d2852bafa546ce62f0f8153d063b800bf4c87abbc1764c7114",
+      "git_blob": "7ea89348cad13053a0773af4d1b0bb9eeeed2d49"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/capture/Capture.hpp",
+      "bytes": 7537,
+      "sha256": "e751b574f73be9b01f86eae527a6db10a05ca51106bbf88f414384b6b396a4d0",
+      "git_blob": "4981c5a1a8d484a0140d5591d1e88295e4934aa9"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/capture/Replay.cpp",
+      "bytes": 99288,
+      "sha256": "a1a870930af3c1cbfa8a24adabf28a1091f0bb068d2890e0dedeaee9a60f665a",
+      "git_blob": "378812db7806058f6430327149e821dcee945947"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/capture/ShadowPipelines.cpp",
+      "bytes": 12813,
+      "sha256": "2988eeb3de2009e2342fbc4b5076322ee6dacf15ac809dd0a0db7190d0db53d4",
+      "git_blob": "cbe7b9d74a226a6e46f06e53435aad4a83822f34"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/capture/ShadowPipelines.hpp",
+      "bytes": 3268,
+      "sha256": "4bc6d3380b3eb3928a67904ac5ec2c4c181aad8bb45222421b1d0b8d2e8b7808",
+      "git_blob": "17fdf4e128282c7c8019ab0d9a09299fcc5a7045"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/common/Settings.hpp",
+      "bytes": 15052,
+      "sha256": "8a1d06f4db33d7b82eba0e90649ba3c702f54ad93f2227b3487f6132c1b0457b",
+      "git_blob": "bee9e59a1dec5edb8bfc1263067447792bfe4edd"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/draw/Cmd.hpp",
+      "bytes": 27377,
+      "sha256": "75824ee16bae45de900c597aea1cf44386cf70cf36f3ac6c0ea656f8f58b3a38",
+      "git_blob": "c0601e3e631ff32a479f52ecbd31ec022447e881"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/draw/Reader.cpp",
+      "bytes": 57464,
+      "sha256": "f0ec42daf112274bd1b3e32be2eab037ff851727bec05de0b479d8052245057b",
+      "git_blob": "5abd1def22e7b5f6ff8dca5191d24f78ff5a6009"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/host/Compose.cpp",
+      "bytes": 7555,
+      "sha256": "dd8f179671a86390f1d6d926ad4035fb286b7ce2ccee761e348113a3e44b1727",
+      "git_blob": "3b9444a37d084631dfb04dc3076a3a4dc71d9a17"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Draw.cpp",
+      "bytes": 49920,
+      "sha256": "d96650baf88d44cd0896e2a0218e5a58437abb9fe3f9192c3541e46f5039b674",
+      "git_blob": "05f45790443645a8c76de0df490a9b1160301902"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Pools.cpp",
+      "bytes": 34563,
+      "sha256": "6191e851eaa5c9f92fc7c00ae4823621349f746f50505b37839873111fd12180",
+      "git_blob": "749a36965b72feadb3aceb05098efaa2a18fdcc6"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Present.cpp",
+      "bytes": 31158,
+      "sha256": "b80735e01d9d9ac2616da0600f6bd2e5dc12fed183cd887a09732c63ce7f76e6",
+      "git_blob": "2510a6c44cd28805d138e09f0be651014b57e67c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Present.hpp",
+      "bytes": 36821,
+      "sha256": "fe56da2493019ff81ac0360262716aafc630e40119d518f9490028d85ecc277b",
+      "git_blob": "899daf9ff6f4df07bd54325baa3bfd49f25473bf"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Render.cpp",
+      "bytes": 13601,
+      "sha256": "fde2875e97f6ee208651cf3078deb66229f4e03c0c7921c632ee46eab7326bea",
+      "git_blob": "f180d105bbb17cdd2ed4744139c28c9f177501b1"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Scene.cpp",
+      "bytes": 10564,
+      "sha256": "f0747f7e2c11da46de215d75d31a82d149327dfb2afccb52e39eead8014a8542",
+      "git_blob": "a7d8f668790e217aaa0e66878d4b5bef8b61ac2f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Slots.hpp",
+      "bytes": 13065,
+      "sha256": "f80aafd3e16ebde77871b6e9e4e0ee308598ffeb13989491fc175a7f42359c0f",
+      "git_blob": "c81d06d49fee3b290f289e0d48824ff0ab6acc5e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Stats.cpp",
+      "bytes": 5694,
+      "sha256": "a39ad503f382cc67a347a12305767404f438d35c91e976905f71aca97624b74e",
+      "git_blob": "daa803d8f4ed2a1c3a6718ee821a90fa1d4e6787"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Targets.cpp",
+      "bytes": 40759,
+      "sha256": "9e57dab9760440d30bec5637748d6dd12e43592d35ed487c3dabd2495c9dfa4a",
+      "git_blob": "47162f37bc0221235ba46ab7181f2d9ab6c7986c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/Textures.cpp",
+      "bytes": 40618,
+      "sha256": "4d790ffee4a3fd4cc80f92631667e40b3f5899c398e6bb24c53b58df836ecde2",
+      "git_blob": "1bbc51dc7ec63a7841c358fcc84b898ec8b49e7a"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/api/Internal.hpp",
+      "bytes": 9807,
+      "sha256": "218295cc1f3b8f11a27604679f60f18613b261d11ba7d322d561421fa54387d7",
+      "git_blob": "dc4aec3c468332f0a874914199146a039a7e98bc"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/api/Points.cpp",
+      "bytes": 14027,
+      "sha256": "25b064e829873379240ffd9299cc782bed4fdbbe785611fbbc8150f3d694662c",
+      "git_blob": "b233f546d103cc145e563a1b37e371379ca5d088"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/api/Table.cpp",
+      "bytes": 18961,
+      "sha256": "021911cba5250a94116bb780e12bfef90e729c169093856a659751af45981146",
+      "git_blob": "a3423b4655c729405630bf5969e62105b3611524"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/FrameGpu.cpp",
+      "bytes": 22703,
+      "sha256": "97607c1f68854eed17de2e13911d19edb7403f0d459543dd9c4cbf825f26a4f6",
+      "git_blob": "1f159ae862b73ba2da63922e7bff6b2369430541"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/Images.cpp",
+      "bytes": 19727,
+      "sha256": "0697bcae8d38c21a1da2a25c47f25791075cc2332f83af5a24a5d819123a0bde",
+      "git_blob": "226b2d30da4b26902403a96192e380d0c21943fd"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/Internal.hpp",
+      "bytes": 30768,
+      "sha256": "5b5c8616485be16588026b87913eee9ece3ac99e5bb5ce01c348e539041cab31",
+      "git_blob": "f1b887e826dc08bd9b290e713cc3b666c8ed00b4"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/Objects.cpp",
+      "bytes": 3733,
+      "sha256": "e1f85cda95bcd811f37180313931f8f077e8c1460507cb743f0f7f116a2f494b",
+      "git_blob": "ef4efdf1b5e017a0711b84a8e34b4fe18700755e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/Pass.cpp",
+      "bytes": 35620,
+      "sha256": "6c9c390cd3123fa1cf39aa72780e6c7c6aac1e1e9d39fb634d595537bbe6e88e",
+      "git_blob": "9060a1690de9b8ed4d3f9bd0fe7e191bbaec24cd"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/PresentPass.cpp",
+      "bytes": 25805,
+      "sha256": "68e0bd10161c70167828c7ff69251bd94af0bbfe11c0fa84927fdc9175cc7e17",
+      "git_blob": "fda9f78cb4a928c071f5b240377319c42296d338"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/QueryApi.cpp",
+      "bytes": 6185,
+      "sha256": "18523a7ce5f8bec70ab69815411d08931a61eed78a49492faa36d7342144c9c1",
+      "git_blob": "e21c3ca5c8d169e5c2816c0b10c60e5fecf7bd06"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/ReadBack.cpp",
+      "bytes": 14265,
+      "sha256": "b7f071c594e46a528e6cb5589b107d82008d3205940e108041d8dd51a2cbf6fd",
+      "git_blob": "0b7e796a1c52cac337d553c2156d026614ad4955"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/present/WorldTarget.cpp",
+      "bytes": 25445,
+      "sha256": "4876de0128d0c11e393df7dc6032733e005e978b52b9774ce93f3766275f44b8",
+      "git_blob": "5f943a8c6dd4b088bef263788636a62e1da6b256"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/render/FrameStats.cpp",
+      "bytes": 6960,
+      "sha256": "60ce813e795a013111f75cffdb89045faa49c45f3ed9758baed8792501ad3f77",
+      "git_blob": "fc45292c5acbdec98301684e91084c9b6c92521b"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/render/FrameStats.hpp",
+      "bytes": 1841,
+      "sha256": "882430df08c6a42fbc3d9406e62d6764ba1c913a18d3f5dbda975d984351b70c",
+      "git_blob": "2c698067de0ded115f91d3d46cd15f992a587320"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/render/Jitter.cpp",
+      "bytes": 3623,
+      "sha256": "86fbac64684b1569ae998ce7e67b3792b15e39fdd4664aa5b321af8ac8cdaac0",
+      "git_blob": "249cf0748e67779d41649a116c512434f9bb0752"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/render/WorldPass.cpp",
+      "bytes": 4797,
+      "sha256": "853783bcb6e56af5eb46fb16563cf92e654a0fe9a34d70a75584f62a265dffc1",
+      "git_blob": "723854e5cfc121f7ffb0c0e064c052bc4daeca56"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/shaders/Translated.cpp",
+      "bytes": 13624,
+      "sha256": "3ee06994e9243baac78ae12787bf49cef34097e0b16cf90e76c2ed323ac2c301",
+      "git_blob": "b427db29529f19122e286e52cb9a65cc2af07da1"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/shaders/Translated.hpp",
+      "bytes": 4246,
+      "sha256": "e987d64a40ef75b039843c09be0a3fc71ffc6a60c24010ef92773b7584f64c90",
+      "git_blob": "8bd43303224d7024891c9b39468e516f34b6f03d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/shaders/glsl/particle_lit.vert",
+      "bytes": 7430,
+      "sha256": "d2f64c9887e3db3a758c0350d4920f3ff50017a4332e02606f11c53eec8a9e51",
+      "git_blob": "4b2e1a77d0bf9538827955e8ed9e056e6eb00516"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/stages/Chain.cpp",
+      "bytes": 22855,
+      "sha256": "a6dd97b8d6a036d4bcef8ed84468fbe61c93d3c51be07e1354d5fa08591b9b3f",
+      "git_blob": "bf82985511ef1d87a794313dca9d42a0bc8c1122"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/DeviceCaps.hpp",
+      "bytes": 6054,
+      "sha256": "29afde7a8f26982f6a02cdfc5884cb3d7899ab8ceaff5bbe9d054510fe1dbf4b",
+      "git_blob": "94cc48c726ffa68491ecaee465e4f893e8537d03"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Loader.cpp",
+      "bytes": 18819,
+      "sha256": "df6684cc6795598b0110b699f5b2b17706494730ad5393efea6b854ea5429bac",
+      "git_blob": "a0bda28ced4b8db64b8fc47fc5a302cd32df1163"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Loader.hpp",
+      "bytes": 22390,
+      "sha256": "3250ea55593e69eb9db05c349bc47c0d2a5d3946d86c5f4a158477834bd608ab",
+      "git_blob": "3730e38922fa7646cf6d88155e17e1cd9a0470eb"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Manifest.cpp",
+      "bytes": 38464,
+      "sha256": "40c1dd3b0212cb1ab361cd90fd840cb50be9361e86ec150f1bf71731ee7d27e8",
+      "git_blob": "986284176af1195272c23bbe3aba1bc9e8aeca48"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Memory.cpp",
+      "bytes": 19781,
+      "sha256": "9db3fd59c0bf013ea99a178b08e012dc1767770f3a85e6ca1c8302232bd0ef13",
+      "git_blob": "0e8de1370acbc9612ba2fa09d7dbff72c364a46e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Memory.hpp",
+      "bytes": 10296,
+      "sha256": "9037b469d2528efa4986991b937f2163993c34f324b33542b62a23b6660db2d3",
+      "git_blob": "d6c26d0a38d0680df14059c1cd94c250a5a5f462"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Pipelines.cpp",
+      "bytes": 36395,
+      "sha256": "1096d25f56ff42b6bad17026a0339395eca5b0996cc344cb66bc61a77213c285",
+      "git_blob": "5c287ff6c0a5067302614a62726a967151b51b5f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Pipelines.hpp",
+      "bytes": 23945,
+      "sha256": "3e66eb2925e38abe446d9e7a53c289734389c44cda866a7d476e89b871193386",
+      "git_blob": "a03915979e8eaac5647f6d766988a5978aa4a60c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/Texture.cpp",
+      "bytes": 26103,
+      "sha256": "9f1517d50a6975bd2974d8830880fc85182807f49932ab9059ffac3737975f86",
+      "git_blob": "a053c90de2e28b2bd91ff7ad1d2a95893454ca55"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/context/Caps.cpp",
+      "bytes": 26758,
+      "sha256": "5899d1c396fde7795bea3b18628aa9dd8acd636d244a3bd7fe7e5095c86390c7",
+      "git_blob": "e78cbabca56df6bd97136d2c7bb5236b54dd1abe"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/context/Instance.cpp",
+      "bytes": 13900,
+      "sha256": "5d4cbc2ba73685c6758f31b6d174fcba1ddfc5907b451ff22652cdb7e8b2ee64",
+      "git_blob": "edb40d66abf44ea5ce760fc508ad8aa6dc893a18"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/context/Internal.hpp",
+      "bytes": 10600,
+      "sha256": "806251272a104cf40696130337db61d4a680637225262448f5915ee35a884d1b",
+      "git_blob": "8a63a0d6811bcff04a7d23f9a28b441f84e8a63d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/context/Logical.cpp",
+      "bytes": 18778,
+      "sha256": "5ff78c7adc35d50487d550ec43c32bdbe3e0464d3741d3ea91f0a4efb561957c",
+      "git_blob": "f90f202002ce2bfaba4614c3ad0796a9004ecc26"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Build.cpp",
+      "bytes": 35673,
+      "sha256": "895c7b1272286f5825168af5e13858f2fd61d3a1a68325fecd31addfda1c75cb",
+      "git_blob": "5410fbdd326b486900d6e0b73639102ed9c271dc"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Cache.cpp",
+      "bytes": 14873,
+      "sha256": "1e846c1d6fff1421dada9e340c4a51d4d2af717131ff563d87ca912a41ff9e2d",
+      "git_blob": "3fbae8ec2b742cc8f46773cb26ebf3e5dba9f2aa"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Internal.hpp",
+      "bytes": 60293,
+      "sha256": "02c70bbe3e6cb50a13cbf9bab68151d252ed5167c029183d3a877d25798803ee",
+      "git_blob": "cd3478a58569c7748bb24ce7d4a2745ef776e5cf"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Keys.cpp",
+      "bytes": 11638,
+      "sha256": "c0d37c9b6a55333f68781891030c285ccc46ccf5ede20635678db5a96e46800e",
+      "git_blob": "04f0a22b170fc88ebb97e8f7d26a67ebb042bdda"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Lookup.cpp",
+      "bytes": 16450,
+      "sha256": "13611d4c10f44353a33e01c40cbe9490b4ddacf55679a85828de7424cc678f55",
+      "git_blob": "937fceb61975d2bf80bb60931c3c1fed41d28738"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Record.cpp",
+      "bytes": 59190,
+      "sha256": "6032c48622e6ca9c4d07d7cbc06c62af3fd950d7d3a0ca8204b9ad7b0b8e7c15",
+      "git_blob": "d63cf160661dd2ec40fe3f751ab5cf350eca02bf"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/RecordInputs.cpp",
+      "bytes": 27713,
+      "sha256": "b392c38721d093543aaa6933356c1912439d0190c0db57a4e9eda44c5ac9d55a",
+      "git_blob": "7e0c7a78aec281c1db395481914d6bd4829f18b1"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Ring.cpp",
+      "bytes": 23429,
+      "sha256": "64d23de270d3401b0a0a33019e7f76b23872c42ae79b253b14d391a585e71bac",
+      "git_blob": "7f2bce7c6bf894656e0126f3db6f89571a77db3b"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/State.cpp",
+      "bytes": 8811,
+      "sha256": "35a09b15b3a934cc395983f3920d66b691855ab7c77475eb89b51fcd02b5d6c1",
+      "git_blob": "949f582be9fd897b04e49d9a6623d8b389b788ce"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/texture/Create.cpp",
+      "bytes": 12774,
+      "sha256": "ed71e450fa83ed7d29676db886183e82e3f2e6ea4efc43c113d8760a8b3f2c6d",
+      "git_blob": "e402e0d0a7ef24cc6cd7e58ae96a994690202ce8"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/texture/Internal.hpp",
+      "bytes": 7341,
+      "sha256": "a8213dee9f1cb759ad44c4418a2130095829a2ec4d914ea0daa553ce76dc278c",
+      "git_blob": "df0ef30308b14c7168221f964f6a7bf504916701"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/texture/Registry.cpp",
+      "bytes": 16718,
+      "sha256": "a3904727a24ae6d25cee5f6ac01ea6287b22ff41179d263319ccf2cdccb42283",
+      "git_blob": "13a3b5c78c33c05498bec64bdfd0d0bc10468fe4"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/texture/Upload.cpp",
+      "bytes": 20262,
+      "sha256": "00a2be050a1f87b43aa4960b6490c4731ca678b21c87a46941eac10d32056ac8",
+      "git_blob": "254226d93453befa611c313f7f132857451e27b6"
+    },
+    {
+      "path": "Engine/Source/Model2/CM2SceneRender.cpp",
+      "bytes": 46297,
+      "sha256": "01a0caa0bbc2ab75ea9eee21fa84158f9ff8dfd6143b30afc61c593f57285e1b",
+      "git_blob": "9c20e2bc09593b15f781c3fdd64fd80f90083735"
+    },
+    {
+      "path": "Engine/Source/Model2/CM2SceneRender.h",
+      "bytes": 2888,
+      "sha256": "3ef5841f88fcdf142d1dd3e5cfe9ea3ce39fbac733c4d1cace05bd8cd1937972",
+      "git_blob": "6a27e39a5292a93c4ed0cd19a957f05f8219efbb"
+    },
+    {
+      "path": "Engine/Source/Model2/HdExtraLamps.cpp",
+      "bytes": 11679,
+      "sha256": "bfb8243bbb189aeb1f30a500160be7d0de38fecac7c4e0a488426f9d08618574",
+      "git_blob": "146744e9c26de7d1e3fda3d434606413ae66039f"
+    },
+    {
+      "path": "Engine/Source/Model2/HdExtraLamps.h",
+      "bytes": 3849,
+      "sha256": "e3bdcf53123ada30c5bbad724dbb5b46fb1b3fad46a9faeeadd672b14d44c653",
+      "git_blob": "7266a0cdd43e345052579a0a895fb86a54f496cd"
+    },
+    {
+      "path": "Engine/Source/Model2/HdExtraLampsTable.inc",
+      "bytes": 19962,
+      "sha256": "58f802f9a241f68d79c97b1440d59fcd87dd47583e6b62925eb73d1dc250ef4e",
+      "git_blob": "cdd7eaf2b879a0e9b17b92fc6ef2cbc1b2367551"
+    },
+    {
+      "path": "Engine/Source/Model2/M2Light.cpp",
+      "bytes": 14536,
+      "sha256": "c505addac28a9cec8fdfc24744bfa31a158a1a0ce6d1f84ae48e8ac20abeb4d7",
+      "git_blob": "832f8d7a4d2d6d523236228b65f62fa948aeb35e"
+    },
+    {
+      "path": "Engine/Source/Model2/M2Model.cpp",
+      "bytes": 326795,
+      "sha256": "e2a555f9eb745dce7447c8c9e26bf3182a5ca47f0d477118ff6e93cde4b34e81",
+      "git_blob": "8c70a9ad0a948d32ffc04b15ebdfdd3dfda60a98"
+    },
+    {
+      "path": "Engine/Source/Model2/M2Model.h",
+      "bytes": 24569,
+      "sha256": "5920293477f199224c00c00aabba613ee0bd12314b7ae58afcaaabe33c2f4371",
+      "git_blob": "2f9f920f2533a4f28047e9a6549c8ae81541ff7a"
+    },
+    {
+      "path": "Engine/Source/Model2/M2Scene.cpp",
+      "bytes": 75464,
+      "sha256": "a2bc5c20ca4bc6c8bcc1fbcfb2c3f7a2a5ce4ca6ec5764809764937746faa329",
+      "git_blob": "1c3f609628f558170c301e56647725a34b6c6850"
+    },
+    {
+      "path": "Engine/Source/Model2/M2Scene.h",
+      "bytes": 6561,
+      "sha256": "c8b116b31cd39d72ceaec641c7db11cce6132c1f30d2f9f8d46f75252c3ec20b",
+      "git_blob": "660a91a462c84ae17248edf42976a606ea5454ab"
+    },
+    {
+      "path": "Engine/Source/Model2/M2Shared.cpp",
+      "bytes": 77262,
+      "sha256": "5c9fe7dff19f71c59f6e539bf8a934f5ec333372ed3205257325d2b938e03b45",
+      "git_blob": "06e7a8cc87bc305bae1ce1bf902f48f0369e7bfd"
+    },
+    {
+      "path": "Engine/Source/Model2/M2Shared.h",
+      "bytes": 5025,
+      "sha256": "9d70b4f9c01bda54bff945725c69ebb328b4d9a06d4beb4c0f728f6cfc6c8903",
+      "git_blob": "570b8a7c3c323272dde100edc18e336b4005eeb1"
+    },
+    {
+      "path": "Engine/Source/Os/TimeManager.h",
+      "bytes": 1322,
+      "sha256": "a5f1cfafee600505d697e3dba5c586c8b21abeeb3477f7a702815f60a23458d3",
+      "git_blob": "eda5993e82d35e5d3018f3c3052e25558e532f30"
+    },
+    {
+      "path": "Engine/Source/Os/Win64/TimeManager.cpp",
+      "bytes": 7748,
+      "sha256": "757b61e89a9e520b30cb6f057a38217146bd396e91fc19ae500ee40986c0313d",
+      "git_blob": "77c899706a9f17174329fce6d067877f10fcc5be"
+    },
+    {
+      "path": "Engine/Source/ShaderEffect/ShadowCache.cpp",
+      "bytes": 82235,
+      "sha256": "de403ce20436f56eef9ffabd22fc86dd1d9627f82252ae9ba7dcd40fc38f585f",
+      "git_blob": "b3a6194fd0f7d3c68b9ee8da3071ea49f8bcda81"
+    },
+    {
+      "path": "Engine/Source/ShaderEffect/ShadowCache.h",
+      "bytes": 7577,
+      "sha256": "10012463b8dcc925acfe7e0871e6ed6d1c6e498d4009f31be1af141ad645fda4",
+      "git_blob": "c0a38d552b18db8837ff524d6601f9386f3c5b63"
+    },
+    {
+      "path": "Engine/Source/Tempest/CMath.h",
+      "bytes": 3104,
+      "sha256": "6a2949187b0b8d53cd10023014c6ffcc3cdbd0c232d2f6d8faa4e70f0ff3a434",
+      "git_blob": "da9defedac8c0412687602b6d00c899d6845a4fa"
+    },
+    {
+      "path": "Interface/AddOns/WaystoneHD/WaystoneHD_Fsr.lua",
+      "bytes": 8052,
+      "sha256": "a70422242e28c835091f6b9b30b103cab4cfd4e2311bf62dc73c1a51647691af",
+      "git_blob": "3778966aa89c35c5fa6bebefeea82f9a7411bae2"
+    },
+    {
+      "path": "Interface/AddOns/WaystoneHD/WaystoneHD_Lumen.lua",
+      "bytes": 13133,
+      "sha256": "32f81574d28fb1fc51e66a0c32f183e99aea386d2c76fa8219d60cbe78556ec0",
+      "git_blob": "bde89c1158d5829af480f31420d6d96bcdfbd81c"
+    },
+    {
+      "path": "Tools/Pack/Installer.ps1",
+      "bytes": 4929,
+      "sha256": "72f766ccd30e4567e3ab4736d90fe9f01bd7f0093a7476964d23df8744a3168b",
+      "git_blob": "876b58d21ae18b717a6bf75d25530a6f564bd6cb"
+    },
+    {
+      "path": "Tools/Pack/LISEZMOI.txt",
+      "bytes": 920,
+      "sha256": "061c2141190740dedc7b82dbbb2bc529742fc55c4cfd3d886a435de1e30b1479",
+      "git_blob": "02500253993381220815d71c64917cf0149c4a03"
+    },
+    {
+      "path": "Tools/Pack/Reglages-HD.txt",
+      "bytes": 1132,
+      "sha256": "dd8870c2afd20465b492d8a04b52b72f023575f68290146ac4500cacad750e03",
+      "git_blob": "7b8d8424b0ff1e63a680d965dfb9f90295008ab2"
+    },
+    {
+      "path": "WoW/Source/DB/DBClient/DBClient.cpp",
+      "bytes": 38851,
+      "sha256": "0c9c86124fb1c62e0f0dfe81fd97d86df91d41247ded4f87f4dd0b2fda6d6a41",
+      "git_blob": "904eda87bfe9d33c2aa2eac15fd99c37b5fb8b99"
+    },
+    {
+      "path": "WoW/Source/DB/DBClient/DBClient.h",
+      "bytes": 26780,
+      "sha256": "9a2b9484800396bedfb2f5a0a42b34f07cc9dde65c64a669dfe938d2c3ab63ee",
+      "git_blob": "9ccc1d7094c3e5cbb7db7656fb7f87efbe08ab02"
+    },
+    {
+      "path": "WoW/Source/DB/DBClient/Lights.cpp",
+      "bytes": 3405,
+      "sha256": "ab036ed165d12ab8a1d435b620706137f574cfd533cb438bdeaaaaf86252f6f1",
+      "git_blob": "29334035e2205911ac5d59b1162300028df57a89"
+    },
+    {
+      "path": "WoW/Source/Glue/CharacterSelection.cpp",
+      "bytes": 31153,
+      "sha256": "862f3d550bc54d22118c8e29e24a60b2710f9c096ec54d8ddd76eda6fc734949",
+      "git_blob": "1c4554d68565ea7841b8dde0118dac7f16dbe275"
+    },
+    {
+      "path": "WoW/Source/LiquidSystem/LiquidRenderer.cpp",
+      "bytes": 3696,
+      "sha256": "ac4c891e5d2cdacbd685b1f43e7337551015e83f377de5432bc98a316954eaf4",
+      "git_blob": "b5f89308301298a11a29594bcc1bf2be299e1e67"
+    },
+    {
+      "path": "WoW/Source/LiquidSystem/MaterialMagma.cpp",
+      "bytes": 6794,
+      "sha256": "b054db0017d0de6c0311ada35de00e511af81659e095d69be335bf171b18b371",
+      "git_blob": "5239f210b388038363058acf96cfdf9e6f594c6f"
+    },
+    {
+      "path": "WoW/Source/LiquidSystem/MaterialProcWater.cpp",
+      "bytes": 15225,
+      "sha256": "2f28671c32dee1083a6da5e0d40e078810c0e9b829ab8e5ddf0d5370013d8701",
+      "git_blob": "7c54f48800c9a39594ecd910969e6d4cad7643c0"
+    },
+    {
+      "path": "WoW/Source/LiquidSystem/MaterialWater.cpp",
+      "bytes": 12966,
+      "sha256": "2e4bd575c5f1c697a4d0ab79139b597bbc03afd1c72a83fcbed66475de2286c8",
+      "git_blob": "8c94170b506bcc3de2848e632c7c4b115e0d556b"
+    },
+    {
+      "path": "WoW/Source/Object/ObjectClient/Player_C.cpp",
+      "bytes": 477044,
+      "sha256": "ed108cc6363ae99e351663e696ce0d22b48a54ba4960c1cd1b9d39889faf4683",
+      "git_blob": "44e08a1c7c875cec851b1691d6267fa4d8d3f1a7"
+    },
+    {
+      "path": "WoW/Source/Ui/GameUI.cpp",
+      "bytes": 279614,
+      "sha256": "44c32d159d5a73c13b8caab016b417958af3c7c24b1698c0649ddbfcc8fa8b71",
+      "git_blob": "323723f74eb15dc81dab972dee41abad15db291b"
+    },
+    {
+      "path": "WoW/Source/Ui/GameUI.h",
+      "bytes": 25034,
+      "sha256": "1662f7a307551034a5ca93ec42fb345c3d97504f5809bb8a245112f7420cb8be",
+      "git_blob": "278d2ed6fde589662dd21d5bff9c72fe8232d25b"
+    },
+    {
+      "path": "WoW/Source/WorldClient/CWorldSceneRender.cpp",
+      "bytes": 11731,
+      "sha256": "3ab438880eab47044710397757aaa62c822c71c28e3b8a59091fb054a95cfe7e",
+      "git_blob": "630f39b5f552df0ab0fbeeec9a34730850199be3"
+    },
+    {
+      "path": "WoW/Source/WorldClient/DayNight.cpp",
+      "bytes": 121201,
+      "sha256": "4dcbf15e0e9d2b9ed02da8ae32fe5c777c1cd9bfe6c0e2245e2398b621a3ada9",
+      "git_blob": "706b2c828a39caad7b24756269b01500303fca95"
+    },
+    {
+      "path": "WoW/Source/WorldClient/DetailDoodad.cpp",
+      "bytes": 43623,
+      "sha256": "dcc90f360eb6122366c74e6de8cce7a1d0bf5274fd310e24affe8a5a90548e77",
+      "git_blob": "b60d28542e3168d641d24819f3acbdeecc766a12"
+    },
+    {
+      "path": "WoW/Source/WorldClient/Map.cpp",
+      "bytes": 228133,
+      "sha256": "55286bb0fd944cdd5986a2e22b0235f937899f93335029c80bcb37975ecccda6",
+      "git_blob": "c12ae562f046d705da205115263e402ce2fbbed0"
+    },
+    {
+      "path": "WoW/Source/WorldClient/MapChunk.cpp",
+      "bytes": 58411,
+      "sha256": "2af5f01254e093003c5a3988be853838e573e51638ad0b0a42557b81c09eb0ac",
+      "git_blob": "736abe3dbdef27d95912bdca5320999e1e97f9cb"
+    },
+    {
+      "path": "WoW/Source/WorldClient/MapChunk.h",
+      "bytes": 7774,
+      "sha256": "5e8cb2f1f35b248c320482ef34fd8bab259078bb626cc217d0428f364f76c074",
+      "git_blob": "9961599845de9261d9b085aba1ff00841f5a2c8b"
+    },
+    {
+      "path": "WoW/Source/WorldClient/MapChunkLiquid.cpp",
+      "bytes": 29517,
+      "sha256": "840a9a93d62c8ab0ebca3cfc01e167b9245bf48a5e061471f0c52baa7d1d3014",
+      "git_blob": "5a42d3763ccd6e138e9fca46ce9ece4549b0cbcb"
+    },
+    {
+      "path": "WoW/Source/WorldClient/MapChunkLiquid.h",
+      "bytes": 1661,
+      "sha256": "f70df5e02f52b9d87e6d84799570fc7b0b6b9d99e1c4230a085761e2c41aa449",
+      "git_blob": "96cd0542e40137d770691f6d66d365c8a70d21a6"
+    },
+    {
+      "path": "WoW/Source/WorldClient/MapDoodadDef.cpp",
+      "bytes": 12259,
+      "sha256": "95bbf4fc1d24dc41cbb52ab58cde7d8e9448280cac9381f6ce554828260b9f04",
+      "git_blob": "5004a36c54edf2d6676a16447ae67b2d4632e69a"
+    },
+    {
+      "path": "WoW/Source/WorldClient/MapObj.cpp",
+      "bytes": 142392,
+      "sha256": "00bfd5e8c9d70429a5f7b1b13118f8874a7babed0ef53991cce760e0ffc79317",
+      "git_blob": "a23a6dbdc36a3569d6f7cc07789c6ce401e2f33c"
+    },
+    {
+      "path": "WoW/Source/WorldClient/MapRenderChunk.cpp",
+      "bytes": 97723,
+      "sha256": "b18df236c09b8a6974ec94a3c91deb7c51424d949a5937ddc593140957f42c5f",
+      "git_blob": "956c6741acac332af88666f0fb546595ae71ff02"
+    },
+    {
+      "path": "WoW/Source/WorldClient/ShadowQuery.cpp",
+      "bytes": 165427,
+      "sha256": "71c0a6c480ddf51574d5bc8077c33c909eb2e4a3f67640b4c0d39ccf3b2baf7c",
+      "git_blob": "02c46115e7c8b7fb56d166a86068feeebb0cc8a0"
+    },
+    {
+      "path": "WoW/Source/WorldClient/ShadowQuery.h",
+      "bytes": 2143,
+      "sha256": "3cdecca70491915af14f186bc0ea312727cad62d42b34f141afcca0427bafae4",
+      "git_blob": "13399fa4b04a6bf13c4a42781036bffdecebb0fb"
+    },
+    {
+      "path": "WoW/Source/WorldClient/World.cpp",
+      "bytes": 229904,
+      "sha256": "864742a73a674b3408e38f0bd3e947ce1ab87ad0a02ba3036e5848af8b61d075",
+      "git_blob": "79a50eeaa60c3ef8e282ed4a7055e796c3a90350"
+    },
+    {
+      "path": "WoW/Source/WorldClient/World.h",
+      "bytes": 25070,
+      "sha256": "36902de466f753a4a580eb96bb8f54d01c7e985c16303876753306c6baad8d05",
+      "git_blob": "25a884f79ea26d15e1bba57afd57bcf2fa27f30e"
+    },
+    {
+      "path": "WoW/Source/WorldClient/WorldParam_CVar.cpp",
+      "bytes": 25103,
+      "sha256": "c1186691249b02826c93c283b444a7f0c7aa214cac44b80a7d14c34debed045e",
+      "git_blob": "617f09588c313ed9d7d0dd0b05d4b63bb496fcb2"
+    },
+    {
+      "path": "WoW/Source/WorldClient/WorldScene.cpp",
+      "bytes": 8447,
+      "sha256": "d2f80f1b1420c856d66ae0e7e1105652d5eb04c98397305ee2e514fb84093070",
+      "git_blob": "dd12db8fcce5c237c6964e33b6060573cd1cc460"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataHorizonIndex.cpp",
+      "bytes": 4954,
+      "sha256": "6101b2f95f7d975620d87705ec72a96e9661bc1e8590e1e9d8a6e977b38cadc4",
+      "git_blob": "95d62afd5fb4d03aeca09eb1eee7e240224f5e82"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataMirror.cpp",
+      "bytes": 27356,
+      "sha256": "8a707da3f4ea94c940d7dc4f45a8c91c4760d5d5b907140a5e589d0052a2502e",
+      "git_blob": "cb77086229b221e2d67b385100c1625bdcad68da"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataMirror.h",
+      "bytes": 4164,
+      "sha256": "17bb261716f227bbaa333f188cb08ea0f3391ed2f5211eae0d7ff5ba2abcbb3f",
+      "git_blob": "37c4331bd7403b12231e3cd14f55b49683d66567"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataRenderPerf.cpp",
+      "bytes": 13317,
+      "sha256": "bf9db71f351f416866e5e5427753f609181cf5d26de07ffb1e8ee1bbc491120e",
+      "git_blob": "30c500dac3d207d182c7d0b940b68dc8492d9f2a"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataRenderPerf.h",
+      "bytes": 5181,
+      "sha256": "72ed91a593fd897689f417f2dd4a4a6b77d57f7b14781c9a9c80c1cbc4c7181e",
+      "git_blob": "7d322aae3d6c8e573edcd771886e3a46e64c7e1a"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataViewDistance.cpp",
+      "bytes": 7037,
+      "sha256": "62b038f1e89a03ae999a2a88b70955df3032b2790c059e518cbf06f2e5c2a42b",
+      "git_blob": "5bfdf5baca264d49ff843fcc384b49b1bc4fca0b"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataViewDistance.h",
+      "bytes": 3719,
+      "sha256": "bc350d102001b61dd929c541406edb0921f5645f07fe4821e446ff72bc0619b2",
+      "git_blob": "dfdcf0164da1e882445715fc17994a62dba6b092"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataWater.cpp",
+      "bytes": 70820,
+      "sha256": "a19b07c701a9117b317d80fe2c28f4e53578554f21916a0af538568d43d2d990",
+      "git_blob": "b9dd5ffb491f8ab1e6b409a5237683113655f41c"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdCataWater.h",
+      "bytes": 3332,
+      "sha256": "60bd0f9f763751dbdf295e10b363a3a53c544d6407dbead2c84b280549a031ee",
+      "git_blob": "2d333163f2221e0954bd0c856692638d81808251"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdContactShadow.cpp",
+      "bytes": 35575,
+      "sha256": "65b74ba62aacb18f976e3227d5f2829676a61fbb1026da6aa349f11b692bfb78",
+      "git_blob": "062de4dcb0c4abae70d7d5240c0864d7dd927aaf"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdDayNightMath.h",
+      "bytes": 3830,
+      "sha256": "9da8bc0ead787ec61b8d8f70ce815561524b905444e1e66a2b9f0549bd43b80f",
+      "git_blob": "060a8c941cb19ff035d6f7f6862d642e3b57b402"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdDetailDoodad.cpp",
+      "bytes": 28617,
+      "sha256": "a433f986306fdb8bb9777463d4d064990a8b562021b80f8a0aebc3fab9111666",
+      "git_blob": "1af21bc77d24f17afc261ac44f6c425dca8ddcf4"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdDetailDoodad.h",
+      "bytes": 4050,
+      "sha256": "8ae2591ada3d57866a80e78dac79c99c648454a8d347e698b4aa9abebfb33e28",
+      "git_blob": "e3325d1de0b264db2806d46d7fd64bec80051c5a"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdFog.cpp",
+      "bytes": 48151,
+      "sha256": "0ab817d3d706ecba33bdeaf58c99a23a50156e22e41266b122b8fbb8c1bf1ad6",
+      "git_blob": "4cb82845ac08a7074995e98d5eca640f5249377c"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdForever.cpp",
+      "bytes": 29660,
+      "sha256": "8d16cedf030c3e2ae0755365987a76fb69cca07d20bcaeea8fb8e77599493dd2",
+      "git_blob": "9354a0652786bbbf79b260e71b43f24b78e1cbb2"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdForever.h",
+      "bytes": 5875,
+      "sha256": "9dc90385feab27e973602a75ce8a5526cefc78f08e143c10824d9b29682e6fd4",
+      "git_blob": "f2e14424c6896521f7905f90fb28759477b3cf8c"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGrade.cpp",
+      "bytes": 20651,
+      "sha256": "ba2fa84e32798f781778ccae8d20ff0c5ba6ce13532468548a7b4d1d78b74081",
+      "git_blob": "84221cb0c446384763f187e15586ebee4eb6626d"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGrassWind.cpp",
+      "bytes": 13753,
+      "sha256": "4bd82fdad688861c0dbf469292a6910ae7d263e65965c3b6bd75add8e8f5a22e",
+      "git_blob": "a28deb5d731888560ce3322be512b7ed2ca57463"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdLights.cpp",
+      "bytes": 29348,
+      "sha256": "8d51e281d441346783b5d878c5a9e7d78fdca63d4304998ab25c81ef4658890f",
+      "git_blob": "570e1967ec5cd7070655041447ba6ff8ea33a1d0"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdLights.h",
+      "bytes": 5013,
+      "sha256": "6f9b7de00895c0b59cad52f9c1ee03c1b899397ae950ea4eef381ae0e7e51a7f",
+      "git_blob": "e945a8297aa8e3996ca7483fabe11c9ec7515c98"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdMapObj.cpp",
+      "bytes": 31507,
+      "sha256": "99843554833eb72c9dcddb1e316bf3a3eff5c0b3ef36119889c8afb14cb4cd66",
+      "git_blob": "296f3458f564c4725e39f7223c0c18988d5fef27"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdMapObj.h",
+      "bytes": 2595,
+      "sha256": "c632d414c478b87a9a899937ecbb8d9050aca2ccdef17b2f737c9bc8fed4ffc5",
+      "git_blob": "08f4ad7e5fbdb445ad45ae57b80815493d86051d"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdSky.cpp",
+      "bytes": 17507,
+      "sha256": "2be94879e6fc5ef4d1b20bc4e0e5af36e80adad2f899f827b961bf70b5e15eb9",
+      "git_blob": "0505e63bbbe55488966b8320d5b1704e30aaade7"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdSky.h",
+      "bytes": 3025,
+      "sha256": "ff59fda25b8d922c4004079c4477e0000670508b3f2c588d31c43471da5778bf",
+      "git_blob": "8e48654fc816f5ed00d388ac7a78996d7dd6fc05"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdTerrain.cpp",
+      "bytes": 42449,
+      "sha256": "6418830096314c5db151846854e1ada6dcf425165bd71ddcc886aa9b62efc927",
+      "git_blob": "29c7a6270ef6f6b42a55e8dad9081528cecb5919"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdTerrain.h",
+      "bytes": 4297,
+      "sha256": "d48bf16f603f3527f259e8deb17c389ff584d7468807c76f6835e197f5682023",
+      "git_blob": "cf0de2c4a757819bbe2ad1d2f30516ab255e84f2"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdTime.cpp",
+      "bytes": 8683,
+      "sha256": "e60d98b550b1167973a3c58124b4e1afbe40fa2a54d3eaa7276ccbb382264c0d",
+      "git_blob": "567dc0fcfa4c3c5f2fe90ba5614d060bb67a7aba"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdTime.h",
+      "bytes": 2964,
+      "sha256": "08d6204c66300c45233f54f24334ce928cb56b9e9cddceba78988125e5e7055e",
+      "git_blob": "745e7826378ee2ecdb73f6511ca414879fd368de"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdWater.cpp",
+      "bytes": 71158,
+      "sha256": "006848fe06c287678ef1f5fd9dff0eee9b393dd9462bbbde206522ecc2fe462c",
+      "git_blob": "3097c0c07addba625460a4a88e954f62977d9f31"
+    },
+    {
+      "path": "Engine/Source/Base/HdCpuF.h",
+      "bytes": 5523,
+      "sha256": "f4d53a4ed9438a71b948f6bd80fa62b91dba4282dfb43e5ec18bab4d0ee22aea",
+      "git_blob": "188f5c0fdf0058f2fde3eddcc374e427d4a1f019"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdGpuZones.cpp",
+      "bytes": 627,
+      "sha256": "4f609961bf4061d23f1dce85213f16417efedb27b9998f473cd05357516962f1",
+      "git_blob": "809c20d016eb611f8aa9254f6f5c8b9bc87b2665"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdGpuZones.h",
+      "bytes": 600,
+      "sha256": "2959a424e00286119ef75dd5caa6bf5ce49b4b3398cf4e3e1625fb1c689719e8",
+      "git_blob": "a2bf6d1e0e01c56dc0a448c7d348998054f835f8"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/HdPassTimer.h",
+      "bytes": 6777,
+      "sha256": "2891d8150384ac196b4021025dba7f13a7eadf57cbebc66cebd693e5ed8a0280",
+      "git_blob": "d3578c4aed6e67ae9fb490af2a15ff4fff28822f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvDescriptorMask.h",
+      "bytes": 1101,
+      "sha256": "c175cd9d0d67de5c18119e76d4e8e65f09c42c14355a122f87c96e7c348eecb4",
+      "git_blob": "dd5401b7d77174fc6616caa06b37be9fd34cee95"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/EffectGatherOptimized.spv.h",
+      "bytes": 13847,
+      "sha256": "9bc50d7ac2ff42f11e7406460ec78a22022890fa3c2a036f96829163a0aad3af",
+      "git_blob": "f951a0eda842b9c2d77e1d16c15b356038b720df"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog1Fast.spv.h",
+      "bytes": 47747,
+      "sha256": "7df29b53e6d2fdb83552721dd28915518808bf1cc6ff165b054de146a83a60b2",
+      "git_blob": "fdede123e55d2f14fccc8000b67e598237fe3cb5"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog2Fast.spv.h",
+      "bytes": 47750,
+      "sha256": "77d0dc3e4c4e6ebb54c23b366e5ac6d722b2afd67baf6eee18ff7690de4bda1b",
+      "git_blob": "3755bfd98e4e616cc36d09c7aa8d69da6b00dbc8"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/Fog3Fast.spv.h",
+      "bytes": 47752,
+      "sha256": "a33700d823f243be31ec4b12517e99837a5d097af565562b44265e7a883c1eab",
+      "git_blob": "9b7d639ac7b1591dddf838ddd685a60e117f0347"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/FogFast.comp.hlsl",
+      "bytes": 21500,
+      "sha256": "fcba5d4dda53b06ded891d97e1513d5fdbc0fe446b54faf113e82f1dce8883bc",
+      "git_blob": "bdb5f2c7cdc7e473a9b92d26a90d1684b7391958"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampBlurOptimized.spv.h",
+      "bytes": 25392,
+      "sha256": "4438c9219da5d0479e5661ca013a30b6d733888f5ebeda5d266470b7bcde8fcd",
+      "git_blob": "3d55547c3363c9c09290ea61520ad44ef1e9c05c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampGroupLists.spv.h",
+      "bytes": 34867,
+      "sha256": "0a297a2392daa7aa744c81682f359dfacabb2a91c049f561809def792728dbbe",
+      "git_blob": "f51f20bbaf4d9b87a8b5b0199215af321305df1c"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/LampSurfacesOptimized.spv.h",
+      "bytes": 132169,
+      "sha256": "3c5276a62920c642dc216d42b5ed8dbb57a9de73e38f25cbe9db525f297c1eb2",
+      "git_blob": "f0765b6e5214a418b2d3610b3df1c2ae1f85e703"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/regenerer-brume1.py",
+      "bytes": 1590,
+      "sha256": "88c978c6792b208444078ee51c9630e33616c637f53bf28b3aa511252b6f9a3b",
+      "git_blob": "053d47cebaf5de87daea601837f5bec13a9a437b"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/WaterLamps.comp.hlsl",
+      "bytes": 46329,
+      "sha256": "9006d211f530dde9f353020d1f277de42db7c66d36bc61cc463e3f561d690624",
+      "git_blob": "1822a2012bc60fd53a1d7a7f73feeb9ca3cf2874"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/WaterLamps.spv.h",
+      "bytes": 127711,
+      "sha256": "e93cc816d5fbbd6a6c14b3f580426ff7f10b601a4063d10972e4d74fc74a8b4c",
+      "git_blob": "d1d7f566a2bbf2be0c091b523468911b49d8c8bd"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/shaders/WaterLampsOptimized.spv.h",
+      "bytes": 155933,
+      "sha256": "76432431165d0f1ead455c69f79c81088f4112df946dd5598e13064094073127",
+      "git_blob": "1a626321ffa2ad11698daa19ec74eac03c24f673"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/mt/HdVkRecordThread.cpp",
+      "bytes": 6957,
+      "sha256": "8858481cbcd76a412733cc3fcb006c795e5c3e9ad997477540413584c88edf57",
+      "git_blob": "977319966ec2b78a675f5acaaec76314521fa687"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/mt/HdVkRecordThread.h",
+      "bytes": 145,
+      "sha256": "e18b175c20c5f1aa5dd38d0e1856ddcbd72324587a484e85ee65a6363eef6e63",
+      "git_blob": "00c7c642652ab02bc696d7ae6e0de123dc8cc342"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunApplyFused.spv.h",
+      "bytes": 83413,
+      "sha256": "a44f8ff504cf65410bd66ce7d2597ff906737058c00487a1641ebca2b45cc733",
+      "git_blob": "b96767e11ad928fe3adb62a007fbaec427a4146a"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunBlurFast.comp",
+      "bytes": 486,
+      "sha256": "8ed230a503a1eb8b20fb3add3242bef22e229b49367632cca4e52f38d51e3b3e",
+      "git_blob": "124cfd5f8b56912fb97f6c5a1e6a619002f685e0"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunBlurFast.spv.h",
+      "bytes": 43949,
+      "sha256": "1293a1ce275ba5ef959a30b7e122be37b57d0241a2f2a714ddf414930d3c652d",
+      "git_blob": "473d64c39145acd623686742ded03d68513caa51"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunContactCompare.comp",
+      "bytes": 1126,
+      "sha256": "40105a91f0c447067be76ca44d67ba0b83d9eb6774b94404f5c8d814c84714c6",
+      "git_blob": "825c427dfcf35415fa36cc389f2352d02e65005e"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunContactCompare.spv.h",
+      "bytes": 7947,
+      "sha256": "6df140611f56be6df0416d03167ff43e5f56bb76cc178a15eabfb9928bd13e73",
+      "git_blob": "d6c2f08284464ef335d236089790eeddb8b56064"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunContactGpu1.spv.h",
+      "bytes": 172578,
+      "sha256": "b42aeffc702cbb9ffc387e5b6eae0ef04a183dab9a4cc15c4bb25a732f373629",
+      "git_blob": "890d649b72d6969366aaa3fda38aa1d1ab4706fa"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunContactOptimized.spv.h",
+      "bytes": 254576,
+      "sha256": "cd87c75aba9ea183ffc9825168c716b585ec83fd8ff8031d71c8a8f8831c53ed",
+      "git_blob": "9a3762b1e61eb743c143f29186c0d82891490175"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunFlou.glsl",
+      "bytes": 1155,
+      "sha256": "adda7502b1f153dd4376917dd586f258309d814bb75d5adbbbb783b2bae9887a",
+      "git_blob": "dc8bbc8959f61d35a99c6b67b7c19876b56546a7"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunTiles.comp",
+      "bytes": 2775,
+      "sha256": "e591bded95d915e62f492097343c0ee0a7be550e2641321a8562bd998ab08267",
+      "git_blob": "755740dae52cfabd2a724bbb187d888b92b75cca"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/HdSunTiles.spv.h",
+      "bytes": 21387,
+      "sha256": "6cef9a1abfe23a99fc412a00a6efb048aa141aa50d287d73cec549eaa0409417",
+      "git_blob": "79001cb58cfef8925eb6ea931bbac5ddb9952981"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/hd/shaders/shadows/regenerer-shaders-LAT1.py",
+      "bytes": 1521,
+      "sha256": "623e43c45b01b02f1a61a22a1fd94bde7472d970a7517ddb2ffd6a1b3ff94c83",
+      "git_blob": "fdad06b591437cd18d581aebe7b1721ea2ab900a"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/capture/Aside.cpp",
+      "bytes": 11758,
+      "sha256": "57ab2aeeb1cfb409c5e9a5392d5555e4b6ac7985c44c49cc7198cd64fb735529",
+      "git_blob": "2370266ec3be2c7888c958adeacf92542dd06644"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/capture/Aside.hpp",
+      "bytes": 2488,
+      "sha256": "fd587b948c6164ba5a58fcd8a4d0ae841c94e52f998a9dea295161222e1991a9",
+      "git_blob": "11dc2f38d533949ffff32545fd701a010be378f7"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/record/DrawPacket.hpp",
+      "bytes": 9646,
+      "sha256": "10db6fe698cfea02ab4c6ac607615a9a3dbe8330c659ce3b4258a2b8b57a8031",
+      "git_blob": "7823338e18df379e9d2f2d16cf7ebbbc1b8bfbfe"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/record/OrderedWorker.hpp",
+      "bytes": 8786,
+      "sha256": "e508ecf3ce2144305f96053344ab16b65828adb9fd8afd333e9438ce951f2d88",
+      "git_blob": "c3caf6f80c71179b50d9dfb0ebcddffea7cc3140"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/record/RecordThread.cpp",
+      "bytes": 20903,
+      "sha256": "34364bcc1a0b8a0e867589092ad0f520c4477af7ce11329d062824d94ff225e0",
+      "git_blob": "489a3a3cf6682e89ae032cdc3841453fe195379b"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/native/record/RecordThread.hpp",
+      "bytes": 5292,
+      "sha256": "2b7d5ec70fe2805cf1f24368543ed2d67310d4f3aa0308719956cd542f17be9d",
+      "git_blob": "1d3b20cf8a97ffa6fa7f43c36924ed7f15f8b4cd"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/GpuFixed.cpp",
+      "bytes": 41551,
+      "sha256": "0851ce845ec1b87a1c18b14386a082fd873bf9bd3bab4257abfbdbd198bccf4c",
+      "git_blob": "9bb55d460ea0dad892ce53df0a48f6c46aeb61ea"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/GpuFixed.hpp",
+      "bytes": 7630,
+      "sha256": "7312f01ff147ba3466714ecac9646861318fa311fb468827ea0409cf69e8cf9b",
+      "git_blob": "407b7538ea882ae64c4f22ea041c4f55aa52b02f"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/GpuFixedAnim.spv.h",
+      "bytes": 148232,
+      "sha256": "dd3cd0e90a5e3976aae50efa6fd010581f2cdfa650d5036dbe38a5068b2d07f0",
+      "git_blob": "a8584bd3bc4d04dacfb0e3dfaf0ad1d0f6d73f07"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/GpuFixedCull.comp",
+      "bytes": 18114,
+      "sha256": "e1b5308b54fc53d25436e04858da7b494f1c7a400c7c124bca9d60479a182359",
+      "git_blob": "38368ea1025439039da838c6ed759c475529060d"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/GpuFixedCull.spv.h",
+      "bytes": 83318,
+      "sha256": "c1459cc56e3d07c47bcdbceb53bb651c73715325784ea3273dc14c025f8e3a9b",
+      "git_blob": "93931e2247d46a1731b47daebd591f57b435d694"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/GpuSceneData.hpp",
+      "bytes": 2657,
+      "sha256": "00f192e1e185a2a3a93091064a3d28792967ba78c446cc2c7cfbfde2fd58d0f3",
+      "git_blob": "6d6a0a99244d8fb0f20dc10556ef8e0d6bbd0fb1"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Async.hpp",
+      "bytes": 2032,
+      "sha256": "2ec84895a8e0203d817dbde28a2295361ad5e06cab8301ad5005a1f87ef1c090",
+      "git_blob": "5dc25f4516846ff2bc5bb220009a01f6e4ae7550"
+    },
+    {
+      "path": "Engine/Source/Gx/CGxDeviceVulkan/wxl/src/vulkan/pipelines/Table.cpp",
+      "bytes": 8317,
+      "sha256": "237559df9ce7f68dff6efefaf201c2d1f61ec7a5e9ae2069100c17d5f5fd1978",
+      "git_blob": "c85b61acc5200563220211d3645490b5061de95c"
+    },
+    {
+      "path": "Engine/Source/Model2/HdGpuSceneHooks.h",
+      "bytes": 1386,
+      "sha256": "2092a6399ff2dd8eb49ce9f1ee4987d8a838bedafabfc1d52bf194f8275c8c28",
+      "git_blob": "86c8739608a7b3619b4ce842324e8dfae4f36f06"
+    },
+    {
+      "path": "Engine/Source/Model2/HdM2Count.h",
+      "bytes": 1144,
+      "sha256": "914bc0a1becb90bfd599aa4c981af608ca027449b45369860e717525d28ad23b",
+      "git_blob": "3328225e74a4fb5f4e75feb2978563ebcf7b89db"
+    },
+    {
+      "path": "ThirdParty/DLSS/LICENSE.txt",
+      "bytes": 26620,
+      "sha256": "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0",
+      "git_blob": "80756566d773cdac55179c5ae16c4495df7f73b5"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/ForeverLightComposition.h",
+      "bytes": 5306,
+      "sha256": "5ad1bff3d73fe432a52e2cc7693ecad675cadf33b79b5a29072bcfefce87094c",
+      "git_blob": "715aa2bc96ea90745652c3da9da213724b9e8071"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/ForeverWorldLighting.h",
+      "bytes": 4025,
+      "sha256": "647c77f57b7ed4bf444672536ec4ae26b3925539ca7394c6a515c842a9a86823",
+      "git_blob": "39979aa66e42523b546cb9ad4b223246602d98b1"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdArLight.cpp",
+      "bytes": 12760,
+      "sha256": "7d5f5b546ad800f1b80add7065f67a38bc5d91c955fb79476d56c651fd1040b0",
+      "git_blob": "9b0550ad1698e251b403175e220f6d183952f8bc"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdArLight.h",
+      "bytes": 1557,
+      "sha256": "cb3a6927fee6906a96c1153a445278b50d46caa5f17265800afbfdd027dd8869",
+      "git_blob": "e40e250b62996d5115306ad2c6047cc6ef09d5cc"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGpuFixed.cpp",
+      "bytes": 61968,
+      "sha256": "96c81a211282c0758565b15343cb903a129e75ca0b9e5a5bd9b34cc4af864646",
+      "git_blob": "ed07d9fa256b230d0574576b742a808d9cc225e3"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGpuFixed.h",
+      "bytes": 5351,
+      "sha256": "46402711903e96cb6533e71cbb8f686373805f01ee02e591c1b466740d75df1f",
+      "git_blob": "2faafcc7806787065c72da6ad45bc571a303a9ab"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGpuScene.cpp",
+      "bytes": 50703,
+      "sha256": "6c3fd60b3f5c084997f72e48f5487404754e8eac997415fbea63a539c1c26604",
+      "git_blob": "db32321108f200acbb68eb3a55d0f185ad2c3e80"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGpuScene.h",
+      "bytes": 1515,
+      "sha256": "7cc7b43323de3116639cb43898f3f2288c5b8060ba2a181e47ce0748554b4a08",
+      "git_blob": "659f2f975dcc2c0e3ae73ceeba38b0e517ed2cd2"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGpuTerrain.cpp",
+      "bytes": 13024,
+      "sha256": "2f6a52c99f0900d2059acdec051967845b59245e4d71127f5218c50f4f7683e7",
+      "git_blob": "c80f9eb6badb9f8d608c7cc14fc23d1141f59e6f"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdGpuTerrain.h",
+      "bytes": 1104,
+      "sha256": "6b0489e0bedf1ed120c52111c51d295051bb44fdf886964b22f5980c54d5695e",
+      "git_blob": "13f9bba6b01e9bf288168594a80c5a6ff2c4cba7"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdLightTrace.cpp",
+      "bytes": 7357,
+      "sha256": "129cd484c1517a3ec4e966138ed2aa078f6e36331cc06510afd5c83ff37128e8",
+      "git_blob": "a5c1c8bdd5a4d96ef6dd6bdf9fe5752d947d55c4"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdLightTrace.h",
+      "bytes": 1818,
+      "sha256": "cecace37ac5dcf1b684f47e45da82ad69ad346ca79b53e89998758e0977b6655",
+      "git_blob": "b1c2b0adacf45aa6772392585a649c3975beb145"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdParallel.cpp",
+      "bytes": 3015,
+      "sha256": "73310da582d04ec2be9c708c88f699c170e9fe576dfdf71605e1a270e16598ae",
+      "git_blob": "8ccafbdbd2b519a2dbb8960e2f218be966725d76"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdParallel.h",
+      "bytes": 752,
+      "sha256": "f6fcb0bfa96dfbb83fa1edbbd8df32f2ca05334392d381b43cea9acda4164426",
+      "git_blob": "6d1b27fd85f875b7aafca1d42dad2ba687b203d4"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdShaderBuild.cpp",
+      "bytes": 8006,
+      "sha256": "04180a5f7af0789331cdf6014b6ebcdfbdfa8e38a1229f1dce531b68a70d6305",
+      "git_blob": "e5e5f94831e6165ea6ceacf917f844e1ccf0b95f"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdShaderBuild.h",
+      "bytes": 2236,
+      "sha256": "b0d09bfc3d3970bf2f214c9f2b6d063d959ea1264378f183c9725371602a5fa7",
+      "git_blob": "4e3c1dfec473ffaa50179de5b724d01c86cde1ba"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdWorldLightingFrame.cpp",
+      "bytes": 4908,
+      "sha256": "cb135722d3e86edc7b8018f8db41ac3550374ef6c76d73f5f8e0f869264bcc2e",
+      "git_blob": "790b4a10199a1408731941515a3389a6a6d404b0"
+    },
+    {
+      "path": "WoW/Source/WorldClient/HD/HdWorldLightingFrame.h",
+      "bytes": 1545,
+      "sha256": "142f658e9b1f55be397c20429b2feb5be1087cd2cf0c256bf0d7683df36d8fc2",
+      "git_blob": "466dd13935c890b0e9659bbc1f03dd5490b4c671"
+    }
+  ]
+}

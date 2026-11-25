@@ -1,4 +1,6 @@
+#include "WoW/Source/WorldClient/HD/HdGpuFixed.h" // Claude B4
 #include "MapChunk.h"
+#include "WoW/Source/WorldClient/HD/HdCataMirror.h" // Claude LV31
 #include "WoW/Source/WorldClient/DetailDoodad.h"
 #include "WoW/Source/WorldClient/CDetailDoodadData.h"
 #include "Engine/Source/Tempest/CRandom.h"
@@ -329,7 +331,7 @@ int16_t CMapChunk::CreateIndices(char* buf, int32_t baseVertex) {
 // VERIFY: 44a339cb manual
 // OFFSET: 0x007C3E70
 void __fastcall CWorldScene::AddMapChunk(CMapChunk* mapChunk) {
-    if (CWorldScene::FrustumCull(&mapChunk->m_bbox)) {
+    if (CWorldScene::FrustumCull(&mapChunk->m_bbox) || HD::CataMirrorOutside(mapChunk->m_bbox)) { // Claude LV31
         return;
     }
 
@@ -1003,12 +1005,17 @@ void CMapChunk::CreateRefs(CMapArea* area, uint32_t* mcrfPtr, uint32_t doodadRef
         CMapDoodadDef* doodadDef = CMap::CreateDoodadDef(&area->m_m2FileNames[area->m_modelFilenamesOffsets[def->m_nameId]], def, &center);
         CMapBaseObjLink* link = CMap::AllocBaseObjLink(doodadDef);
         link->m_ref = this;
+        HD::GpuFixed::Forget(doodadDef);   // Claude B4: its links changed
+        ++this->m_hdLinkGen;
         this->m_doodadDefLinkList.LinkToTail(link);
-        doodadDef->m_diffuseLightScale = 1.0f;
         doodadDef->m_flags = static_cast<MapObjFlag>(doodadDef->m_flags | MAPOBJ_FLAG_EXTERIOR);
 
+        // HD (Claude) OMBREBLIZ, 24 nov 2026 (Max): the original reset the light here even after the baked shadow had dimmed the doodad,
+        // so a doodad touching several chunks came back bright or not depending on the loading order.
         if (doodadDef->m_flags & MAPOBJ_FLAG_PREPARED) {
             CMapDoodadDef::ExtendBounds(doodadDef, this);
+        } else {
+            doodadDef->m_diffuseLightScale = 1.0f;
         }
     }
 }
@@ -1041,6 +1048,22 @@ void CMapChunk::Create(SIffChunk* headerChunk, bool a3) {
     this->CreateRefs(area, reinterpret_cast<uint32_t*>(this->m_mcrfPtr), this->m_header->m_nDoodadRefs, this->m_header->m_nMapObjRefs);
     area->m_mapChunks[16 * this->m_aIndex.y + this->m_aIndex.x] = this;
     this->m_flags = static_cast<MapObjFlag>(this->m_flags | MAPOBJ_FLAG_PREPARED);
+
+    // HD (Claude) OMBREBLIZ: a doodad prepared before the chunk it stands on existed gets its baked shadow now.
+    // Doodads standing in water stay at full light (CMapDoodadDef::SelectUnderwater).
+    for (CMapBaseObjLink* link = this->m_doodadDefLinkList.Head(); link; link = this->m_doodadDefLinkList.Next(link)) {
+        CMapDoodadDef* doodadDef = static_cast<CMapDoodadDef*>(link->m_owner);
+
+        if ((doodadDef->m_flags & MAPOBJ_FLAG_PREPARED) && !(doodadDef->m_flags & MAPOBJ_FLAG_INTERIOR) && !(doodadDef->m_staticFlags & 0x20) && CMap::QueryShadow(&doodadDef->m_position)) {
+            C3Vector base(doodadDef->m_position.x, doodadDef->m_position.y, doodadDef->m_bbox.b.z);
+            int32_t liquidType;
+            float liquidHeight;
+
+            if (!CMap::QueryLiquidTerrain(&base, &liquidType, &liquidHeight, 0)) {
+                doodadDef->m_diffuseLightScale = 0.5f;
+            }
+        }
+    }
 }
 
 // VERIFY: 1d9777de manual
@@ -1595,4 +1618,5 @@ void CMapChunk::Intersect(CiRect* rect, const CFrustum* frustum, TSGrowableArray
 // VERIFY: 15f51c4a manual
 // OFFSET: [0x007C5E50, 0x007C6480]
 CMapChunk::~CMapChunk() {
+    HdCullListFree(this->m_hdCull);   // Claude B4
 }

@@ -54,6 +54,8 @@ namespace wxlvk::vk
         kCapComputeDerivatives = 1u << 16, ///< VK_KHR_compute_shader_derivatives, computeDerivativeGroupLinear
         kCapTimeline           = 1u << 17, ///< timelineSemaphore (1.2 core)
         kCapSubgroupSizeControl = 1u << 18, ///< VK_EXT_subgroup_size_control: subgroupSizeControl, computeFullSubgroups
+        kCapTextureTable       = 1u << 20, ///< Claude B3: descriptor indexing (1.2 core): one table of sampled images, updated after its bind
+        kCapVertexStores       = 1u << 19, ///< Claude ANIM1: vertexPipelineStoresAndAtomics (the units' animation kept, capture/Replay.cpp)
     };
 
     /// What the probe found and the device was created with. Zeroed (a 1.0 device, nothing optional) until

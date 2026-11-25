@@ -36,6 +36,10 @@ namespace HD {
     // compiled yet or not usable): the fixed-function draw then happens as before.
     bool SkyBeginDraw(int32_t pass);
 
+    // Claude BLZ1: called at the end of CWorld::LoadMap (under the loading screen): compiles (or loads) our sky
+    // shaders and returns once that is over.
+    void SkyShadersWait();
+
     // Called after the draw when SkyBeginDraw returned true: gives the client its shader constants back
     // (the shaders themselves are unbound by the caller's RsPop).
     void SkyEndDraw();

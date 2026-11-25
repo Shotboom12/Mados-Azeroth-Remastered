@@ -115,11 +115,11 @@ void LampTiles::Add(LampTileList list, int slot, const LampScreenRect& rect)
     const int y0 = TileOf(rect.top, m_tilesY);
     const int y1 = TileOf(rect.bottom, m_tilesY);
     std::vector<uint16_t>& counts = m_counts[list];
-    const uint8_t value = static_cast<uint8_t>(slot);
+    const uint16_t value = static_cast<uint16_t>(slot);
     for (int y = y0; y <= y1; ++y)
     {
         uint16_t* count = &counts[static_cast<size_t>(y * m_tilesX + x0)];
-        uint8_t* block = &m_texels[TexelOffset(list, x0, y, 0)];
+        uint16_t* block = &m_texels[TexelOffset(list, x0, y, 0)];
         for (int x = x0; x <= x1; ++x, ++count, block += kLampTileBlockWidth)
         {
             const int index = *count + 1;
@@ -165,7 +165,7 @@ void LampTiles::Build(const LampTable& table, const float* glProjection, const V
             {
                 const int count = m_counts[list][static_cast<size_t>(tileY * m_tilesX + tileX)];
                 m_texels[TexelOffset(list, tileX, tileY, 0)] =
-                    count > kLampTileCapacity ? kLampTileOverflow : static_cast<uint8_t>(count);
+                    count > kLampTileCapacity ? kLampTileOverflow : static_cast<uint16_t>(count);
                 m_stats.listed[list] += count;
                 m_stats.overflowing[list] += count > kLampTileCapacity ? 1 : 0;
                 m_stats.longest[list] = std::max(m_stats.longest[list], count);
@@ -176,28 +176,7 @@ void LampTiles::Empty()
 {
     for (std::vector<uint16_t>& counts : m_counts)
         std::fill(counts.begin(), counts.end(), static_cast<uint16_t>(0));
-    std::fill(m_texels.begin(), m_texels.end(), static_cast<uint8_t>(0));
-}
-
-void LampTiles::Write(unsigned char* bits, int pitch, int bytesPerTexel) const
-{
-    const size_t width = TextureWidth();
-    const uint32_t height = TextureHeight();
-    if (bytesPerTexel == 1)
-    {
-        for (uint32_t row = 0; row < height; ++row)
-            std::memcpy(bits + static_cast<size_t>(row) * pitch, &m_texels[row * width], width);
-        return;
-    }
-    std::vector<uint8_t>& expanded = m_row;
-    expanded.resize(width * static_cast<size_t>(bytesPerTexel));
-    for (uint32_t row = 0; row < height; ++row)
-    {
-        const uint8_t* source = &m_texels[row * width];
-        for (size_t i = 0; i < width; ++i)
-            std::memset(&expanded[i * bytesPerTexel], source[i], static_cast<size_t>(bytesPerTexel));
-        std::memcpy(bits + static_cast<size_t>(row) * pitch, expanded.data(), expanded.size());
-    }
+    std::fill(m_texels.begin(), m_texels.end(), static_cast<uint16_t>(0));
 }
 
 int LampTiles::Count(LampTileList list, int tileX, int tileY) const

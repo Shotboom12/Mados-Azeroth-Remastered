@@ -1,0 +1,22 @@
+#version 450
+
+layout(local_size_x=8, local_size_y=8) in;
+layout(set=0,binding=9) uniform sampler2D optimizedContact;
+layout(set=0,binding=11,rgba8) uniform image2D sceneColour;
+layout(set=0,binding=13) uniform sampler2D originalContact;
+// Claude GPU1: the proof's count of differing pixels, read back by the CPU (Logs\preuve-contact.txt)
+// differ: any channel; contact: the contact value (r); sun: the PCSS sun (g).
+layout(set=0,binding=14,std430) buffer Count { uint differ; uint contact; uint sun; } proofCount;
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(sceneColour)))) return;
+    const vec4 matchColour = vec4(0, 0.45, 0.08, 1);
+    const vec4 mismatchColour = vec4(1, 0, 1, 1);
+    vec4 a = texelFetch(optimizedContact, pixel, 0), b = texelFetch(originalContact, pixel, 0);
+    bool differs = any(notEqual(a, b));
+    if (differs) atomicAdd(proofCount.differ, 1u);
+    if (a.r != b.r) atomicAdd(proofCount.contact, 1u);
+    if (a.g != b.g) atomicAdd(proofCount.sun, 1u);
+    imageStore(sceneColour, pixel, differs ? mismatchColour : matchColour);
+}

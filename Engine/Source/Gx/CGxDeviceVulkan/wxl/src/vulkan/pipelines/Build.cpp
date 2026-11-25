@@ -203,7 +203,7 @@ namespace wxlvk::vk::pipelines::detail
 #ifdef WOWDECOMP_FSR
         uint32_t velocityMode=0;
         // Separate cache key bit: M1 pipelines already cached on the SAME pass must not be reused for M2.
-        if((k.bones&16u)&&wxlvk::native::present::WorldObjectMotionPass(pass)&&fromModules&&pr&&k.depthWrite&&k.depthTest){ // FIX 2026-10-31: blended/colourless depth writers take the zero marker (attachment 6 never blends)
+        if((k.bones&16u)&&wxlvk::native::present::WorldObjectMotionPass(pass)&&fromModules&&pr&&k.depthWrite&&k.depthTest){ // FIX Claude 2026-10-31: blended/colourless depth writers take the zero marker (attachment 6 never blends)
             const bool moving=(k.bones&8u)&&k.blend<=1&&k.colorWrite&&gbufVar&&!windVar&&vr&&(bones?vr->velBones:vr->vel)&&(windPix?pr->velFragWind:pr->velFrag);
             const bool zero=gbufVar?(windPix?pr->gbufWindVelZero:pr->gbufVelZero):(windPix?pr->velZeroWind:pr->velZero);
             char optionalVert[160],optionalFrag[160];
@@ -221,6 +221,77 @@ namespace wxlvk::vk::pipelines::detail
             }
         }
 #endif
+        // Claude B3: a group of terrain chunks (Keys.cpp, bit 2048): the twins <variant>.gput.spv of both modules this pass
+        // takes (outils-shaders/voie-b/faire-variantes-terrain-gpu.py), on the layout with the rows and the texture table.
+        const bool terrainGpu = (k.bones & 2048u) != 0u;
+        if (terrainGpu)
+        {
+            const size_t n = std::strlen(vertPath), m = std::strlen(fragPath);
+            bool moving = false;
+#ifdef WOWDECOMP_FSR
+            moving = velocityMode != 0;
+#endif
+            if (!fromModules || !vr || !pr || !pixelHigh || bones || windVar || moving || n < 4 || m < 4
+                || n + 6 >= sizeof vertPath || m + 6 >= sizeof fragPath || TableLayoutFor(layoutIndex) == VK_NULL_HANDLE)
+            {
+                why = "a terrain group (voie B3) on modules without a .gput twin, or no texture table";
+                return false;
+            }
+            std::strcpy(vertPath + n - 4, ".gput.spv");
+            std::strcpy(fragPath + m - 4, ".gput.spv");
+        }
+        // Claude INST1: a hardware-instanced sun-shadow draw (Keys.cpp, bit 128) takes the module's twin, <md5>.inst.spv
+        // or <md5>.bones.inst.spv (tools translate.py, INST_NAMES): copy i reads the palette Cmd::instanceRows rows
+        // further. No twin, or a variant it has none of (wind, G-buffer, velocity): no pipeline -- the plain module
+        // would draw every copy over copy 0.
+        // Claude voie B: a GPU-driven draw (Keys.cpp, bit 256) takes the bones module's twin <md5>.bones.gpu.spv: the same
+        // SPIR-V as .bones.inst with the palette a runtime array (outils-shaders/voie-b/faire-variantes-gpu.py).
+        // Claude B2: a group of the main scene (Keys.cpp, bit 512): the twin <variant>.gpus.spv of the module this pass
+        // takes (the G-buffer and zero-velocity choices above are the draw's own; outils-shaders/voie-b).
+        if (k.bones & 512u)
+        {
+            const size_t n = std::strlen(vertPath);
+            bool moving = false;
+#ifdef WOWDECOMP_FSR
+            moving = velocityMode > 1;
+#endif
+            if (!fromModules || !vr || !bones || windVar || moving || n < 4 || n + 6 >= sizeof vertPath)
+            {
+                why = "a scene GPU-driven draw (voie B2) on a module without a .gpus twin";
+                return false;
+            }
+            std::strcpy(vertPath + n - 4, k.bones & 1024u ? ".gpul.spv" : ".gpus.spv");
+        }
+        else if (k.bones & 256u)
+        {
+            const size_t n = std::strlen(vertPath);
+            const bool other = windVar || gbufVar
+#ifdef WOWDECOMP_FSR
+                               || velocityMode != 0
+#endif
+                ;
+            if (!fromModules || !vr || other || n < 10 || n + 5 >= sizeof vertPath || std::strcmp(vertPath + n - 10, ".bones.spv") != 0)
+            {
+                why = "a GPU-driven draw (voie B) on a module without a .bones.gpu twin";
+                return false;
+            }
+            std::strcpy(vertPath + n - 4, ".gpu.spv");
+        }
+        else if (k.bones & 128u)
+        {
+            const size_t n = std::strlen(vertPath);
+            const bool other = windVar || gbufVar
+#ifdef WOWDECOMP_FSR
+                               || velocityMode != 0
+#endif
+                ;
+            if (!fromModules || !vr || other || n < 4 || n + 5 >= sizeof vertPath || std::strcmp(vertPath + n - 4, ".spv") != 0)
+            {
+                why = "an instanced draw (INST1) on a module or a variant without an .inst twin";
+                return false;
+            }
+            std::strcpy(vertPath + n - 4, ".inst.spv");
+        }
         const VkShaderModule vert = fromModules ? shaders::GetPath(vertPath)
                                   : shaders::Get(ffVertex ? kFfSemanticVertStem : row->vertSpv);
         const VkShaderModule frag = (fromModules || ffVertex) ? shaders::GetPath(fragPath) : shaders::Get(row->fragSpv);
@@ -421,7 +492,9 @@ namespace wxlvk::vk::pipelines::detail
 
         VkGraphicsPipelineCreateInfo info = {};
         info.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        info.stageCount          = 2;
+        // Claude ORDRE1: this module's alpha is 1 (its alpha test never rejects) and no colour is written: the depth alone.
+        const bool depthOnly = (k.bones & 4096u) && fromModules && std::strcmp(fragPath, "translated/pixel/8eb7632bd84d472c34c4ff62b4bbf147.spv") == 0;
+        info.stageCount          = depthOnly ? 1 : 2;
         info.pStages             = stages;
         info.pVertexInputState   = &vertexInput;
         info.pInputAssemblyState = &assembly;
@@ -433,6 +506,7 @@ namespace wxlvk::vk::pipelines::detail
         info.pDynamicState       = &dynamic;
         info.layout              = bones ? (windVar ? s.layouts[layoutIndex].windBones : s.layouts[layoutIndex].bones)
                                  : (windVar ? s.layouts[layoutIndex].wind : s.layouts[layoutIndex].pipeline);
+        if (terrainGpu) info.layout = s.layouts[layoutIndex].table;   // Claude B3
 #ifdef WOWDECOMP_FSR
         if(velocityMode==3)info.layout=s.layouts[layoutIndex].skinBones;
         if(velocityMode==4)info.layout=bones?s.layouts[layoutIndex].motionWindBones:s.layouts[layoutIndex].motionWind;
@@ -481,7 +555,8 @@ namespace wxlvk::vk::pipelines::detail
             out.cubeMask  = pr->cubeMask;
             // The variant declares the 64-row block: its slice is the 64-row class.
             out.vconst    = pixelHigh ? Cmd::kVertexRegsHigh : (bones ? Cmd::kVertexRegs : vr->vconst); // HD: pixelHigh
-            out.bones     = bones;
+            out.bones     = bones || terrainGpu;
+            out.table     = terrainGpu;   // Claude B3
             out.wind      = windVar;
             out.gbuf      = gbufVar;
             out.vrec      = vr;
@@ -505,4 +580,36 @@ namespace wxlvk::vk::pipelines::detail
         }
         return true;
     }
+}
+
+/**
+ * Claude INST1: whether the hardware-instanced sun-shadow path can draw -- every skinned ShadowMap vertex module
+ * (a 256-row record) has its .inst twin on disk, and its .bones.inst twin when it has a bones variant (Build.cpp
+ * takes them by suffix). The engine asks once (M2Model.cpp RenderBatchShadowMap) and keeps the CPU copies without.
+ * Reads only the loaded manifest and the file system: safe from the engine thread.
+ */
+bool HdVkShadowInstancingReady()
+{
+    namespace manifest = wxlvk::vk::manifest;
+    if (!manifest::Loaded()) return false;
+    uint32_t found = 0;
+    for (uint32_t perm = 0; perm < 100; ++perm)
+    {
+        char name[32];
+        std::snprintf(name, sizeof name, "ShadowMap:%u", perm);
+        const manifest::Record* r = manifest::ByName(name, manifest::Kind::Vertex);
+        if (!r || r->vconst != wxlvk::draw::Cmd::kVertexRegsHigh) continue;
+        for (const char* path : { r->spv, r->bones })
+        {
+            const size_t n = std::strlen(path);
+            if (n == 0 && path == r->bones) continue;
+            if (n < 4 || std::strcmp(path + n - 4, ".spv") != 0) return false;
+            char rel[256];
+            std::snprintf(rel, sizeof rel, "shaders/translated/%.*s.inst.spv", static_cast<int>(n - 4), path);
+            const DWORD attr = GetFileAttributesA(wxlvk::path::Resolve(rel).c_str());
+            if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
+        }
+        ++found;
+    }
+    return found > 0;
 }

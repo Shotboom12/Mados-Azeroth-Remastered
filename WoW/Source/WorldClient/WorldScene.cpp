@@ -175,6 +175,20 @@ void CWorldScene::ScaleFadeDist(float scale) {
     CWorldScene::s_fadeDistMin[4] = CWorldScene::s_fadeDist[4] - CWorldScene::s_fadeRangeDefault[4];
     CWorldView::s_fadeDistSqr[4] = CWorldScene::s_fadeDist[4] * CWorldScene::s_fadeDist[4];
     CWorldScene::s_fadeDistMinSqr[4] = CWorldScene::s_fadeDistMin[4] * CWorldScene::s_fadeDistMin[4];
+
+    // Claude LV11 2026-11-14 ("Objets : distance", hdObjDist): tiny, small and medium objects kept at least this far; the
+    // fade range stays Blizzard's. Level 3 never ends before level 2 (GetFadeLevelForDistance stays increasing); level 4
+    // unchanged. Normal (0) changes nothing.
+    for (uint32_t i = 0; i < 4; i++) {
+        const float end = i < 3 ? HD::CataViewDistance::ObjFadeEnd(i) : CWorldScene::s_fadeDist[2];
+
+        if (end > CWorldScene::s_fadeDist[i]) {
+            CWorldScene::s_fadeDist[i] = end;
+            CWorldScene::s_fadeDistMin[i] = CWorldScene::s_fadeDist[i] - CWorldScene::s_fadeRangeDefault[i];
+            CWorldView::s_fadeDistSqr[i] = CWorldScene::s_fadeDist[i] * CWorldScene::s_fadeDist[i];
+            CWorldScene::s_fadeDistMinSqr[i] = CWorldScene::s_fadeDistMin[i] * CWorldScene::s_fadeDistMin[i];
+        }
+    }
 }
 
 // VERIFY: 6c8ec1cb auto

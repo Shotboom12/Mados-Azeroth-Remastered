@@ -16,6 +16,8 @@
 
 #include "vulkan/pipelines/Internal.hpp"
 
+extern bool g_hdOrdre1Shadow;   // Claude ORDRE1: hdOrdre1 (WoW/Source/WorldClient/World.cpp)
+
 namespace wxlvk::vk::pipelines::detail
 {
     // --- the key ------------------------------------------------------------------------------
@@ -70,13 +72,27 @@ namespace wxlvk::vk::pipelines::detail
         if (s.bonesReady && c.vconst == Cmd::kVertexRegsHigh && c.paletteRows)
         {
             if (PaletteFits(frameSlot, c)) k.bones = 1u;
-            else                           ++s.stats.bonesRingFull;
+            else
+            {
+                ++s.stats.bonesRingFull;
+                // Claude OS2: what this frame would have written: BeginFrame grows the slot's ring to fit it.
+                s.boneWanted[frameSlot] += (kBoneRange + s.boneAlign - 1) / s.boneAlign * s.boneAlign;
+            }
         }
         if (windy) k.bones |= 2u;
+        // Claude INST1: a hardware-instanced draw takes the vertex module's .inst variant (Build.cpp).
+        if (c.instanceCount > 1u) k.bones |= 128u;
+        // Claude voie B: a GPU-driven draw takes the .bones.gpu twin (Build.cpp), its palette its own (no ring room asked).
+        // Claude B2: a group of the main scene takes the .gpus twin of the variant it draws with (bit 512 instead), .gpul with local lights (and 1024).
+        // Claude B3: a group of terrain chunks takes the .gput twins of both modules (bit 2048).
+        if (c.gpuTerrain) k.bones = (k.bones & ~(128u | 1u)) | 2048u;
+        else if (c.gpuIndirect) k.bones = (k.bones & ~128u) | 1u | (c.gpuScene ? (c.gpuScene->lit ? 512u | 1024u : 512u) : 256u);
         // The opaque world on a G-buffer class: a shader pair, depth tested and written, opaque or
         // alpha-keyed (blend 0 / 1), colour written -- the capture's own rule for a world draw.
         if (gbuffer && !c.fixedFunction && c.depthTest && c.depthWrite && c.blend <= 1u && c.colorWrite != 0u)
             k.bones |= 4u;
+        // Claude ORDRE1: a plain caster of the sun shadows (no colour, no texture: its pixels are only their depth).
+        if (c.colorWrite == 0u && g_hdOrdre1Shadow && std::strcmp(k.ps, "ShadowMapSL:3") == 0) k.bones |= 4096u;
     }
 
     /**

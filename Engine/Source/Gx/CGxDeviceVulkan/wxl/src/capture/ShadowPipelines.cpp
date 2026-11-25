@@ -49,7 +49,9 @@ namespace
     };
     State g;
 
-    VkPipeline Build(const pipelines::ShadowSource& src, VkRenderPass pass, const context::Handles& h)
+    VkPipeline Build(const pipelines::ShadowSource& src, VkRenderPass pass, const context::Handles& h,
+                     VkCullModeFlags cullMode = VK_CULL_MODE_NONE, VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+                     uint32_t viewports = 1)
     {
         namespace shaders = wxlvk::vk::shaders;
         const VkShaderModule vert = shaders::GetPath(src.vertPath);
@@ -70,18 +72,36 @@ namespace
         input.pVertexBindingDescriptions      = src.bindings;
         input.vertexAttributeDescriptionCount = src.attrCount;
         input.pVertexAttributeDescriptions    = src.attrs;
+        // Claude CUBES1: the multi-faces variant's per-instance stream: the matrix's 4 columns (locations 28..31) and the
+        // viewport index (27), as shadowmvgen.py declares them.
+        VkVertexInputBindingDescription   binds[5];
+        VkVertexInputAttributeDescription attrs[16 + 5];
+        if (viewports > 1)
+        {
+            for (uint32_t i = 0; i < src.bindingCount; ++i) binds[i] = src.bindings[i];
+            for (uint32_t i = 0; i < src.attrCount; ++i) attrs[i] = src.attrs[i];
+            binds[src.bindingCount] = { wxlvk::capture::shadowpipes::kMultiBinding, wxlvk::capture::shadowpipes::kMultiStride,
+                                        VK_VERTEX_INPUT_RATE_INSTANCE };
+            for (uint32_t c = 0; c < 4; ++c)
+                attrs[src.attrCount + c] = { 28 + c, wxlvk::capture::shadowpipes::kMultiBinding, VK_FORMAT_R32G32B32A32_SFLOAT, 16 * c };
+            attrs[src.attrCount + 4] = { 27, wxlvk::capture::shadowpipes::kMultiBinding, VK_FORMAT_R32_SINT, 64 };
+            input.vertexBindingDescriptionCount   = src.bindingCount + 1;
+            input.pVertexBindingDescriptions      = binds;
+            input.vertexAttributeDescriptionCount = src.attrCount + 5;
+            input.pVertexAttributeDescriptions    = attrs;
+        }
         VkPipelineInputAssemblyStateCreateInfo assembly = {};
         assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
         assembly.topology = src.topology;
         VkPipelineViewportStateCreateInfo viewport = {};
         viewport.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewport.viewportCount = 1;
-        viewport.scissorCount  = 1;
+        viewport.viewportCount = viewports;   // Claude CUBES1: the multi-faces variant's, MultiViewports()
+        viewport.scissorCount  = viewports;
         VkPipelineRasterizationStateCreateInfo raster = {};
         raster.sType           = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         raster.polygonMode     = VK_POLYGON_MODE_FILL;
-        raster.cullMode        = VK_CULL_MODE_NONE;
-        raster.frontFace       = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        raster.cullMode        = cullMode;    // Claude LV25: NONE unless WXL_VK_REPLAY_OWN_CULL (the entry's own)
+        raster.frontFace       = frontFace;
         raster.depthBiasEnable = VK_TRUE;
         raster.lineWidth       = 1.0f;
         VkPipelineMultisampleStateCreateInfo multisample = {};
@@ -133,12 +153,21 @@ namespace
         return nullptr;
     }
 
-    void Fill(Slot& slot, uint32_t entry, bool alphaTest, const context::Handles& h)
+    void Fill(Slot& slot, uint32_t entry, bool alphaTest, uint32_t cull, const context::Handles& h, uint32_t viewports)
     {
         pipelines::ShadowSource src;
         const VkRenderPass pass = wxlvk::capture::shadowpass::Get();
-        if (pass == VK_NULL_HANDLE || !pipelines::ShadowSourceFor(entry, alphaTest, src)) return;
-        slot.pipe.pipeline = Build(src, pass, h);
+        if (pass == VK_NULL_HANDLE || !pipelines::ShadowSourceFor(entry, alphaTest, src, viewports > 1)) return;
+        // Claude CUBES1: a module without its multi-faces variant has none (its draws keep the per-view path).
+        if (viewports > 1 && wxlvk::vk::shaders::GetPath(src.vertPath) == VK_NULL_HANDLE) return;
+        // Claude LV25: the entry's own culling (a two-sided material stays NONE); 2 reverses the front face. An entry
+        // whose culling cannot be read keeps both faces.
+        VkCullModeFlags mode  = VK_CULL_MODE_NONE;
+        VkFrontFace     front = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        if (cull != 0u && pipelines::ShadowCullFor(entry, mode, front) && cull == 2u)
+            front = front == VK_FRONT_FACE_COUNTER_CLOCKWISE ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        slot.pipe.pipeline = Build(src, pass, h, mode, front, viewports);
+        slot.pipe.multi    = viewports > 1;
         slot.pipe.layout   = src.layout;
         slot.pipe.bones    = src.bones;
         slot.pipe.wind     = src.wind;
@@ -147,8 +176,34 @@ namespace
 
 namespace wxlvk::capture::shadowpipes
 {
-    bool Get(uint32_t entry, bool alphaTest, Pipe& out)
+    uint32_t MultiViewports()
     {
+        // Claude CUBES1: multi-viewport and gl_ViewportIndex from the vertex stage enabled on the device, 16 at most (the
+        // usual maxViewports; a call's 32 views are two groups of 16).
+        static VkDevice device = VK_NULL_HANDLE;
+        static uint32_t count  = 0;
+        const context::Handles* h = context::Get();
+        if (!h || !h->device || !h->iapi) return 0;
+        if (device != h->device)
+        {
+            device = h->device;
+            count  = 0;
+            const uint32_t need = wxlvk::vk::kCapMultiViewport | wxlvk::vk::kCapLayerFromVertex;
+            if ((context::Caps().enabled & need) == need)
+            {
+                VkPhysicalDeviceProperties props = {};
+                h->iapi->GetPhysicalDeviceProperties(h->physical, &props);
+                count = props.limits.maxViewports < 16u ? props.limits.maxViewports : 16u;
+                if (count < 2) count = 0;
+            }
+        }
+        return count;
+    }
+
+    bool Get(uint32_t entry, bool alphaTest, Pipe& out, uint32_t cull, bool multiFaces)
+    {
+        const uint32_t viewports = multiFaces ? MultiViewports() : 1u;   // Claude CUBES1
+        if (viewports == 0) return false;
         const context::Handles* h = context::Get();
         if (!h || !h->device) return false;
         if (g.device != h->device)
@@ -160,7 +215,9 @@ namespace wxlvk::capture::shadowpipes
             g.full   = false;
             g.device = h->device;
         }
-        const uint32_t key = (entry << 1) | (alphaTest ? 1u : 0u);
+        // Claude LV25: (entry << 3 | cull << 1 | alphaTest); cull 0 keeps every pipeline the replay had before.
+        if (cull > 2u) cull = 0u;
+        const uint32_t key = (entry << 4) | (multiFaces ? 8u : 0u) | (cull << 1) | (alphaTest ? 1u : 0u);   // Claude CUBES1: bit 3
         Slot* slot = Find(key, true);
         if (!slot)
         {
@@ -175,7 +232,7 @@ namespace wxlvk::capture::shadowpipes
         if (slot->key != key)
         {
             slot->key = key;
-            Fill(*slot, entry, alphaTest, *h);
+            Fill(*slot, entry, alphaTest, cull, *h, viewports);
             slot->failed = slot->pipe.pipeline == VK_NULL_HANDLE;
             if (slot->failed) ++g.failed;
             else ++g.built;
@@ -183,6 +240,22 @@ namespace wxlvk::capture::shadowpipes
         if (slot->failed) return false;
         out = slot->pipe;
         return true;
+    }
+
+    int Peek(uint32_t entry, bool alphaTest, Pipe& out, uint32_t cull, bool multiFaces, uint32_t viewports)
+    {
+        // Claude CPU-A: Get's lookup alone, never writing the table (the replay thread reads it while the engine thread builds none).
+        if (viewports == 0) return 0;
+        const context::Handles* h = context::Get();
+        if (!h || !h->device) return 0;
+        if (g.device != h->device) return -1;
+        if (cull > 2u) cull = 0u;
+        const uint32_t key = (entry << 4) | (multiFaces ? 8u : 0u) | (cull << 1) | (alphaTest ? 1u : 0u);
+        const Slot* slot = Find(key, false);
+        if (!slot) return g.full ? 0 : -1;   // a full table: Get finds no room either and returns false
+        if (slot->failed) return 0;
+        out = slot->pipe;
+        return 1;
     }
 
     void Counts(uint32_t& built, uint32_t& failed)

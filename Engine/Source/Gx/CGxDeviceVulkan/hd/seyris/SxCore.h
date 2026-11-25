@@ -14,7 +14,7 @@ float Saturate(float);float SmoothStep(float);bool Finite(V3);
 enum Feature:uint32_t {Wind=1,Actors=2,Roots=4,Density=8,Batching=16,Thinning=32,Wetness=64,Snow=128,FogFields=256,FogWake=512,LightPolicy=1024,Editor=2048};
 constexpr uint32_t AllFeatures=4095;
 struct Gates {uint32_t requested=0,rendererVerified=0;uint32_t Active()const{return requested&rendererVerified&AllFeatures;}bool Needs(uint32_t x)const{return(Active()&x)!=0;}};
-// Reading a table does NOT certify a renderer. Only the verified bridge sets rendererVerified.
+// Reading a table does NOT certify a renderer. Only Claude's verified bridge sets rendererVerified.
 class Cdbc {
 public:bool Parse(const void*,size_t);bool Load(const char*);uint32_t Rows()const{return rows_;}uint32_t Columns()const{return columns_;}uint32_t U32(uint32_t,uint32_t,uint32_t fallback=0)const;float F32(uint32_t,uint32_t,float fallback=0)const;const char*Text(uint32_t,uint32_t)const;
  const std::string&Error()const{return error_;}

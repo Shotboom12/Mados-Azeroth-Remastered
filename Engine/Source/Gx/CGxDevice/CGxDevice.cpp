@@ -1,3 +1,4 @@
+#include "Engine/Source/Base/HdCpuF.h" // CPU-F
 #include <cfloat>
 #include <cstdarg>
 #include <cstdio>
@@ -848,6 +849,10 @@ void CGxDevice::ShaderConstantsClear() {
 void CGxDevice::ShaderConstantsSet(EGxShTarget target, uint32_t index, const float* constants, uint32_t count) {
     ShadowConstants& shadow = s_shadowConstants[target ? 0 : 1];
     float* dest = &shadow.constants[index * 4];
+    if (HD::CpuF::On(HD::CpuF::Constants)) {
+        HD::CpuF::Set(dest, constants, index, count, shadow.dirtyMin, shadow.dirtyMax);
+        return;
+    }
 
     for (uint32_t i = index; i < index + count; i++) {
         int32_t changed = 0;
@@ -1045,6 +1050,7 @@ CGxBuf* CGxDevice::BufStream(EGxPoolTarget target, uint32_t itemSize, uint32_t i
 // OFFSET: 0x006848A0
 void CGxDevice::TexMarkForUpdate(CGxTex* texId, const CiRect& updateRect, int32_t immediate) {
     texId->m_needsUpdate = 1;
+    texId->unused_0054 = CGxTexNextGeneration(); // Claude CACHE1d: content generation, read by the sun shadow cache key
 
     if (updateRect.minY >= updateRect.maxY || updateRect.minX >= updateRect.maxX) {
         texId->m_updateRect.minY = 0;
@@ -1070,6 +1076,7 @@ void CGxDevice::TexSetUserData(CGxTex* texId, GxTexUserFunc userFunc, void* user
     texId->m_updateRect.maxY = texId->m_height;
     texId->m_updateRect.maxX = texId->m_width;
     texId->m_needsUpdate = 1;
+    texId->unused_0054 = CGxTexNextGeneration(); // Claude CACHE1d: content generation, read by the sun shadow cache key
 }
 
 // VERIFY: 6017c596 manual
@@ -1884,6 +1891,24 @@ void CGxDevice::WaitForFPSCap() {
         return;
     }
 
+#if defined(WOWDECOMP_ARCH_64)
+    // HD P1 (Claude 2026-11-04): the cap kept to the performance counter. The original sleeps whole milliseconds
+    // (Sleep, ~1-16 ms granularity) and restarts from the late wake-up, so a capped frame rate wobbles. Here each
+    // frame waits for its exact slot and the cadence is kept; a frame later than its slot starts the cadence again.
+    static int64_t s_nextFrameQpc = 0;
+    const int64_t frequency = OsQpcFrequency();
+    const int64_t period = frequency / maxFps;
+    const int64_t now = OsQpcNow();
+    if (s_nextFrameQpc - now > 0 && s_nextFrameQpc - now <= frequency) {
+        OsWaitUntilQpc(s_nextFrameQpc);
+        const int64_t woke = OsQpcNow();
+        // A wake-up more than 1 ms late (the system took the thread) starts again from it: no short frame to catch up.
+        s_nextFrameQpc = woke - s_nextFrameQpc > frequency / 1000 ? woke + period : s_nextFrameQpc + period;
+    } else {
+        s_nextFrameQpc = now + period;
+    }
+    (void)s_nextFrameTime;
+#else
     uint32_t frameMs = 1000 / maxFps;
     uint32_t now = OsGetAsyncTimeMs();
 
@@ -1893,6 +1918,7 @@ void CGxDevice::WaitForFPSCap() {
     }
 
     s_nextFrameTime = now + frameMs;
+#endif
 }
 
 // VERIFY: c1bc4801 manual

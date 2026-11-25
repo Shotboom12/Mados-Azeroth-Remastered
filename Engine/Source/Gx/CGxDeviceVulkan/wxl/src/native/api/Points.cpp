@@ -15,7 +15,10 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
+#include <cstdio>   // Claude GPU0
 #include "native/api/Internal.hpp"
+#include "capture/Aside.hpp"   // Claude CPU-A
+#include "Engine/Source/Gx/GxSeam.h"   // HD LV27: g_gxCataWater.m_keepDepth
 
 namespace wxlvk::native::render::detail
 {
@@ -82,7 +85,7 @@ namespace wxlvk::native::render::detail
         const bool copy    = wxlvk::native::render::depthhistory::Wanted();
         const bool pyramid = wxlvk::native::render::depthpyramid::Wanted();
         if (!any && !copy && !pyramid) return;
-        VkCommandBuffer cmd = present::Outside();
+        VkCommandBuffer cmd = present::Outside("hors-passe Points:87");
         if (!cmd) return;
         VkImageView view   = VK_NULL_HANDLE;
         VkFormat    format = VK_FORMAT_UNDEFINED;
@@ -91,10 +94,15 @@ namespace wxlvk::native::render::detail
             ++g.points[point].noDepth;
             return;
         }
+        present::GpuMarkDirect(cmd, "HD : copie profondeur + pyramide");   // Claude GPU0 (mesure)
         if (copy) wxlvk::native::render::depthhistory::Capture(cmd, view);
         // The min / max pyramid of the same depth (GetDepthPyramid), for the MidPasses below and everything after.
         if (pyramid) wxlvk::native::render::depthpyramid::Build(cmd, view);
-        if (!any) return;
+        if (!any)
+        {
+            present::GpuMarkDirect(cmd, nullptr);   // Claude GPU0
+            return;
+        }
         ctx.cmd             = cmd;
         ctx.renderPass      = VK_NULL_HANDLE;
         ctx.depthView       = view;
@@ -103,9 +111,25 @@ namespace wxlvk::native::render::detail
         for (Pass& p : g.passes)
         {
             if (!p.live || p.point != point || !p.desc.MidPass) continue;
+            if (present::GpuZonesOn())   // Claude GPU0 (mesure)
+            {
+                char zone[64];
+                std::snprintf(zone, sizeof zone, "HD MidPass : %s", p.name);
+                present::GpuMarkDirect(ctx.cmd, zone);
+            }
             p.desc.MidPass(p.desc.user, &ctx);
             ++p.midPasses;
+            // Claude CPU-A: a segment it opened is closed with it (a join inside it may have closed it already); the MidPasses
+            // after it, and what follows them, record into the main buffer's current piece.
+            wxlvk::capture::aside::EndMidPass();
+            if (VkCommandBuffer now = present::CurrentMain())
+                if (now != ctx.cmd)
+                {
+                    ctx.cmd = now;
+                    cmd     = now;
+                }
         }
+        present::GpuMarkDirect(cmd, nullptr);   // Claude GPU0 : retour a la zone du moteur
         ctx.depthView       = VK_NULL_HANDLE;
         ctx.depthViewLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         WritesToDraws(cmd);
@@ -184,10 +208,17 @@ namespace wxlvk::native::render::detail
         for (Pass& p : g.passes)
         {
             if (!p.live || p.point != point || !p.desc.Record) continue;
+            if (present::GpuZonesOn())   // Claude GPU0 (mesure)
+            {
+                char zone[64];
+                std::snprintf(zone, sizeof zone, "HD Record : %s", p.name);
+                present::GpuMarkDirect(cmd, zone);
+            }
             p.desc.Record(p.desc.user, &ctx);
             ++p.records;
             ++called;
         }
+        if (called) present::GpuMarkDirect(cmd, nullptr);   // Claude GPU0
         // Whatever the passes bound, the engine's next draw binds everything again.
         pipelines::InvalidateBindings();
         if (called) present::NoteDraw();
@@ -229,9 +260,17 @@ namespace wxlvk::native::render::detail
     {
         // HD/Cata: an empty stage chain emits no GPU work; the original pass still runs exactly once.
         wxlvk::stages::chain::Run(wxlvk::stages::Point::BeforeLiquids);
+        // HD LV27 (hdLvWaterLamps): the engine asked for the Cata water to write its depth; the depth before the liquids
+        // is kept here and put back after AfterLiquids, so every later pass reads the depth it read before LV27.
+        bool kept = false;
+        if (g_gxCataWater.m_keepDepth)
+            if (VkCommandBuffer cmd = present::Outside("hors-passe Points:247")) kept = present::SaveSceneDepth(cmd);
+        if (!kept) g_gxCataWater.m_keepDepth = 0;   // nothing kept: the water writes no depth this frame (as before LV27)
         g.liquidPass();
         // The water is drawn (and its depth written): the stages that read the depth find its surface. Stages
         // only: no pass of a consumer is fired here (the depth history and the capture belong to AfterOpaqueWorld).
         wxlvk::stages::chain::Run(wxlvk::stages::Point::AfterLiquids);
+        if (kept)
+            if (VkCommandBuffer cmd = present::Outside("hors-passe Points:254")) present::RestoreSceneDepth(cmd);
     }
 }

@@ -322,7 +322,7 @@ void SaturateHazeColours(float saturation, FogParams& p)
 
 float ReferenceZ(const FrameInputs& in)
 {
-    // HD L14: the client never supplies camTarget, so the reference height followed the camera itself
+    // Claude L14: the client never supplies camTarget, so the reference height followed the camera itself
     // (camera orbiting up/down moved every fog plane). Anchor it on the player, like the original look-at point.
     if (in.playerKnown && std::isfinite(in.playerPos[2]) && std::isfinite(in.camPos[2]))
     {
@@ -640,7 +640,8 @@ void OpenLandHaze(const FrameInputs& in, const Config& cfg, const FogParams& p, 
     const float sun = Mix(kHumidSun, kDustSun, dustShare) * sunScatter;
     for (int i = 0; i < 3; ++i)
     {
-        const float tint = Mix(kHumidTint[i], kDustTint[i], dustShare);
+        // Claude 2026-11-13 lot LV2: foreverColors = couleur For Ever seule (teinte neutre), densite inchangee
+        const float tint = cfg.foreverColors ? 1.0f : Mix(kHumidTint[i], kDustTint[i], dustShare);
         out.emissive[i] = skyColor[i] * tint * sky;
         out.diffuse[i] = p.lightColor[i] * tint * sun;
     }
@@ -694,8 +695,12 @@ void ApplyWeatherAndTimeOfDay(const FrameInputs& in, const Config& cfg, FogParam
         PullTowardWeather(l.diffuse, tint, tintAmount);
         PullTowardWeather(l.emissive, tint, tintAmount);
         PullTowardWeather(l.shadowEmissive, tint, tintAmount);
-        TintForTwilight(l.emissive, p.twilight);
-        TintForTwilight(l.shadowEmissive, p.twilight);
+        // Claude 2026-11-13 lot LV2: foreverColors = pas de teinte bleue du crepuscule (le reste inchange)
+        if (!cfg.foreverColors)
+        {
+            TintForTwilight(l.emissive, p.twilight);
+            TintForTwilight(l.shadowEmissive, p.twilight);
+        }
     }
     Scale(p.airShaftScatter, densityScale, p.airShaftScatter);
     PullTowardWeather(p.airShaftScatter, tint, tintAmount);
@@ -729,7 +734,15 @@ ZoneClimateWeights ZoneClimateTarget(int zoneId, const Config& cfg)
 
 float ZoneDensityTarget(int zoneId, const Config& cfg)
 {
-    return zoneId > 0 ? ZoneFactorOf(cfg.zoneDensity, zoneId) : cfg.zoneDensity.otherZones;
+    // Claude 2026-11-13 lot LV5-SH1: a listed zone keeps its own factor; an unlisted zone inside an instance/dungeon
+    // takes cfg.instanceZoneDensity; outdoors, unlisted zones keep otherZones (x1, as Lumenveil 0.1.1).
+    if (zoneId > 0)
+        for (int i = 0; i < cfg.zoneDensity.count; ++i)
+            if (cfg.zoneDensity.ids[i] == zoneId)
+                return cfg.zoneDensity.factors[i];
+    if (cfg.instanceMap)
+        return cfg.instanceZoneDensity;
+    return cfg.zoneDensity.otherZones;
 }
 
 float FogCeilingGate(float ceiling, float cameraAboveGround)
@@ -974,7 +987,8 @@ void BankFogParams(const FrameInputs& in, const Config& cfg, float hourly, int o
     {
         FogLayer& l = p.layers[i];
         l.bankShare *= p.bankStrength;
-        if (i == openLandLayer || !(p.bankDust > 0.0f))
+        // Claude 2026-11-13 lot LV2: foreverColors = pas de teinte poussiere sur les bancs (densite inchangee)
+        if (i == openLandLayer || !(p.bankDust > 0.0f) || cfg.foreverColors)
             continue;
         const float tint = p.bankDust * std::fabs(l.bankShare);
         for (int c = 0; c < 3; ++c)
@@ -989,7 +1003,7 @@ void BankFogParams(const FrameInputs& in, const Config& cfg, float hourly, int o
 }
 }
 
-// HD L15: how much sun light the fog receives at this hour. Same four hours as the fog banks
+// Claude L15: how much sun light the fog receives at this hour. Same four hours as the fog banks
 // (night 21-5 h, dawn 3.5-10.5 h, day 8-18.5 h, dusk 16-23 h), blended smoothly; each one multiplies the sun light.
 float HourScatter(const Config& cfg, float dayFraction)
 {
@@ -1053,13 +1067,15 @@ FogParams BuildFogParams(const FrameInputs& in, const Config& cfg, const Authore
         p.directLightMatch = 1.0f + (stormLightMatch - 1.0f) * WeatherStormWeight(in.lightParams);
         AuthoredLayers(*authored, cfg, p, cfg.sunScatter * p.directLightMatch, p.layers);
         HaloHue(*authored, p.rayColor);
-        DistanceLayer(in, cfg, p, elevationFadedScatter, fogColor, horizonColor, horizonFog, distanceFog);
+        // Claude 2026-11-13 lot LV5-SH1b: hdLvHorizonFogColor 1 = the open-land distance fog takes the For Ever fog colour
+        DistanceLayer(in, cfg, p, elevationFadedScatter, fogColor, cfg.horizonFogFogColor ? fogColor : horizonColor, horizonFog, distanceFog);
         distanceFog.density *= ClassicFogThinness(p, *authored, in.camPos[2]);
     }
     else
     {
         DerivedLayers(in, cfg, p, elevationFadedScatter, fogDistance, fogColor, p.layers);
-        DistanceLayer(in, cfg, p, elevationFadedScatter, fogColor, horizonColor, horizonFog, distanceFog);
+        // Claude 2026-11-13 lot LV5-SH1b: hdLvHorizonFogColor (see above)
+        DistanceLayer(in, cfg, p, elevationFadedScatter, fogColor, cfg.horizonFogFogColor ? fogColor : horizonColor, horizonFog, distanceFog);
     }
     const int hazeLayer = FreeSceneLayer(p, authored);
     if (hazeLayer >= 0 && p.openLand > 0.0f)
@@ -1078,18 +1094,21 @@ FogParams BuildFogParams(const FrameInputs& in, const Config& cfg, const Authore
     p.mistFalloff = 1.0f / cfg.mistHeight;
     p.twilight = hourly * cfg.twilight * TwilightWeight(in.sunElevation, in.moonElevation);
     p.lightGlow = hourly * cfg.lightGlow * NightWeight(in.sunElevation);
-    const float lampDayShare = LampDayShare(cfg, in.sunElevation);
-    p.lampHaze = hourly * cfg.lampFog * lampDayShare *
+    constexpr float kEffectDayLight = 0.35f; // Claude J1
+    // Claude J1: the day share of the catalogue lamps is applied per lamp (LampSelection::WriteSlot: outdoor only), not here
+    p.lampHaze = hourly * cfg.lampFog *
                  (kLampClearHaze + kLampWeatherHaze * cfg.weatherFog * p.weather) *
                  LampFogDensityGain(NearGroundFogDensity(p) * (1.0f + p.mistBoost));
-    p.lampLight = hourly * cfg.lampLight * lampDayShare;
-    p.lanternGlow = LampNightWeight(in.sunElevation);
+    p.lampLight = hourly * cfg.lampLight;
+    p.lanternGlow = LampHourWeight(in.dayFraction); // Claude 2026-11-05 lot J2: by the clock (was LampNightWeight(sunElevation))
     p.nightDarkness = hourly * cfg.nightDarkness * LampNightWeight(in.sunElevation) * (1.0f - in.indoors);
-    p.windowLight = hourly * cfg.windowLight * LampNightWeight(in.sunElevation);
+    p.windowLight = hourly * cfg.windowLight * LampHourWeight(in.dayFraction); // Claude 2026-11-05 lot J2: by the clock
     p.lanternLight = hourly * cfg.lanternLight;
-    p.effectLight = hourly * cfg.effectLight * lampDayShare;
-    p.corpseLight = hourly * cfg.corpseLight * lampDayShare;
-    p.farLightCore = hourly * cfg.farLights * LampNightWeight(in.sunElevation);
+    // Claude J1: spell and corpse lights keep the old day share (0.35, the former LampDayLight default)
+    const float effectDayShare = kEffectDayLight + (1.0f - kEffectDayLight) * LampNightWeight(in.sunElevation);
+    p.effectLight = hourly * cfg.effectLight * effectDayShare;
+    p.corpseLight = hourly * cfg.corpseLight * effectDayShare;
+    p.farLightCore = hourly * cfg.farLights * LampHourWeight(in.dayFraction); // Claude 2026-11-05 lot J2: by the clock
     CloudShadows(in, cfg, hourly, p);
     ApplyWeatherAndTimeOfDay(in, cfg, p);
     std::copy(fogColor, fogColor + 3, p.overcastSky);
@@ -1122,14 +1141,14 @@ FogParams BuildFogParams(const FrameInputs& in, const Config& cfg, const Authore
     HazeFromTheSky(in, cfg, p);
     p.lateDrawsInFront =
         std::clamp(cfg.rainInFront, 0.0f, 1.0f) * std::clamp(p.weather / kLateDrawFullWeather, 0.0f, 1.0f);
-    // HD L14: the forward-scattering lobe (g) makes fog bright toward the sun and dark away from it, so the
+    // Claude L14: the forward-scattering lobe (g) makes fog bright toward the sun and dark away from it, so the
     // light changes with the camera angle. viewLight 0 flattens every layer to the same light from any direction.
     {
         const float viewLight = std::clamp(cfg.viewLight, 0.0f, 1.0f);
         for (FogLayer& l : p.layers)
             l.g *= viewLight;
     }
-    // HD L15: sun light in the fog by hour, and anti-glare when the fog is thick AND the sun is strong.
+    // Claude L15: sun light in the fog by hour, and anti-glare when the fog is thick AND the sun is strong.
     // Only the sun part (diffuse) changes: fog colour, density and ambient light stay as they are.
     {
         float sunGain = HourScatter(cfg, in.dayFraction);
@@ -1332,6 +1351,21 @@ float LampNightWeight(float sunElevation)
     return 1.0f - std::clamp((sunElevation - kLampDaylightFrom) / kLampDaylightSpan, 0.0f, 1.0f);
 }
 
+float LampHourWeight(float dayFraction) // Claude 2026-11-05 lot J2
+{
+    const float h = std::clamp(dayFraction, 0.0f, 1.0f) * 24.0f;
+    if (h < 6.0f) return 1.0f;
+    if (h < 7.0f) return 7.0f - h;
+    if (h < 21.5f) return 0.0f;
+    if (h < 22.0f) return (h - 21.5f) / 0.5f;
+    return 1.0f;
+}
+
+float LampDayShareAt(const Config& cfg, float dayFraction) // Claude 2026-11-05 lot J2
+{
+    return cfg.lampDayLight + (1.0f - cfg.lampDayLight) * LampHourWeight(dayFraction);
+}
+
 float LampDayShare(const Config& cfg, float sunElevation)
 {
     return cfg.lampDayLight + (1.0f - cfg.lampDayLight) * LampNightWeight(sunElevation);
@@ -1525,6 +1559,93 @@ void TransformDirection(const float* v, const float* m, float* out)
     for (int j = 0; j < 3; ++j)
         r[j] = v[0] * m[0 * 4 + j] + v[1] * m[1 * 4 + j] + v[2] * m[2 * 4 + j];
     std::memcpy(out, r, sizeof(r));
+}
+
+// Claude 2026-11-13 lot LV10 (hdLvDensityAdapt), see fog_model.h.
+float DayFogIndex(const Config& cfg, float authoredNear, float fogDistance, float dayFraction, float dry)
+{
+    if (!std::isfinite(dayFraction))
+        return 0.0f;
+    const float day = dayFraction - std::floor(dayFraction);
+    const float strength = BankStrength(cfg, day, 1.0f);
+    const float bank = BankHourProfile(kBankLand, day, std::clamp(dry, 0.0f, 1.0f)).density;
+    float raw = 0.0f;
+    float banked = 0.0f;
+    if (authoredNear > 0.0f && std::isfinite(authoredNear))
+    {
+        raw = authoredNear;
+        banked = raw * (1.0f + kBankAuthoredShare * strength * (bank - 1.0f));
+    }
+    else
+    {
+        if (!(fogDistance > 0.0f) || !std::isfinite(fogDistance))
+            return 0.0f;
+        const float distance = std::clamp(fogDistance, 50.0f, 5000.0f);
+        const float haze = kHazeDensity * cfg.haze * std::clamp(700.0f / distance, 0.6f, 2.5f);
+        const float ground = kGroundOpticalDepth * cfg.groundFog / std::max(distance, 250.0f);
+        raw = haze + ground;
+        banked = haze * (1.0f + kBankHazeShare * strength * (bank - 1.0f)) +
+                 ground * (1.0f + kBankGroundShare * strength * (bank - 1.0f));
+    }
+    if (!(raw > 0.0f) || !(banked > 0.0f))
+        return 0.0f;
+    const float evening = 1.0f + cfg.eveningHaze * EveningHazeWeight(day);
+    const float mist = 1.0f + cfg.morningMist * MorningMistWeight(day) * MistGain(raw, kMistReferenceDensity);
+    const float index = banked * evening * mist;
+    return std::isfinite(index) ? index : 0.0f;
+}
+
+float AdaptiveDensity(const Config& cfg, float userDensity, const float* authored, const float* fogDistance,
+                      float nowFraction, float dry, AdaptiveDensityInfo* info)
+{
+    constexpr int kSamples = 48;
+    constexpr float kMinimumExponent = 0.25f;
+    constexpr float kFlatDay = 1.05f;
+    if (info)
+        *info = AdaptiveDensityInfo{};
+    if (!(userDensity > 1.0f) || !std::isfinite(userDensity) || !authored || !fogDistance)
+        return userDensity;
+    float lowest = 0.0f, highest = 0.0f;
+    int lowestAt = 0, highestAt = 0;
+    for (int k = 0; k < kSamples; ++k)
+    {
+        const float b = DayFogIndex(cfg, authored[k], fogDistance[k], float(k) / float(kSamples), dry);
+        if (!(b > 0.0f))
+            return userDensity;
+        if (k == 0 || b < lowest)
+        {
+            lowest = b;
+            lowestAt = k;
+        }
+        if (k == 0 || b > highest)
+        {
+            highest = b;
+            highestAt = k;
+        }
+    }
+    const float now = DayFogIndex(cfg, authored[kSamples], fogDistance[kSamples], nowFraction, dry);
+    if (!(now > 0.0f) || !(lowest > 0.0f))
+        return userDensity;
+    const float ratio = highest / lowest;
+    float multiplier = userDensity;
+    if (ratio >= kFlatDay)
+    {
+        const float exponent = std::max(1.0f - std::log(userDensity) / std::log(ratio), kMinimumExponent);
+        const float relative = std::clamp(now / lowest, 1.0f, ratio);
+        multiplier = std::clamp(userDensity * std::pow(relative, exponent - 1.0f), 1.0f, userDensity);
+    }
+    if (!std::isfinite(multiplier))
+        return userDensity;
+    if (info)
+    {
+        info->valid = true;
+        info->clearestHour = float(lowestAt) * 0.5f;
+        info->foggiestHour = float(highestAt) * 0.5f;
+        info->ratio = ratio;
+        info->now = now / lowest;
+        info->multiplier = multiplier;
+    }
+    return multiplier;
 }
 
 }

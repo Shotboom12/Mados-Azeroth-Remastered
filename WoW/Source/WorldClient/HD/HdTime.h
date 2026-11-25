@@ -4,11 +4,8 @@
 // Waystone HD: client-side time-of-day override (not part of the original client).
 //   hdTime   -1 = real server time (default)
 //            0 to 24 = force this hour on this screen only, e.g. 12 = noon, 18.5 = 18:30
-//   hdSunPath 0 = original sun (north-west, under the horizon before 5:30 and after 21:30)
-//             1 = by day (4:50 to 22:10) the sun sits where the world light comes from (north-west, 20 to 37
-//                 degrees up), like WoW Forever's sun; the sun rays and the fog glow then match the lighting
-//   hdShadowSun 0 = original shadows: the client casts them 5x steeper than the light (always short)
-//               1 = shadows cast at the light's real height (20 to 37 degrees: long, like WoW Forever)
+// By day (4:50 to 22:10) the sun sits where the world light comes from (north-west, 20 to 37 degrees up), and the
+// shadows are cast at that real height (long, like WoW Forever). AR1: no switch back to the original sun/shadows.
 
 #include <cstdint>
 
@@ -21,14 +18,8 @@ namespace HD {
     // Minutes since midnight to use for skybox animations: the override if active, else realMinutes.
     int32_t OverrideMinutes(int32_t realMinutes);
 
-    // hdSunPath 1: put the sun where the world light comes from (DayNight::SetPlanets).
-    bool SunFollowsLight();
-
-    // hdShadowSun: how much CShadowQuery::Update steepens the light for the shadow maps (5 = original, 1 = real).
-    float ShadowHeightScale();
-
-    // HD: diagnostics/refresh of real-sun cached maps; original short-shadow path is untouched.
-    bool ShadowSunCacheFix();
+    // AR1: hdSunPath, hdShadowSun and hdShadowSunCacheFix are gone: the sun always follows the world light and the
+    // shadow maps always use the real sun height with the real-sun cache.
     // hdShadowTexelSnap: 1 = shadow band centres on the shadow map texel grid (no swimming edges), 0 = original.
     bool ShadowTexelSnap();
     // hdShadowCasterFade: 1 = shadow casters no longer cut at the fade distance inside the near bands (no blinking
@@ -36,6 +27,8 @@ namespace HD {
     bool ShadowCasterFade();
     bool SmoothFogFeatures();
     float ShadowSunRefreshDegrees();
+    // Claude 2026-11-04 lot S3, hdShadowFarEvery: redraw the 640 yd cascade every N frames (1 = original, 1..8).
+    int32_t ShadowFarEvery();
     float SmoothWeatherBlend(float target, uint32_t now, int32_t mapId);
     void ResetWeatherBlend();
     // HD: a single visual clock; native weather and the server/gameplay clock stay independent.
@@ -46,7 +39,7 @@ namespace HD {
     void ResetDayNight();
     uint64_t DayNightFrameSerial();
 
-    // hdShadowSunMin: with hdShadowSun 1, the lowest sun height (degrees above the horizon) the shadow maps use.
+    // hdShadowSunMin: the lowest sun height (degrees above the horizon) the shadow maps use.
     float ShadowMinElevation();
 
     // hdSunGlareDim: how much looking at the sun darkens the whole world (DayNight::Update: up to 35% of the map

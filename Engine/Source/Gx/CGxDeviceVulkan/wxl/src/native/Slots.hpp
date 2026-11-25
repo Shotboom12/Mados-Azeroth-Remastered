@@ -171,6 +171,11 @@ namespace wxlvk::native::impl
      */
     bool TargetImageOf(void* device, void* tex, uint32_t face, bool attach, TargetImage& out);
 
+    /// Claude CPU-B (hdVkPassQueue): the texture already has its image (TargetImageOf will not create it).
+    bool TexReady(const void* tex);
+    /// Claude CPU-B: slot 23 (or 26) with `tex` would create no image: the new one, the colour and the depth held.
+    bool TargetsReady(void* device, const void* tex);
+
     /// Slot 4's hardware branch: rebuilds the Windows cursor from +0x2960 when +0x3B4C is set.
     void HardwareCursorDraw(void* device);
     /// Subclasses a window slot 13 just made, for WM_SETCURSOR with the hardware cursor.

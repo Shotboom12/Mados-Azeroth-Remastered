@@ -133,6 +133,7 @@ void Liquid::CMaterialMagma::Render(Liquid::IEnvironment* environment, Liquid::I
 // VERIFY: 35b378c5 manual
 // OFFSET: 0x008A6350
 void Liquid::CMaterialMagmaFFP::Render(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, Liquid::IWaveManager* waveManager, const C3Vector& cameraPos, const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings) {
+    if (HD::CataMagmaRender(environment, geomFactory, cameraPos, transform, bounds, settings)) return; // Claude BLZ1: Vulkan never draws the 3.3.5 material
     CGxTex* texture0 = settings->GetTexture(0, 1250);
 
     if (!texture0) {

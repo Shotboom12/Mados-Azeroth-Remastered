@@ -1,3 +1,4 @@
+#include "Engine/Source/Model2/HdExtraLamps.h" // Claude LV15: hdLampStable
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
@@ -11,6 +12,8 @@
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Shared.h"
+#include "Engine/Source/Model2/HdM2Count.h"
+#include "Engine/Source/Model2/HdGpuSceneHooks.h" // Claude B2
 #include "Engine/Source/Model2/CM2SceneRender.h"
 #include "Engine/Source/Services/GfxSingletonManager.h"
 #include "Engine/Source/Services/ParticleSystem2.h"
@@ -21,6 +24,20 @@
 #include "Engine/Source/Tempest/C33Matrix.h"
 #include "Engine/Source/Tempest/C3Ray.h"
 #include "Engine/Source/Tempest/NTempest.h"
+
+// HD lot I1 (Claude 2026-11-04): why an element is or is not batchable, the same tests in the same order as
+// CM2Model::IsBatchDoodadCompatible (M2Model.cpp). Counting only; called with hdCataRenderPerf 1.
+static void HDM2CountElement(CM2Model* model, M2Batch* batch, int32_t projected, int32_t transparent) {
+    if (projected) { HDM2Count::Add(HDM2Count::Projected); return; }
+    if (transparent) { HDM2Count::Add(HDM2Count::Transparent); return; }
+    const uint32_t cacheFlags = M2GetCacheFlags();
+    if (!(cacheFlags & 0x20)) HDM2Count::Add(HDM2Count::NoCacheFlag);
+    else if (!(model->m_fFlags & 0x10)) HDM2Count::Add(HDM2Count::NoModelFlag);
+    else if (!(model->m_shared->m_data->m_bones.m_count > 1 || !(cacheFlags & 0x40))) HDM2Count::Add(HDM2Count::OneBoneOnly);
+    else if (!(batch->m_flags & 0x10)) HDM2Count::Add(HDM2Count::NoBatchFlag);
+    else if (model->m_currentLighting && model->m_currentLighting->m_lightCount) HDM2Count::Add(HDM2Count::LocalLights);
+    else HDM2Count::Add(HDM2Count::Batchable);
+}
 
 // STATIC: 0x00A45374
 const uint32_t s_localLighting[7] = { 1, 1, 1, 1, 1, 0, 0 };
@@ -875,6 +892,8 @@ void CM2Scene::SelectLights(CM2Lighting* lighting) {
 
                 if (!light->m_scene || light->m_stamp == this->m_frameStamp) {
                     lighting->AddLight(light);
+                } else if (HD::ExtraLamps::StableLight(light)) {
+                    lighting->AddLight(light); // Claude LV15 (hdLampStable): a map decor lamp out of the frame stays lit
                 } else {
                     light->SetVisible(0);
                 }
@@ -1741,6 +1760,8 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
         }
     }
 
+    HD::GpuScene::LateLit(this); // Claude B2
+
     while (this->m_animateList) {
         CM2Model* model = this->m_animateList;
         this->m_animateList = model->m_animateNext;
@@ -1748,6 +1769,8 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
         model->m_animateNext = nullptr;
         model->SetupLighting();
     }
+
+    HD::GpuScene::OnAnimate(this); // Claude B2
 
     this->m_doodadElements.m_count = 0;
 
@@ -1860,6 +1883,8 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
             } else {
                 element->m_type = 2;
             }
+
+            if (HDM2Count::on) HDM2CountElement(model, batch, projected, transparent); // HD lot I1: counting only
 
             element->m_model = model;
             element->m_flags = 0;
@@ -2230,5 +2255,21 @@ void CM2Scene::Draw(M2PASS pass) {
 
     if (pass == M2PASS_0) {
         render.Draw(M2PASS_0, this->m_elements.m_data, this->m_doodadElements.m_data, this->m_doodadElements.m_count);
+
+        this->HdDrawGpuScene(); // Claude B2 (ORDRE1: already drawn before the ground, then nothing left)
+    }
+}
+
+// Claude B2: the fixed doodads the GPU draws (their own render object: Draw() above popped its states).
+void CM2Scene::HdDrawGpuScene() {
+    for (uint32_t phase = 0; phase < 2; phase++) {
+        M2Element* elements;
+        uint32_t* indices;
+        uint32_t count;
+
+        if (HD::GpuScene::Elements(this, phase, elements, indices, count)) {
+            CM2SceneRender gpuRender(this);
+            gpuRender.Draw(M2PASS_0, elements, indices, count);
+        }
     }
 }

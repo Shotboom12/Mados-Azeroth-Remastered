@@ -10,5 +10,6 @@ void BeginFrame(uint64_t serial,uint64_t scene,float cameraX,float cameraY,float
 uint64_t FrameLight(float xyz[3],float&radius);uint32_t SlotMask(const CM2Lighting*,bool enabled);
 void SnapshotPixelDraw(uint32_t slotMask);bool IsChosenOwner(uint64_t owner,float x,float y,float z);void SnapshotDraw(uint32_t slotMask);uint32_t DrawSlots();bool ProducerEnabled();
 void SetProducerReady(bool);void UnsafeDepthDraw();bool FrameSafe();float Metadata(float native,const char*actualVsMd5,const float rows[][4]);
+float MetadataSlots(float native,const char*actualVsMd5,uint32_t slotMask); // Claude B3: Metadata of a pixel-lamp draw (SnapshotPixelDraw(slotMask))
 void Trace(const char*actualVsMd5,const float rows[][4]);void Tick();
 }

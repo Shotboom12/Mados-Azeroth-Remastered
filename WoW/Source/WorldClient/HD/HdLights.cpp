@@ -3,6 +3,7 @@
 #include "Engine/Source/Model2/HdExtraLamps.h"
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include <windows.h>
@@ -12,6 +13,7 @@
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "Engine/Source/Tempest/CAaSphere.h"
+#include "WoW/Source/WorldClient/HD/HdLightTrace.h" // Claude LT1
 
 // Pixel constants of one light (4 float4, what HdPointLight in the terrain pixel shader reads):
 //   0: xyz = position - camera (world, yards), w = 1 legacy falloff colour * N.L / (0.7 d + 0.03 d^2)
@@ -30,12 +32,15 @@ namespace {
         float radius;      // where it ends (hdLightsRadius, or from its colour)
         float fade;        // fade width at the end
         uint8_t known;     // 1 = from s_known (its model was not animated this frame)
+        bool lumen=false;  // Claude LV39: Lumen lights the ground for it (HD::SetLumenLampTest): left out of the ground
     };
+    HD::LumenLampTest s_lumenTest=nullptr; // Claude LV39
+    int32_t s_lumenLeft=0;                 // Claude LV39: this frame's lights left to Lumen
 
     const float kGatherDistance = 300.0f; // lights farther than this from the camera are left out
     const float kEndLight = 0.02f;        // automatic radius: where colour / (0.7 d + 0.03 d^2) falls to this
     const float kMinRadius = 2.0f;
-    const float kMaxRadius = 32.0f;
+    const float kMaxRadius = 64.0f; // Claude LV40: 32 cut big lights (measured: radius 32.0 = this cap, Darkshire)
     const uint32_t kNoFrame = 0xFFFFFFFFu;
 
     CVar* s_mode = nullptr;
@@ -75,7 +80,7 @@ namespace {
         static bool registered = false;
         if (registered) return;
         registered = true;
-        s_mode = CVar::Register("hdLights", "HD: 1 = lamps and fires light the ground per pixel (WoW Forever), 2 = light path with no light (must equal 0), 3 = test view (lights only), 0 = 3.3.5 per-vertex lights", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        s_mode = CVar::Register("hdLights", "Azeroth Remastered: 1 = lamps and fires light the ground per pixel, 3 = test view (lights only). No other value (AR1)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_radius = CVar::Register("hdLightsRadius", "HD: yards where a lamp's light ends, 0 = from its colour", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_info = CVar::Register("hdLightsInfo", "HD: hdLights status (read only)", 0, "no light yet", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_log = CVar::Register("hdLightsLog", "HD: 1 = write this frame's lights and the ground draws near the camera to Logs\\HdLights.log (once a second, 20 times, then back to 0)", 0, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -141,6 +146,8 @@ namespace {
         frameLight.radius = Radius(strength);
         frameLight.fade = frameLight.radius * 0.25f;
         frameLight.known = known;
+        frameLight.lumen = s_lumenTest && s_lumenTest(&frameLight.pos.x); // Claude LV39
+        s_lumenLeft += frameLight.lumen ? 1 : 0;
         s_frame.push_back(frameLight);
         if (s_logFrame && dx * dx + dy * dy + dz * dz < 80.0f * 80.0f) {
             snprintf(text, sizeof(text), "  light #%u %p known %d pos (%.2f, %.2f, %.2f) colour (%.3f, %.3f, %.3f) radius %.1f", static_cast<uint32_t>(s_frame.size() - 1), static_cast<const void*>(owner), known, pos.x, pos.y, pos.z, c.x, c.y, c.z, frameLight.radius);
@@ -153,6 +160,7 @@ namespace {
     // HD: plus the lamps whose model was not animated this frame, at their last animated state (s_known).
     void GatherFrame(const CM2Scene* scene, const C3Vector& camera) {
         s_frame.clear();
+        s_lumenLeft = 0; // Claude LV39
         s_otherFalloff = 0;
         s_rejected = 0;
         s_clamped = 0;
@@ -239,7 +247,7 @@ namespace {
             float d = dx * dx + dy * dy + dz * dz;
             if (nearest < 0 || d < best) { nearest = static_cast<int32_t>(i); best = d; }
         }
-        int32_t n = snprintf(text, sizeof(text), "hdLights %d: %u lights, up to %d per draw, %d other falloff, %d invalid, %d negative, %d merged", HD::LightsMode(), static_cast<uint32_t>(s_frame.size()), s_mostPerDraw, s_otherFalloff, s_rejected, s_clamped, s_merged);
+        int32_t n = snprintf(text, sizeof(text), "hdLights %d: %u lights, up to %d per draw, %d other falloff, %d invalid, %d negative, %d merged, %d left to Lumen", HD::LightsMode(), static_cast<uint32_t>(s_frame.size()), s_mostPerDraw, s_otherFalloff, s_rejected, s_clamped, s_merged, s_lumenLeft);
         if (nearest >= 0 && n > 0 && n < static_cast<int32_t>(sizeof(text))) {
             const FrameLight& l = s_frame[nearest];
             snprintf(text + n, sizeof(text) - n, "; nearest %.1f yd at (%.2f, %.2f, %.2f) colour (%.3f, %.3f, %.3f) radius %.1f", sqrtf(best), l.pos.x, l.pos.y, l.pos.z, l.color.x, l.color.y, l.color.z, l.radius);
@@ -249,10 +257,60 @@ namespace {
     }
 }
 
+void HD::SetLumenLampTest(HD::LumenLampTest test) { s_lumenTest = test; } // Claude LV39
+
 int32_t HD::LightsMode() {
     RegisterCVars();
-    int32_t mode = s_mode ? s_mode->m_intValue : 1;
-    return mode < 0 || mode > 3 ? 0 : mode;
+    return s_mode && s_mode->m_intValue == 3 ? 3 : 1; // AR1: the 3.3.5 per-vertex lights (0) and test 2 are gone
+}
+
+// Claude 2026-11-04 lot T1: see HdLights.h. Same reach test, same arithmetic, as LightsForGround's candidate loop and
+// its sphere fallback; anything not yet gathered this frame, or the per-draw log, answers true (the original path).
+bool HD::LightsGroundNeeded(CM2Scene* scene, const CAaSphere& sphere) {
+    if (!scene || scene != s_frameScene || scene->m_frameStamp != s_frameStamp || s_logFrame) return true;
+    for (size_t i = 0; i < s_frame.size(); i++) {
+        const FrameLight& l = s_frame[i];
+        float dx = l.pos.x - sphere.c.x, dy = l.pos.y - sphere.c.y, dz = l.pos.z - sphere.c.z;
+        float reach = l.radius + sphere.r;
+        if (!(dx * dx + dy * dy + dz * dz >= reach * reach)) return true;
+    }
+    return false;
+}
+
+// Claude B3: the same answer about the lights LightsForGround can pick (it passes over the Lumen ones): none reaches the
+// sphere, so it would pick none. The lights are compacted once a frame.
+bool HD::LightsGroundPossible(CM2Scene* scene, const CAaSphere& sphere) {
+    if (!scene || scene != s_frameScene || scene->m_frameStamp != s_frameStamp || s_logFrame) return true;
+    static std::vector<float> s_open; // x, y, z, radius
+    static C3Vector s_low, s_high;    // what they all reach together, with a yard to spare
+    static const CM2Scene* s_openScene = nullptr;
+    static uint32_t s_openStamp = 0;
+    if (s_openScene != scene || s_openStamp != scene->m_frameStamp) {
+        s_openScene = scene;
+        s_openStamp = scene->m_frameStamp;
+        s_open.clear();
+        s_low = C3Vector(FLT_MAX, FLT_MAX, FLT_MAX);
+        s_high = C3Vector(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+        for (const FrameLight& l : s_frame) {
+            if (l.lumen) continue;
+            const float far_ = std::max(l.radius, 0.0f) + 1.0f;
+            s_low.x = std::min(s_low.x, l.pos.x - far_); s_high.x = std::max(s_high.x, l.pos.x + far_);
+            s_low.y = std::min(s_low.y, l.pos.y - far_); s_high.y = std::max(s_high.y, l.pos.y + far_);
+            s_low.z = std::min(s_low.z, l.pos.z - far_); s_high.z = std::max(s_high.z, l.pos.z + far_);
+            s_open.push_back(l.pos.x);
+            s_open.push_back(l.pos.y);
+            s_open.push_back(l.pos.z);
+            s_open.push_back(l.radius);
+        }
+    }
+    if (sphere.c.x + sphere.r < s_low.x || sphere.c.x - sphere.r > s_high.x || sphere.c.y + sphere.r < s_low.y ||
+        sphere.c.y - sphere.r > s_high.y || sphere.c.z + sphere.r < s_low.z || sphere.c.z - sphere.r > s_high.z) return false;
+    for (size_t i = 0; i < s_open.size(); i += 4) {
+        float dx = s_open[i] - sphere.c.x, dy = s_open[i + 1] - sphere.c.y, dz = s_open[i + 2] - sphere.c.z;
+        float reach = s_open[i + 3] + sphere.r;
+        if (!(dx * dx + dy * dy + dz * dz >= reach * reach)) return true;
+    }
+    return false;
 }
 
 int32_t HD::LightsForSphere(CM2Scene* scene, const C3Vector& camera, const CAaSphere& sphere, float* out) {
@@ -271,6 +329,28 @@ int32_t HD::LightsForGround(CM2Scene* scene, const C3Vector& camera, const CAaSp
         GatherFrame(scene, camera);
         MergeClose();
         ShowInfo(camera);
+        if (HD::LightTrace::Active()) { // Claude LT1: the frame's lights; each light within 60 yd by its owner
+            HD::LightTrace::Set("lights.total", static_cast<float>(s_frame.size()));
+            HD::LightTrace::Set("lights.merged", static_cast<float>(s_merged));
+            HD::LightTrace::Set("lights.invalid", static_cast<float>(s_rejected));
+            HD::LightTrace::Set("lights.negative", static_cast<float>(s_clamped));
+            HD::LightTrace::Set("lights.lumen", static_cast<float>(s_lumenLeft));
+            static std::unordered_map<uint64_t, int> seen;
+            char k[64];
+            for (const FrameLight& l : s_frame) {
+                float dx = l.pos.x - camera.x, dy = l.pos.y - camera.y, dz = l.pos.z - camera.z;
+                if (dx * dx + dy * dy + dz * dz > 60.0f * 60.0f) continue;
+                const unsigned id = static_cast<unsigned>((l.owner >> 4) & 0xFFFFFu);
+                snprintf(k, sizeof(k), "L%05x.s", id); HD::LightTrace::Set(k, l.strength);
+                snprintf(k, sizeof(k), "L%05x.rad", id); HD::LightTrace::Set(k, l.radius);
+                snprintf(k, sizeof(k), "L%05x.known", id); HD::LightTrace::Set(k, static_cast<float>(l.known));
+                if (seen.emplace(l.owner, 1).second) {
+                    char text[200];
+                    snprintf(text, sizeof(text), "L%05x pos %.2f %.2f %.2f colour %.3f %.3f %.3f radius %.1f", id, l.pos.x, l.pos.y, l.pos.z, l.color.x, l.color.y, l.color.z, l.radius);
+                    HD::LightTrace::Event("light", text);
+                }
+            }
+        }
     }
 
     int32_t picked[kLightsMax];
@@ -280,13 +360,14 @@ int32_t HD::LightsForGround(CM2Scene* scene, const C3Vector& camera, const CAaSp
         // HD: the ground's lights, one at a time: each time the light that adds the most where the ground is still
         // dark (square root of the light at each point: a point already lit gains little). The most light overall
         // went to one corner's cluster of lamps and left the rest of the chunk black.
-        const int32_t kMaxGround = 64, kMaxCandidates = 48;
+        const int32_t kMaxGround = 64, kMaxCandidates = 96; // Claude LV40: 48 -> 96 (16 lights per draw)
         if (groundCount > kMaxGround) groundCount = kMaxGround;
         static float gain[kMaxCandidates][kMaxGround];
         int32_t candidate[kMaxCandidates];
         int32_t candidates = 0;
         for (size_t i = 0; i < s_frame.size() && candidates < kMaxCandidates; i++) {
             const FrameLight& l = s_frame[i];
+            if (l.lumen) continue; // Claude LV39: Lumen lights the ground for it
             float dx = l.pos.x - sphere.c.x, dy = l.pos.y - sphere.c.y, dz = l.pos.z - sphere.c.z;
             float reach = l.radius + sphere.r;
             if (dx * dx + dy * dy + dz * dz >= reach * reach) continue;
@@ -303,6 +384,34 @@ int32_t HD::LightsForGround(CM2Scene* scene, const C3Vector& camera, const CAaSp
                 }
                 gain[candidates][p] = v;
                 any += v;
+            }
+            // Claude LV39 (audit A2): a lamp that lights the chunk's ground between the 25 points (a small lamp, a
+            // torch) reached none of them and was refused for the whole chunk: its light stopped in a straight line at
+            // the chunk's edge. Its light at the ground's nearest point (the points' box) now counts on the nearest point.
+            if (!(any > 0.0f)) {
+                float lo[3] = {ground[0].x, ground[0].y, ground[0].z}, hi[3] = {ground[0].x, ground[0].y, ground[0].z};
+                for (int32_t p = 1; p < groundCount; p++) {
+                    const float g3[3] = {ground[p].x, ground[p].y, ground[p].z};
+                    for (int k = 0; k < 3; k++) { lo[k] = g3[k] < lo[k] ? g3[k] : lo[k]; hi[k] = g3[k] > hi[k] ? g3[k] : hi[k]; }
+                }
+                const float lp[3] = {l.pos.x, l.pos.y, l.pos.z};
+                float q[3], d2 = 0.0f;
+                for (int k = 0; k < 3; k++) { q[k] = lp[k] < lo[k] ? lo[k] : (lp[k] > hi[k] ? hi[k] : lp[k]); d2 += (lp[k] - q[k]) * (lp[k] - q[k]); }
+                float d = sqrtf(d2);
+                if (d < l.radius) {
+                    int32_t nearestPoint = 0;
+                    float best = 3.4e38f;
+                    for (int32_t p = 0; p < groundCount; p++) {
+                        float gx = q[0] - ground[p].x, gy = q[1] - ground[p].y, gz = q[2] - ground[p].z;
+                        float e = gx * gx + gy * gy + gz * gz;
+                        if (e < best) { best = e; nearestPoint = p; }
+                    }
+                    float cut = (l.radius - d) / l.fade;
+                    if (cut > 1.0f) cut = 1.0f;
+                    if (d < 1.0f) d = 1.0f;
+                    gain[candidates][nearestPoint] = l.strength * cut / (0.7f * d + 0.03f * d * d);
+                    any = gain[candidates][nearestPoint];
+                }
             }
             if (any > 0.0f) candidate[candidates++] = static_cast<int32_t>(i);
         }
@@ -330,6 +439,7 @@ int32_t HD::LightsForGround(CM2Scene* scene, const C3Vector& camera, const CAaSp
     // the strongest lights at the sphere's nearest point (brightest first)
     for (size_t i = 0; i < s_frame.size() && !(ground && groundCount > 0); i++) {
         const FrameLight& l = s_frame[i];
+        if (l.lumen) continue; // Claude LV39: Lumen lights the ground for it
         float dx = l.pos.x - sphere.c.x;
         float dy = l.pos.y - sphere.c.y;
         float dz = l.pos.z - sphere.c.z;
@@ -359,6 +469,24 @@ int32_t HD::LightsForGround(CM2Scene* scene, const C3Vector& camera, const CAaSp
         c[12] = 0.0f;               c[13] = 1.0f;               c[14] = l.radius;           c[15] = 1.0f / l.fade;
     }
     if (count > s_mostPerDraw) s_mostPerDraw = count;
+    if (HD::LightTrace::Active() && ground && groundCount > 0) { // Claude LT1: a chunk near the camera that changed its lights
+        float cx = sphere.c.x - camera.x, cy = sphere.c.y - camera.y;
+        if (cx * cx + cy * cy < 80.0f * 80.0f) {
+            static std::unordered_map<int64_t, std::string> last;
+            const int64_t key = (static_cast<int64_t>(std::floor(sphere.c.x)) << 32) ^ static_cast<int64_t>(static_cast<int32_t>(std::floor(sphere.c.y)));
+            char sig[400];
+            int n = snprintf(sig, sizeof(sig), "%d:", count);
+            for (int32_t k = 0; k < count && n > 0 && n < static_cast<int32_t>(sizeof(sig)) - 24; k++)
+                n += snprintf(sig + n, sizeof(sig) - n, " L%05x", static_cast<unsigned>((s_frame[picked[k]].owner >> 4) & 0xFFFFFu));
+            std::string& was = last[key];
+            if (was != sig) {
+                char text[900];
+                snprintf(text, sizeof(text), "chunk %.0f %.0f (%.0f yd): %s | was %s", sphere.c.x, sphere.c.y, sqrtf(cx * cx + cy * cy), sig, was.empty() ? "-" : was.c_str());
+                HD::LightTrace::Event("ground", text);
+                was = sig;
+            }
+        }
+    }
     if (s_logFrame) {
         float cx = sphere.c.x - camera.x, cy = sphere.c.y - camera.y;
         if (cx * cx + cy * cy < 60.0f * 60.0f) {
@@ -386,7 +514,7 @@ bool HD::ReadCachedLights(const CM2Scene* scene,uint32_t expectedStamp,
     if(!scene||expectedStamp==kNoFrame||scene!=s_frameScene||
        scene->m_frameStamp!=expectedStamp||s_frameStamp!=expectedStamp)return false;
     info.sceneFrameStamp=expectedStamp;info.total=static_cast<uint32_t>(s_frame.size());
-    info.nativeMode=s_mode?s_mode->m_intValue:0;
+    info.nativeMode=HD::LightsMode();
     if(!visit)return true; // availability/count only; caller must still audit coverage
     for(const auto& source:s_frame){
         CachedLight light;light.owner=source.owner;

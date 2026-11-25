@@ -33,14 +33,18 @@ namespace HD {
     // frame's inputs (the device's bridge stage sets them again) and notes whether the camera is in a liquid.
     void CataWaterBeginLiquidPass();
 
-    // Liquid::CMaterialProcWater::Render, first thing: draws the instance with the Cata material and returns true,
-    // or returns false and the 3.3.5 material draws it.
+    // Every Liquid::CMaterial*::Render, first thing (Claude BLZ1): under Vulkan draws the instance with the Cata material
+    // its Cata LiquidType row names (water, or magma through CataMagmaRender) and returns true; an instance it cannot
+    // draw is skipped (an ERROR in Logs\HdErreurs.txt) and true is returned too. false only on a legacy D3D9 / OpenGL
+    // device, where the 3.3.5 material draws it.
     bool CataWaterRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, const C3Vector& cameraPos,
                          const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings);
 
-    // HD: Liquid::CMaterialMagma::Render, first thing: hdCataMagma 1 under Vulkan draws lava and slime (LiquidType
-    // material 2) the way Cata 4.3.4's CMaterialMagma does at water detail > 0 (shaders CataProcMagma, the row's three
-    // layers and the noise volume, all in CataWater\) and returns true; false = the 3.3.5 magma draws it.
+    // Claude B3: the end of a liquid list (CRenderer::Flush): the water CataWaterRender keeps in groups (hdGpuWater) is drawn.
+    void CataWaterFlush();
+    // HD: Liquid::CMaterialMagma(FFP)::Render, first thing: under Vulkan draws lava and slime (Cata LiquidType material 2)
+    // the way Cata 4.3.4's CMaterialMagma does at water detail > 0 (shaders CataProcMagma, the row's three layers and the
+    // noise volume, all in CataWater\); a Cata water row goes to CataWaterRender. Same return rule as CataWaterRender.
     bool CataMagmaRender(Liquid::IEnvironment* environment, Liquid::IGeomFactory* geomFactory, const C3Vector& cameraPos,
                          const C44Matrix* transform, const CAaSphere* bounds, Liquid::CMaterialSettings* settings);
 }

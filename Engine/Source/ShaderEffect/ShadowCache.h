@@ -18,6 +18,9 @@ typedef void (*ShadowMatrixCallback)(C3Vector& center, float radius, C44Matrix& 
 typedef void (*ShadowFrustumCallback)(CFrustum& frustum, C44Matrix& matrix, const C3Vector& direction, CShadowCacheQueryData& data, int32_t band, const C3Vector& sun);
 typedef int32_t (*ShadowQueryCallback)(CShadowCacheQueryData& data, uint32_t frame);
 typedef int32_t (*ShadowRenderCallback)(CShadowCacheQueryData& data, int32_t band, CGxTex* target, CGxTex* colorTarget, C3Vector& direction, const C3Vector& sun);
+typedef bool (*ShadowStaticKeyCallback)(int32_t band, uint64_t& key);
+// GPT CACHE1b: 0 = layer reused, 1 = rebuilt because the sun moved, 2 = band centre or direction, 3 = list or content, 4 = settings or recreated targets.
+typedef void (*ShadowStaticStatsCallback)(int32_t cause);
 
 struct CShadowBand {
     /* 0000 */ CTexture* m_textures[2];
@@ -82,12 +85,26 @@ class CShadowCache {
     static C3Vector s_sunDir;
     static C4Vector s_sunDirViewSpace;
     static float s_textureSize[2];
+    static int32_t s_failBox[4]; // Claude CACHE1d: texel box (x0, x1, y0, y1) of the last failed proof, for its diagnostic
 
     // HD: cached maps own their render direction; no CShadowBand layout/offset changes.
     static void ConfigureSunCache(bool enabled, float refreshDegrees);
     static C3Vector BandSunDirection(int32_t band);
     // HD: hdShadowTexelSnap, band centres aligned to the shadow map's texel grid in light space.
     static void ConfigureTexelSnap(bool enabled);
+    static void ConfigureFarEvery(int32_t every); // Claude 2026-11-04 lot S3: hdShadowFarEvery
+    static void ConfigureFarCheck(int32_t mode);
+    static bool IsSplitCheckFrame();
+    static bool IsDrawingSplitReference();
+    // Claude voie B: the query running is the sun bands' (GatherBands, no static layers), and RenderBands is drawing them.
+    static bool HdSunQuery();
+    static bool HdSunRender();
+    // 0: both lists; 1: static layer; 2: dynamic overlay.
+    static int32_t ShadowLayerPass();
+    static void ConfigureStaticLayers(bool enabled, float degrees, bool check, int32_t mapId,
+        ShadowStaticKeyCallback key, ShadowStaticStatsCallback stats, int32_t show = 0, bool keepOnFailure = false); // show: 0 normal, 1 only the static layer, 2 only the dynamic casters (diagnostic)
+    static bool IsCollectingStaticLayers();
+    static bool IsDrawingStaticLayers();
     // HD diagnostic: where band's centre falls inside a texel (0 = on the grid), u/v in texels.
     static void BandTexelPhase(int32_t band, float* u, float* v);
     static void ClearBandTextures();
@@ -120,6 +137,15 @@ class CShadowCache {
 };
 
 // HD diagnostic (temporary): CShadowQuery::Update frames since the last hdSunDiag line
-namespace HDShadowDiag { inline int cullOff = 0, cullOn = 0, inWmo = 0; inline int calls = 0; inline int groups[8]{}, m2[8]{}; inline int tq[3][6]{}; inline float glareMin = 1e30f, glareMax = 0.0f, glareUsed = 0.0f; }
+namespace HDShadowDiag { inline int cullOff = 0, cullOn = 0, inWmo = 0; inline int calls = 0; inline int groups[8]{}, m2[8]{}; inline int tq[3][6]{}; inline float glareMin = 1e30f, glareMax = 0.0f, glareUsed = 0.0f;
+    // Claude 2026-11-04 lot S1: timing hooks set by CShadowQuery::Update (hdCataRenderPerf). Null = nothing timed.
+    // Phase 0 dynamic part, 1 band gather + query, 2..4 render of band 0..2. Timing only: no effect on the image.
+    inline uint64_t (*perfBegin)() = nullptr; inline void (*perfEnd)(int phase, uint64_t start) = nullptr;
+    inline uint64_t PerfBegin() { return perfBegin ? perfBegin() : 0; }
+    inline void PerfEnd(int phase, uint64_t start) { if (start && perfEnd) perfEnd(phase, start); }
+    // Claude GPU0 (mesure) : la bande 0..2 commence ; -1 = les bandes finies (hdGpuZones). Null = rien.
+    inline void (*zone)(int band) = nullptr;
+    inline void Zone(int band) { if (zone) zone(band); }
+}
 
 #endif

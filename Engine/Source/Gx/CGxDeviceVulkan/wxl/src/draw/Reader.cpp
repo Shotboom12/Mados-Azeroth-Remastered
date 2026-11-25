@@ -28,6 +28,7 @@
 #include "vulkan/Texture.hpp"
 #include "vulkan/Vk.hpp"
 #include "vulkan/Wind.hpp"
+#include "vulkan/GpuFixed.hpp"
 
 #include "wxl/game/Binding.hpp"
 #include "wxl/offsets/engine/Gx.hpp"
@@ -62,6 +63,13 @@
 // kRsStride bytes, value first -- because that is what the backend itself reads at this moment; the
 // hardware shadow at kRsShadow is what it last SENT, which is the same thing but without the
 // master-enable override applied, and the pipelines want the engine's own encoding, not D3D's.
+// Claude PERF2: set by CM2SceneRender::DrawBatch round its draw (the engine thread that calls Draw)
+extern thread_local float g_hdM2DrawReach;
+extern thread_local uint32_t g_hdM2DrawBones;
+// Claude INST1: set by CM2Model::RenderBatchShadowMap round a hardware-instanced draw
+extern thread_local uint32_t g_hdM2InstCount;
+extern thread_local uint32_t g_hdM2InstRows;
+
 namespace
 {
     namespace gx       = wxl::offsets::engine::gx;
@@ -937,6 +945,32 @@ namespace
 
 namespace wxlvk::draw
 {
+    /// Claude B3: what the group's draw gives each of its chunks' rows.
+    static void TerrainRows(const Cmd& c, const HD::GpuTerrainData::Draw& d)
+    {
+        namespace T = HD::GpuTerrainData;
+        const float native = HD::VulkanShadows::Bridge::enabled
+                                 ? 65536.0f + static_cast<float>(HD::VulkanShadows::Bridge::InteriorMask(c.texture)) : 0.0f;
+        const auto* record = wxlvk::shaders::translated::Resolve(c.vs, false);
+        float mover[4];
+        std::memcpy(mover, c.pixelConst[Cmd::kMoverRow], sizeof mover);
+        float    slots[16];   // MetadataSlots reads the lamps' low four bits
+        uint32_t known = 0u;
+        for (uint32_t i = 0; i < d.count; ++i)
+        {
+            const T::Chunk& m = d.chunks[i];
+            const uint32_t lamp = m.lampSlots & 15u;
+            if (!(known & (1u << lamp)))
+            {
+                slots[lamp] = HD::Lamp::Native::MetadataSlots(native, record ? record->md5 : nullptr, lamp);
+                known |= 1u << lamp;
+            }
+            mover[3] = slots[lamp];
+            std::memcpy(m.rows + 4u * T::kRowMover, mover, sizeof mover);
+            if (!d.lighting) std::memcpy(m.rows + 4u * T::kRowLighting, c.pixelConst[1], 16u);
+        }
+    }
+
     bool BuildCmd(const void* device, const wxlvk::device::CGxBatch* batch, int indexed,
                   const Resolver& resolver, const Stages& stages, Cmd& c)
     {
@@ -963,6 +997,56 @@ namespace wxlvk::draw
         wxlvk::simd::CopyRows(c.pixelConst, resolver.pixelRegs, Cmd::kPixelRegs);
         WriteFogRow(device, table, c);
         WriteMoverRow(c);
+        c.modelReach = g_hdM2DrawReach;   // Claude PERF2 (Model2/CM2SceneRender.cpp)
+        c.modelBones = g_hdM2DrawBones;
+        c.instanceCount = g_hdM2InstCount;   // Claude INST1
+        c.instanceRows  = g_hdM2InstRows;
+        const wxlvk::vk::gpufixed::Armed* const gpu = wxlvk::vk::gpufixed::Current();
+        if (gpu && gpu->multi)
+        {
+            c.gpuMulti      = 1u;   // Claude B3: the water
+            c.gpuArgs       = gpu->args;
+            c.gpuArgsOffset = gpu->argsOffset;
+            c.gpuDrawCount  = gpu->drawCount;
+        }
+        else if (gpu && gpu->terrain)
+        {
+            // Claude B3: the chunks' commands index the engine's own buffers (the draw's); each chunk's mover row (and the
+            // layers' lighting row when the chunks have none of their own) is this draw's, its lamps' slots its own.
+            c.gpuIndirect      = 1u;
+            c.gpuArgs          = gpu->args;
+            c.gpuArgsOffset    = gpu->argsOffset;
+            c.gpuDrawCount     = gpu->drawCount;
+            c.gpuPaletteSet    = gpu->palette;
+            c.gpuPaletteOffset = 0u;
+            c.gpuTerrain       = gpu->terrain;
+            c.gpuReplaySet     = gpu->replay;
+            c.instanceCount    = 0u;
+            c.instanceRows     = gpu->rows;
+            TerrainRows(c, *gpu->terrain);
+        }
+        else if (gpu)
+        {
+            // Claude voie B: the GPU wrote this group's commands; they index the shared buffers of the fixed casters.
+            c.gpuIndirect      = 1u;
+            c.gpuArgs          = gpu->args;
+            c.gpuArgsOffset    = gpu->argsOffset;
+            c.gpuDrawCount     = gpu->drawCount;
+            c.gpuPaletteSet    = gpu->palette;
+            c.gpuPaletteOffset = 0u;
+            c.gpuScene         = gpu->scene;    // Claude B2
+            c.gpuReplaySet     = gpu->scene ? gpu->replay : VK_NULL_HANDLE;
+            if (gpu->scene) wxlvk::vk::gpufixed::SceneHead(vregs + 224u * 16u);
+            c.instanceCount    = 0u;
+            c.instanceRows     = gpu->rows;   // 3 per bone of the section
+            c.vertexBuffer     = gpu->vertices;
+            c.indexBuffer      = gpu->indices;
+            c.vertexOffset     = 0;
+            c.firstIndex       = 0u;
+            c.indexBase        = 0u;
+            c.vertexPoolBytes  = gpu->vertexBytes;
+            c.indexPoolBytes   = gpu->indexBytes;
+        }
 
         // The slice class came with the vertex shader (ReadMaterial): 256 when its module indexes
         // the bone palette or reads the shadow matrices, 64 for every other shader, the

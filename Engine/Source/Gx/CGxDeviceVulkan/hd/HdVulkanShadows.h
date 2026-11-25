@@ -12,9 +12,13 @@ struct Settings {
  float strength=1, sunAngle=.00465f, maxPenumbra=1.5f, normalBias=.015f;
  float contactLength=1.5f, contactThickness=.08f, contactStart=.035f, contactStrength=1.0f, tagTolerance=.03f, grassShade=1.0f;
  float extraJitterX=0,extraJitterY=0;
- float pixelScale=1; // HD O1: render size / display size (FSR world target), 1 otherwise
- float farBias=.25f; // HD O1: hdSunFarBias, receiver-plane bias in texels of slope (0 = none, .71 = full half diagonal)
- bool farFix=true; // HD O1: hdSunFarFix (0 = shadows exactly as before O1, for A/B)
+ float pixelScale=1; // HD (Claude) O1: render size / display size (FSR world target), 1 otherwise
+ float farBias=.25f; // HD (Claude) O1: hdSunFarBias, receiver-plane bias in texels of slope (0 = none, .71 = full half diagonal)
+ bool farFix=true; // HD (Claude) O1: hdSunFarFix (0 = shadows exactly as before O1, for A/B)
+ float penumbraMin=.3f; // HD (Claude) SH3: hdSunPenumbraMin, narrowest penumbra radius in yards (soft start of a hill's shadow)
+ uint32_t contactOpt=0;
+ bool light=true; // Claude OMBRE1 hdOmbre1: the vertical blur inside the apply pass, the uniform blur windows left as they are, the finer tiles (same image); false = before
+ uint32_t tiles=0; // Claude SOLMM1 hdSunTiles: 1 the PCSS skips its taps where the map region is all lit or all dark, 3 control
 };
 struct NativeMaps {
  VkImageView views[5]{};VkImageLayout layouts[5]{};
@@ -26,7 +30,7 @@ struct NativeMaps {
 struct alignas(16) Constants {
  float screen[4],view[4],rect[4],projection[4],depth[4],sun[4],settings[4],contact[4],jitter[4];
  float rows[15][4],maps[5][4];
- float extra[4]; // HD O1: x = pixelScale (screen-space blur kept the same width on the display), y = farFix
+ float extra[4]; // HD (Claude) O1: x = pixelScale (screen-space blur kept the same width on the display), y = farFix; SH3: w = penumbraMin
 };
 static_assert(sizeof(Constants)==480,"GLSL UBO; no x86 offsets");
 inline float Penumbra(float receiver,float blocker,float angularTan,float radius) {

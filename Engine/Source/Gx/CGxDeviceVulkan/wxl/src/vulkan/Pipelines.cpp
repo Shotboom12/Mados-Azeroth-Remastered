@@ -1,3 +1,4 @@
+#include "native/record/RecordThread.hpp"
 // The Vulkan half of a draw: pipelines, samplers, descriptor sets, and the one function that binds
 // everything a draw::Cmd names and issues it.
 // Copyright (C) 2026 WarcraftXL
@@ -19,12 +20,18 @@
 
 #include <intrin.h>
 
+#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
+
 using namespace wxlvk::vk::pipelines::detail;
 
 namespace wxlvk::vk::pipelines
 {
     bool RecordSplit(double (&usPerDraw)[6], uint64_t& draws, double& tscMhz)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);
         if (!s.split || !s.splitDraws) return false;
         LARGE_INTEGER q = {}, f = {};
         QueryPerformanceCounter(&q);
@@ -42,12 +49,14 @@ namespace wxlvk::vk::pipelines
 
     void BuildCounters(uint64_t& ticks, uint64_t& builds)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);
         ticks  = s.buildTicks;
         builds = s.buildCount;
     }
 
     void PassCreated(VkRenderPass pass, VkFormat colour, VkFormat depth, bool gbuffer)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
         if (pass == VK_NULL_HANDLE) return;
         // The class's description first, whatever the state: Build() reads the G-buffer flag for every
         // pipeline of the pass, and a pass made before Init() would otherwise be taken for a plain one.
@@ -65,43 +74,118 @@ namespace wxlvk::vk::pipelines
 
     VkPipelineCache PipelineCache() { return s.ready ? s.cache : VK_NULL_HANDLE; }
 
-    void SavePipelineCache()
+    // Claude SAUV1 (22 nov 2026): the save runs on a thread of its own. vkGetPipelineCacheData needs no
+    // host synchronization of the cache (it was not made EXTERNALLY_SYNCHRONIZED), so pipelines may be
+    // built meanwhile; the key list is gathered on the caller after the MT2 drain, only its writing moves.
+    namespace
     {
-        if (s.ready && s.buildCount != s.keysSavedAt) SaveKeys();
-        if (!s.ready || s.cache == VK_NULL_HANDLE || !s.dapi->GetPipelineCacheData) return;
-        if (s.buildCount == s.cacheSavedAt) return;   // nothing new since the load or the last save
-        size_t size = 0;
-        VkResult r = s.dapi->GetPipelineCacheData(s.device, s.cache, &size, nullptr);
-        if (r != VK_SUCCESS || size == 0 || size > kCacheMaxBytes) return;
-        std::vector<uint8_t> data(size);
-        r = s.dapi->GetPipelineCacheData(s.device, s.cache, &size, data.data());
-        if ((r != VK_SUCCESS && r != VK_INCOMPLETE) || size == 0) return;
-        const std::string path = wxlvk::path::Resolve(kCacheFile);
-        const std::string tmp  = path + ".tmp";
-        bool ok = false;
-        if (FILE* f = std::fopen(tmp.c_str(), "wb"))
+        // Detached, not a global std::thread: one still joinable when the process ends would abort it.
+        std::atomic<bool>     g_saveBusy{false};
+        std::atomic<uint32_t> g_saveFailed{0};   ///< bit 0: the cache, bit 1: the key list, bit 2: cache over the limit
+
+        bool WriteAtomic(const std::string& path, const void* data, size_t size)
         {
-            ok = std::fwrite(data.data(), 1, size, f) == size;
-            ok = std::fclose(f) == 0 && ok;
+            const std::string tmp = path + ".tmp";
+            bool ok = false;
+            if (FILE* f = std::fopen(tmp.c_str(), "wb"))
+            {
+                ok = std::fwrite(data, 1, size, f) == size;
+                ok = std::fclose(f) == 0 && ok;
+            }
+            ok = ok && MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+            if (!ok) DeleteFileA(tmp.c_str());
+            return ok;
         }
-        ok = ok && MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
-        if (!ok)
+
+        struct SaveJob
         {
-            DeleteFileA(tmp.c_str());
-            wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: pipelines: the pipeline cache could not be written to %s",
-                                path.c_str());
-            s.cacheSavedAt = s.buildCount;   // not retried every line
+            VkDevice                  device = VK_NULL_HANDLE;
+            VkPipelineCache           cache  = VK_NULL_HANDLE;
+            PFN_vkGetPipelineCacheData get   = nullptr;
+            std::vector<uint8_t>      keys;
+            bool                      wantKeys = false;
+            std::string               cachePath, keysPath;
+
+            void Run() const
+            {
+                uint32_t failed = 0;
+                if (wantKeys && !WriteAtomic(keysPath, keys.data(), keys.size())) failed |= 2u;
+                if (cache != VK_NULL_HANDLE && get)
+                {
+                    size_t size = 0;
+                    VkResult r = get(device, cache, &size, nullptr);
+                    if (r == VK_SUCCESS && size > kCacheMaxBytes)
+                    {
+                        // Claude B3: the pipelines of old modules are never dropped from it; the next start makes it anew.
+                        DeleteFileA(cachePath.c_str());
+                        failed |= 4u;
+                    }
+                    else if (r == VK_SUCCESS && size)
+                    {
+                        std::vector<uint8_t> data(size);
+                        r = get(device, cache, &size, data.data());
+                        if ((r != VK_SUCCESS && r != VK_INCOMPLETE) || size == 0 || !WriteAtomic(cachePath, data.data(), size))
+                            failed |= 1u;
+                    }
+                }
+                if (failed) g_saveFailed.fetch_or(failed);
+            }
+        };
+
+        void ReportSaveFailures()
+        {
+            const uint32_t f = g_saveFailed.exchange(0);
+            if (f & 1u) wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: pipelines: the pipeline cache could not be written");
+            if (f & 2u) wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: pipelines: the key list could not be written");
+            if (f & 4u) wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: pipelines: the pipeline cache is over its %llu byte limit, dropped (the next start makes a new one)",
+                                            static_cast<unsigned long long>(kCacheMaxBytes));
+        }
+    }
+
+    void SavePipelineCache(bool background)
+    {
+        ReportSaveFailures();
+        if (background && g_saveBusy.load(std::memory_order_acquire)) return;   // the last one still writing: next line
+        while (g_saveBusy.load(std::memory_order_acquire)) Sleep(1);   // exit: the running save first
+        ReportSaveFailures();
+        if (!s.ready) return;
+        const bool canCache = s.cache != VK_NULL_HANDLE && s.dapi->GetPipelineCacheData;
+        // A plain read to skip the MT2 drain when nothing was built: the drain then settles it.
+        if (s.buildCount == s.keysSavedAt && (!canCache || s.buildCount == s.cacheSavedAt)) return;
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
+        SaveJob job;
+        job.device = s.device;
+        if (s.buildCount != s.keysSavedAt)
+        {
+            BuildKeys(job.keys);
+            job.wantKeys = true;
+            job.keysPath = wxlvk::path::Resolve(KeysFile());
+        }
+        if (canCache && s.buildCount != s.cacheSavedAt)
+        {
+            job.cache     = s.cache;
+            job.get       = s.dapi->GetPipelineCacheData;
+            job.cachePath = wxlvk::path::Resolve(kCacheFile);
+            s.cacheSavedAt = s.buildCount;   // not retried every line when it fails
+        }
+        if (!job.wantKeys && job.cache == VK_NULL_HANDLE) return;
+        if (!background)
+        {
+            job.Run();
+            ReportSaveFailures();
             return;
         }
-        s.cacheSavedAt = s.buildCount;
-        wxl::ScriptMgr::Log(WXL_LOG_DEBUG, "vulkan: pipelines: pipeline cache saved: %llu byte(s), %u pipeline(s) "
-                            "live (%llu byte(s) were loaded at bring-up)",
-                            static_cast<unsigned long long>(size), s.pipelineCount - s.failedCount,
-                            static_cast<unsigned long long>(s.cacheLoaded));
+        g_saveBusy.store(true, std::memory_order_release);
+        std::thread([job = std::move(job)] {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            job.Run();
+            g_saveBusy.store(false, std::memory_order_release);
+        }).detach();
     }
 
     bool Init()
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
         const context::Handles* h = context::Get();
         if (!h || !h->device || !h->dapi)
         {
@@ -120,6 +204,20 @@ namespace wxlvk::vk::pipelines
                                 "%u sampler(s) rather than destroying them",
                                 s.pipelineCount, s.samplerCount);
             s = State();
+        }
+
+        // Set-0 descriptors belong to the old pools/device, while this cache lives
+        // outside State. A genuine initialization (not the same-device early out)
+        // must forget them, including retries after a partial initialization.
+        for (SetCache& cache : g_setCache)
+        {
+            if (++cache.gen == 0)
+            {
+                for (SetEntry& e : cache.table) e = SetEntry();
+                cache.gen = 1;
+            }
+            cache.used = 0;
+            cache.count = 0;
         }
 
         if (!HaveEntryPoints(*h->dapi)) return false;
@@ -303,6 +401,7 @@ namespace wxlvk::vk::pipelines
 
     void BeginFrame(uint32_t frameSlot)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Submit);
         if (!s.ready) return;
         wxlvk::vk::wind::BeginFrame(frameSlot);
 
@@ -320,6 +419,19 @@ namespace wxlvk::vk::pipelines
             return;
         }
 
+        // Claude PIPE1: pipelines replaced by VerifySources. Each BeginFrame() follows the wait on
+        // its slot's fence; after kFrameSlots + 1 of them no frame that could have bound one is in flight.
+        for (size_t i = 0; i < s.retired.size();)
+        {
+            if (--s.retired[i].framesLeft == 0)
+            {
+                s.dapi->DestroyPipeline(s.device, s.retired[i].pipeline, nullptr);
+                s.retired[i] = s.retired.back();
+                s.retired.pop_back();
+            }
+            else ++i;
+        }
+
         // The slot's set-0 sets and their cache live across its frames (kSetCacheSlots): the pool
         // is reset whole, and the cache forgotten with it, only once the cache is nearly full or
         // the last frame of the slot spilled past the pool -- everything allocated from either
@@ -334,9 +446,8 @@ namespace wxlvk::vk::pipelines
                 s.loggedPoolReset = true;
                 Fail("vkResetDescriptorPool (logged once)", r);
             }
-            for (uint32_t i = 0; i < s.poolActive[frameSlot] && i < kPoolSpill; ++i)
-                if (s.poolSpill[frameSlot][i] != VK_NULL_HANDLE)
-                    s.dapi->ResetDescriptorPool(s.device, s.poolSpill[frameSlot][i], 0);
+            for (uint32_t i = 0; i < s.poolActive[frameSlot] && i < s.poolSpill[frameSlot].size(); ++i)   // Claude RING1
+                s.dapi->ResetDescriptorPool(s.device, s.poolSpill[frameSlot][i], 0);
             s.poolActive[frameSlot] = 0;
             // The cached sets went with the pool reset: a new generation forgets them all.
             if (++cache.gen == 0)
@@ -351,16 +462,29 @@ namespace wxlvk::vk::pipelines
         s.ringActive[frameSlot] = 0;
         s.ringCursor[frameSlot] = 0;
         s.lastSlice[frameSlot].valid = false;   // its bytes are about to be rewritten
+        // Claude OS2: the slot's last frame asked for palettes past its ring (drawn on the 256-row module,
+        // and refused to the record thread): the ring grows to fit what was used plus what was asked, with a
+        // quarter more, by doubling. The slot's fence was waited on and the record thread drained above.
+        if (s.boneWanted[frameSlot] && s.bonesReady)
+        {
+            const uint64_t need = (static_cast<uint64_t>(s.boneCursor[frameSlot]) + s.boneWanted[frameSlot]) * 5u / 4u;
+            uint64_t size = s.boneBytes[frameSlot];
+            while (size < need && size < (1ull << 30)) size *= 2u;
+            GrowBones(frameSlot, static_cast<uint32_t>(size));
+            s.boneWanted[frameSlot] = 0;
+        }
         s.boneCursor[frameSlot]  = 0;
         s.lastPalette[frameSlot] = State::LastPalette();
         // A new command buffer: nothing bound is trusted.
         s.bound = State::Bound();
     }
 
-    void InvalidateBindings() { s.bound = State::Bound(); }
+    void InvalidateBindings() { if(recordthread::Enabled())recordthread::Observe(recordthread::Boundary::Invalidate); s.bound = State::Bound(); }
+    void ResetBindings() { s.bound = State::Bound(); }   // Claude CPU-B: a queued pass begin, on the record thread, in order
 
     void LogUnsupported()
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
         if (s.unsupportedCount == 0) return;
         uint64_t other = 0;
         for (uint32_t b = 0; b < kSkipBuckets; ++b) other += s.unsupportedOther[b];
@@ -423,16 +547,18 @@ namespace wxlvk::vk::pipelines
 
     bool HandWrittenRow(const char* name, bool pixel)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
         if (!name || !*name) return false;
         for (const ShaderRow& r : kShaderRows)
             if (std::strcmp(pixel ? r.ps : r.vs, name) == 0) return true;
         return false;
     }
 
-    uint64_t DrawnCount() { return s.stats.drawn; }
+    uint64_t DrawnCount() { if(recordthread::Enabled())recordthread::Observe(recordthread::Boundary::Stats); return s.stats.drawn; }
 
     void GetStats(Stats& out)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);
         out = s.stats;
         out.pipelines           = s.pipelineCount - s.failedCount;
         out.translatedPipelines = s.translatedCount;
@@ -443,13 +569,15 @@ namespace wxlvk::vk::pipelines
 
     // --- the shadow replay's sources (src/capture/ShadowPipelines.cpp builds the pipelines) ---------
 
-    bool ShadowSourceFor(uint32_t entryIndex, bool alphaTest, ShadowSource& out)
+    bool ShadowSourceFor(uint32_t entryIndex, bool alphaTest, ShadowSource& out, bool multiFaces)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
         if (!s.ready || entryIndex >= s.pipelineCount) return false;
         const PipelineEntry& e = s.pipelines[entryIndex];
         const manifest::Record* vr = e.vrec;
         if (!e.translated || !vr || e.pipeline == VK_NULL_HANDLE || e.pointList) return false;
-        if (e.wind ? (e.bones ? !vr->shadowWindBones : !vr->shadowWind) : (e.bones ? !vr->shadowBones : !vr->shadow))
+        const bool palette = e.bones && !e.table;   // Claude B3: a terrain group's rows in set 2 are not a bone variant
+        if (e.wind ? (e.bones ? !vr->shadowWindBones : !vr->shadowWind) : (palette ? !vr->shadowBones : !vr->shadow))
             return false;
         out = ShadowSource();
         VertexLayout layout;
@@ -470,10 +598,17 @@ namespace wxlvk::vk::pipelines
             ++out.bindingCount;
         }
         // "vertex/<md5>.spv" (or its `bones`, `wind`, `windbones` variant) -> the same with ".shadow.spv".
-        const char*  spv = e.wind ? (e.bones ? vr->windBones : vr->wind) : (e.bones ? vr->bones : vr->spv);
+        const char*  spv = e.wind ? (e.bones ? vr->windBones : vr->wind) : (palette ? vr->bones : vr->spv);
         const size_t len = std::strlen(spv);
-        if (len < 4 || len + 16 >= sizeof out.vertPath) return false;
-        std::snprintf(out.vertPath, sizeof out.vertPath, "translated/%.*s.shadow.spv", static_cast<int>(len - 4), spv);
+        if (len < 4 || len + 22 >= sizeof out.vertPath) return false;
+        std::snprintf(out.vertPath, sizeof out.vertPath, multiFaces ? "translated/%.*s.shadowmv.spv" : "translated/%.*s.shadow.spv",
+                      static_cast<int>(len - 4), spv);   // Claude CUBES1: the multi-faces variant (shadowmvgen.py)
+        if (e.table)   // Claude B3: the chunk's position read from set 2 at the record's offset
+        {
+            std::strcpy(out.vertPath + std::strlen(out.vertPath) - 4, ".gputr.spv");
+            out.table = true;
+            if (BonesLayoutFor(e.layout) == VK_NULL_HANDLE) return false;
+        }
         if (alphaTest && e.prec)
         {
             // A module that reads stage 0 at texcoord0 (the leaves, the cards) is cut out by the
@@ -491,6 +626,35 @@ namespace wxlvk::vk::pipelines
         out.wind   = e.wind;
         return out.layout != VK_NULL_HANDLE;
     }
+
+    bool ShadowSkinSourceFor(uint32_t entryIndex, ShadowSource& out, VkDescriptorSetLayout sets[3])
+    {
+        // Claude ANIM1
+        if (!ShadowSourceFor(entryIndex, false, out, false)) return false;
+        const PipelineEntry& e = s.pipelines[entryIndex];
+        if (e.wind || !s.bonesReady || s.bonesLayout == VK_NULL_HANDLE) return false;
+        char* at = std::strstr(out.vertPath, ".shadow.spv");
+        if (!at || std::strlen(out.vertPath) + 5 >= sizeof out.vertPath) return false;
+        std::snprintf(at, sizeof out.vertPath - size_t(at - out.vertPath), ".shadowskin.spv");
+        sets[0] = s.layouts[e.layout].set0;
+        sets[1] = s.regsLayout;
+        sets[2] = s.bonesLayout;
+        return sets[0] != VK_NULL_HANDLE && sets[1] != VK_NULL_HANDLE;
+    }
+
+    // Claude LV25: the entry's own culling for the lamps' shadow cubes (WXL_VK_REPLAY_OWN_CULL).
+    bool ShadowCullFor(uint32_t entryIndex, VkCullModeFlags& mode, VkFrontFace& front)
+    {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
+        mode  = VK_CULL_MODE_NONE;
+        front = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        if (!s.ready || entryIndex >= s.pipelineCount) return false;
+        const char* name = "";
+        if (CullState(s.pipelines[entryIndex].key.cull, mode, front, name)) return true;
+        mode  = VK_CULL_MODE_NONE;
+        front = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        return false;
+    }
 }
 
 // HD: the Cata water's mirror replay (hd/CataMirror.cpp); see MirrorSource in Pipelines.hpp.
@@ -498,12 +662,35 @@ namespace wxlvk::vk::pipelines
 {
     bool MirrorSourceFor(uint32_t entryIndex, MirrorSource& out)
     {
+        if (wxlvk::recordthread::Enabled()) wxlvk::recordthread::Observe(wxlvk::recordthread::Boundary::Stats);   // HD MT2: drains
         out = MirrorSource();
         if (!ShadowSourceFor(entryIndex, false, out.base)) return false;
         const PipelineEntry& e = s.pipelines[entryIndex];
         if (!e.prec || !e.prec->spv[0] || e.companion || e.ffVertex) return false;
+        // Claude B3: a terrain group, drawn by its own indirect commands: the .gput twins, the rows and the texture table.
+        if (e.table)
+        {
+            std::snprintf(out.base.vertPath, sizeof out.base.vertPath, "translated/%.*s.shadow.gput.spv",
+                          static_cast<int>(std::strlen(e.vrec->spv) - 4), e.vrec->spv);
+            out.base.layout = s.layouts[e.layout].table;
+            if (out.base.layout == VK_NULL_HANDLE) return false;
+        }
+        // Claude B2: a scene doodad's copies, drawn with the palette and the instance of their own draw: the shadow variant's
+        // twin (it lights them from the palette as theirs does).
+        if (e.key.bones & 512u)
+        {
+            const size_t n = std::strlen(out.base.vertPath);
+            if (n < 4 || n + 6 >= sizeof out.base.vertPath) return false;
+            std::strcpy(out.base.vertPath + n - 4, e.key.bones & 1024u ? ".gpul.spv" : ".gpus.spv");
+        }
         if (std::strlen(e.prec->spv) + 12 >= sizeof out.fragPath) return false;
         std::snprintf(out.fragPath, sizeof out.fragPath, "translated/%s", e.prec->spv);
+        if (e.table)   // Claude B3
+        {
+            const size_t n = std::strlen(out.fragPath);
+            if (n < 4 || n + 6 >= sizeof out.fragPath) return false;
+            std::strcpy(out.fragPath + n - 4, ".gput.spv");
+        }
         if (!BlendState(e.key.blend, out.blend)) return false;
         out.blend.colorWriteMask = WriteMask(e.key.colorWrite);
         const char* name = "";

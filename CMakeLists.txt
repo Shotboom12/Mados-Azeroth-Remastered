@@ -74,10 +74,10 @@ if (WOWDECOMP_VULKAN)
     add_compile_definitions(WOWDECOMP_VULKAN=1)
 endif ()
 
-# HD 2026-11-02, kit commun R1 lot L0: Lumenveil R2 (hd/lumen) compiled and started, every hdLv* case OFF.
+# Claude 2026-11-02, kit commun R1 lot L0: Lumenveil R2 (hd/lumen) compiled and started, every hdLv* case OFF.
 # OFF: hd/lumen is left out of the GxVulkan glob, exactly the previous build.
 option(WOWDECOMP_LUMEN "Compile Lumenveil R2 (hd/lumen), all effects OFF by default (requires WOWDECOMP_VULKAN)" OFF)
-# HD 2026-11-02 lot G1: with it, the Seyris wind model (hd/seyris) and its use by the grass wind (WorldClient,
+# Claude 2026-11-02 lot G1: with it, the Seyris wind model (hd/seyris) and its use by the grass wind (WorldClient,
 # hdSxWind, OFF by default). The WorldClient define is set at the end of this file, once that target exists.
 
 # HD: whole program optimization for the x64 Release build (/GL + /LTCG). The engine's small math functions
@@ -88,6 +88,15 @@ if (MSVC AND WOWDECOMP_ARCH_64 AND WOWDECOMP_LTCG)
     add_compile_options($<$<CONFIG:Release>:/GL>)
     add_link_options($<$<CONFIG:Release>:/LTCG>)
     string(APPEND CMAKE_STATIC_LINKER_FLAGS_RELEASE " /LTCG")
+endif ()
+
+# Claude 2026-11-04 (profil CPU) : symboles .pdb pour la build Release, pour lire un profil CPU (WPR/WPA, VTune).
+# /Zi et /DEBUG n'ajoutent que des fichiers .pdb ; /OPT:REF /OPT:ICF remettent ce que /DEBUG coupe par defaut,
+# donc le code genere reste celui d'une Release normale. OFF par defaut : -DWOWDECOMP_RELEASE_PDB=ON.
+option(WOWDECOMP_RELEASE_PDB "Release .pdb files for CPU profiling (same code)" OFF)
+if (MSVC AND WOWDECOMP_RELEASE_PDB)
+    add_compile_options($<$<CONFIG:Release>:/Zi> $<$<CONFIG:Release>:/FS>)
+    add_link_options($<$<CONFIG:Release>:/DEBUG:FULL> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
 endif ()
 
 # Third-party code is linked, not decompiled, for now.
@@ -179,7 +188,7 @@ if(WOWDECOMP_FSR)
     endif()
 endif()
 
-# HD 2026-11-02: NVIDIA DLSS Super Resolution (SDK 310.9.16 copied into ThirdParty/DLSS), in the FSR pass's place
+# Claude 2026-11-02: NVIDIA DLSS Super Resolution (SDK 310.9.16 copied into ThirdParty/DLSS), in the FSR pass's place
 # (same world target, depth, motion and jitter). Needs WOWDECOMP_FSR. OFF: exactly the FSR build.
 option(WOWDECOMP_DLSS "Compile NVIDIA DLSS Super Resolution next to FSR (requires WOWDECOMP_FSR)" OFF)
 if(WOWDECOMP_DLSS)
@@ -210,7 +219,7 @@ if(WOWDECOMP_DLSS)
     endif()
 endif()
 
-# HD 2026-11-02, kit commun R1 lot G1: the grass wind (WorldClient/HD/HdGrassWind.cpp) may read the Seyris wind
+# Claude 2026-11-02, kit commun R1 lot G1: the grass wind (WorldClient/HD/HdGrassWind.cpp) may read the Seyris wind
 # model compiled with WOWDECOMP_LUMEN (hd/seyris). OFF: exactly the previous build.
 if (WOWDECOMP_LUMEN)
     target_compile_definitions(WorldClient PRIVATE WOWDECOMP_LUMEN=1)

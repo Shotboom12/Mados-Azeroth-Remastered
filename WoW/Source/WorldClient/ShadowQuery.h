@@ -17,6 +17,7 @@ struct ShadowQueryBuffers {
     /* 0008 */ void* m_groupData;
     /* 000C */ CModelBatchList m_untextured;
     /* 0018 */ CModelBatchList m_textured;
+    uint32_t m_groupMax = 0; // Claude BANDE1: room in m_groups / m_groupData (was a fixed 0x800)
 };
 
 class CShadowQuery {
@@ -33,6 +34,7 @@ class CShadowQuery {
     static void QueryTerrain(CShadowCacheQueryData& data, int32_t firstBand, int32_t lastBand);
     static void QueryMapObjDefsBand(CShadowCacheQueryData& data, int32_t band);
     static void QueryTerrainBand(CShadowCacheQueryData& data, int32_t band);
+    static void QueryBands(CShadowCacheQueryData& data); // Claude PARQ2
     static uint8_t s_stamp;
     static void Clear(CGxTex* target, CGxTex* depthTarget, float* rect);
     static void GetSize(CShadowCacheQueryData& data, int32_t band, float* minSize, float* maxSize);

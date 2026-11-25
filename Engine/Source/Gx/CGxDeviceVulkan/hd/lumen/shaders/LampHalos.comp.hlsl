@@ -198,8 +198,8 @@ float InterleavedGradientNoise(float2 pixel)
 }
 
 
-static const float kLampSlots = 237;
-static const float kLampTableRows = 8;
+static const float kLampSlots = 497;            // Claude LV41: 256 lamps + 128 windows + 48 effects + 1 lantern + 64 far halos (was 237)
+static const float kLampTableRows = 10;         // Claude LV34: + kLampCubeRow; LV37: + kLampCubeCentreRow
 static const float kLampSphereRow = 0;
 static const float kLampLightRow = 1;
 static const float kLampScreenRow = 2;
@@ -208,6 +208,8 @@ static const float kLampSurfaceRow = 4;
 static const float kLampViewRow = 5;
 static const float kLampEmitRow = 6;
 static const float kLampCoreRow = 7;
+static const float kLampCubeRow = 8;            // Claude LV34: x cube + 1, y radius, z fade, w 1 = wants a cube
+static const float kLampCubeCentreRow = 9;      // Claude LV37: xyz where the cube was drawn (view), w its near (< 0: all faces)
 
 float SlotU(float slot)
 {
@@ -220,16 +222,16 @@ float4 LampTexel(Texture2D<float4> table, float slotU, float row)
 }
 
 static const float kLampTileBlockWidth = 16;
-static const float kLampTileBlockHeight = 8;
+static const float kLampTileBlockHeight = 16;   // Claude LV41: was 8 (capacity 255)
 static const float kLampTileCapacity = kLampTileBlockWidth * kLampTileBlockHeight - 1;
-static const float kLampTileEveryLamp = 255;
+static const float kLampTileEveryLamp = 65535;  // Claude LV41: 16-bit entries
 
 float LampTileEntry(Texture2D<float4> tiles, float4 layout, float2 tile, float index)
 {
     float row = floor(index / kLampTileBlockWidth);
     float column = index - row * kLampTileBlockWidth;
     float2 texel = float2(tile.x * kLampTileBlockWidth + column, layout.z + tile.y * kLampTileBlockHeight + row);
-    return floor(tiles.SampleLevel(LvPoint,(float4((texel + 0.5) * layout.xy, 0, 0)).xy,(float4((texel + 0.5) * layout.xy, 0, 0)).w).r * 255 + 0.5);
+    return floor(tiles.SampleLevel(LvPoint,(float4((texel + 0.5) * layout.xy, 0, 0)).xy,(float4((texel + 0.5) * layout.xy, 0, 0)).w).r * 65535 + 0.5); // Claude LV41: R16_UNORM
 }
 
 float2 LampTileOf(float4 layout, float2 pixel)

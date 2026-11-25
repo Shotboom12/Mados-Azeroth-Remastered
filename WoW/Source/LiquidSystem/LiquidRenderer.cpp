@@ -3,6 +3,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxLight.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include "WoW/Source/WorldClient/HD/HdCataWater.h" // Claude B3
 
 // STATIC: 0x00B23F6C
 Liquid::CRenderer::DrawListSorter Liquid::CRenderer::s_drawListSorter[2] = {
@@ -126,6 +127,7 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
         instance->m_queued = 0;
     }
 
+    HD::CataWaterFlush(); // Claude B3: the grouped water still waiting
     instances.Clear();
 
     for (uint32_t i = 0; i < 4; i++) {

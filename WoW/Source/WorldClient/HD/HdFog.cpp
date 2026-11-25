@@ -208,7 +208,6 @@ float4 main(float2 vpos : VPOS) : COLOR0 {
 
     typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 
-    CVar* s_enabled = nullptr;
     CVar* s_density = nullptr;
     CVar* s_sun = nullptr;
     CVar* s_ambient = nullptr; // HD: hdFogAmbient
@@ -309,7 +308,7 @@ float4 main(float2 vpos : VPOS) : COLOR0 {
         static bool registered = false;
         if (registered) return;
         registered = true;
-        s_enabled = CVar::Register("hdFog", "HD: 1 = Forever style fog, 0 = original", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        // AR1: hdFog (For Ever volumetric fog on/off) is read by the Vulkan fog only, next to Lumenveil's hdLvFog.
         s_density = CVar::Register("hdFogDensity", "HD: fog amount, 1 = Forever", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_sun = CVar::Register("hdFogSun", "HD: sun colour in the fog, 1 = Forever", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_ambient = CVar::Register("hdFogAmbient", "HD: base colour of the fog, 1 = Forever", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -559,16 +558,7 @@ void HD::FogBeginWorld() {
     RegisterCVars();
     s_active = false;
     s_postValid = false;
-    // HD: the sun rays (HdBloom) need the world depth even with the fog off
-    // HD: so does hdWater 1 (HdWater.cpp)
-    // HD: and hdGI 1 (HdGI.cpp)
-    // HD: and hdContactShadow 1 (HdContactShadow.cpp)
-    if ((!s_enabled || !s_enabled->m_intValue) && !HD::BloomWantsDepth() && !HD::WaterWantsDepth() && !HD::GIWantsDepth() &&
-        !HD::ContactShadowWantsDepth()) {
-        if (s_depthTex) ReleaseTargets();
-        SetInfo("off");
-        return;
-    }
+    // AR1: D3D9 has no Lumenveil fog, so our fog is always on there (no hdFog 0 = the original fog)
 
     IDirect3DDevice9* device = Device();
     if (!device) {
@@ -719,12 +709,6 @@ void HD::FogEndWorld() {
         snprintf(s_post.diag, sizeof(s_post.diag), "sunDir %.2f %.2f %.2f cam %.2f %.2f %.2f view %.2f %.2f %.2f",
                  sx, sy, sz, f.x, f.y, f.z, inv[8], inv[9], inv[10]);
         s_postValid = true;
-    }
-    if (!s_enabled || !s_enabled->m_intValue) {
-        // HD: fog off, the depth was only kept for the sun rays
-        SetInfo("off (depth kept for hdRays / hdWater)"); // HD: hdWater
-        device->SetDepthStencilSurface(s_depthSurf);
-        return;
     }
 
     // HD: WoW Forever's fog for this place and time

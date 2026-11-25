@@ -28,7 +28,7 @@ struct Clock {
   if(elapsed>60000)return float(Wrap(phase));
   const double dt=std::min(elapsed,250u)*.001;
   double advance=(target-phase)*(-std::expm1(-.6931471805599453094*dt/halfLife));
-  const double rate=std::isfinite(minutesPerSecond)?std::clamp(double(minutesPerSecond),.1,120.):10.;
+  const double rate=std::isfinite(minutesPerSecond)?std::clamp(double(minutesPerSecond),.1,1440.):10.; // Claude HEURE1: 1440 = a whole day per second
   const double limit=dt*rate/1440.;phase+=std::clamp(advance,-limit,limit);
   float result=float(Wrap(phase));return result>=1.f?std::nextafter(1.f,0.f):result;
  }

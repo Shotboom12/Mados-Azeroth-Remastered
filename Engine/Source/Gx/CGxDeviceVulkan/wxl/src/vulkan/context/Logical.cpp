@@ -137,7 +137,7 @@ namespace wxlvk::vk::context::detail
         // The swapchain, then what the optional capabilities add by name (Caps.cpp PlanCaps: the memory budget,
         // gl_Layer from the vertex stage, FP16 on a 1.1 device); WXL_HOST appends its interop extensions after them.
 #ifdef WOWDECOMP_DLSS
-        constexpr uint32_t kMaxBase = 16;  // HD 2026-11-02: room for NGX's device extensions after the capabilities'
+        constexpr uint32_t kMaxBase = 16;  // Claude 2026-11-02: room for NGX's device extensions after the capabilities'
 #else
         constexpr uint32_t kMaxBase = 8;   // WOWDECOMP_FSR adds two names (Caps.cpp)
 #endif
@@ -207,7 +207,7 @@ namespace wxlvk::vk::context::detail
         CapsChain capsChain;
         PlanCaps(features, capsChain, nullptr, extensions, extensionCount, kMaxBase);
 #ifdef WOWDECOMP_DLSS
-        // HD 2026-11-02: NGX's device extensions, only those the adapter offers (no feature struct is chained, so the
+        // Claude 2026-11-02: NGX's device extensions, only those the adapter offers (no feature struct is chained, so the
         // richer device keeps exactly its capabilities; the plain fallback below drops them and DLSS says unavailable).
         HD::Dlss::AddDeviceExtensions(g.iapi.EnumerateDeviceExtensionProperties, g.instance, g.physical, extensions,
                                       extensionCount, kMaxBase);

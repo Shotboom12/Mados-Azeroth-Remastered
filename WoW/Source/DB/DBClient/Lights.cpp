@@ -4,42 +4,15 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Tempest/CMath.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
-#include "WoW/Source/DB/Rec/LightIntBandRec.h"
 #include "WoW/Source/DB/Rec/LightParamsRec.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/World.h"
-#include "WoW/Source/WorldClient/HD/HdForever.h" // HD: hdForever cvar
+#include "WoW/Source/WorldClient/HD/HdForever.h" // AR1: our world colours
 
 // VERIFY: 7c5384b3 manual
 // OFFSET: 0x007EAE70
 static void GetBandTimeRange(const int32_t* times, int32_t count, float time, int32_t& index, float& t, int32_t& next) {
     HD::DayNightMath::Range(times,count,time,index,t,next,HD::DayNightSmoothingEnabled());
-}
-
-// VERIFY: ba90e0db manual
-// OFFSET: 0x007EB070
-static CImVector InterpolateIntBand(const LightIntBandRec& rec, float time) {
-    CImVector color;
-
-    if (!rec.m_num) {
-        *reinterpret_cast<uint32_t*>(&color) = 0xFF000000;
-        return color;
-    }
-
-    int32_t index;
-    float t;
-    int32_t next;
-    GetBandTimeRange(rec.m_time, rec.m_num, time, index, t, next);
-
-    const CImVector& from = *reinterpret_cast<const CImVector*>(&rec.m_data[index]);
-    const CImVector& to = *reinterpret_cast<const CImVector*>(&rec.m_data[next]);
-
-    int32_t r = CMath::fint_((to.r - from.r) * t + from.r);
-    int32_t g = CMath::fint_((to.g - from.g) * t + from.g);
-    int32_t b = CMath::fint_((to.b - from.b) * t + from.b);
-
-    *reinterpret_cast<uint32_t*>(&color) = ((((r & 0xFF) | 0xFFFFFF00) << 8 | (g & 0xFF)) << 8) | (b & 0xFF);
-    return color;
 }
 
 // VERIFY: d2967a23 manual
@@ -86,20 +59,8 @@ void InitLights(bool transform) {
 // VERIFY: b70039a6 auto
 // OFFSET: 0x007EBF30
 CImVector DayNight::LoadLightIntBand(float time, const LightParamsRec* params, int32_t band) {
-    // HD: hdForever / hdForeverLight cvars: Forever's colour, the 3.3.5 one, or a mix of both
-    CImVector forever;
-    float weight = HD::ForeverIntBand(params, band, time, &forever) ? HD::ForeverBandWeight(band) : 0.0f;
-    if (weight >= 1.0f) return forever;
-
-    LightIntBandRec rec;
-    g_lightIntBandDB.GetRecord(band + 18 * HD::RealLightParamsId(params) - 17, &rec); // HD: hdForever cvar (was: params->m_id)
-    CImVector color = InterpolateIntBand(rec, time);
-    if (weight > 0.0f) {
-        color.r = static_cast<uint8_t>(CMath::fint_(color.r + (forever.r - color.r) * weight));
-        color.g = static_cast<uint8_t>(CMath::fint_(color.g + (forever.g - color.g) * weight));
-        color.b = static_cast<uint8_t>(CMath::fint_(color.b + (forever.b - color.b) * weight));
-    }
-    return color;
+    // AR1: our world colours (For Ever + the converted tables of ar_world_light.txt, see HdForever.h).
+    return HD::WorldLightBand(params, band, time);
 }
 
 // VERIFY: 95c2a7e6 auto

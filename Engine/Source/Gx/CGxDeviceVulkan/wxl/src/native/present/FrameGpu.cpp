@@ -15,6 +15,14 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "native/present/Internal.hpp"
+#include "native/record/RecordThread.hpp"   // Claude GPU0
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+
+extern PFN_vkCmdBeginDebugUtilsLabelEXT g_gpu0BeginLabel;   // Claude GPU0 : vulkan/context/Instance.cpp (null sans WXL_VK_LABELS=1)
+extern PFN_vkCmdEndDebugUtilsLabelEXT   g_gpu0EndLabel;
 
 // One query pool per frame slot, kQueries timestamps: the main buffer's start (TOP_OF_PIPE, at the frame's open), the
 // frame's end (BOTTOM_OF_PIPE, after its last pass: the present's copy and its wait for the swapchain image are left out,
@@ -94,6 +102,234 @@ namespace wxlvk::native::present::detail
             uint64_t sessionCount = 0;
         };
         State t;
+
+// --- Claude GPU0 (17 nov 2026, MESURE SEULEMENT) : le temps GPU zone par zone ----------------------------------------
+// Une reserve de kMarks horodatages par emplacement d'image. Chaque repere (BOTTOM_OF_PIPE) note la fin de tout ce qui le
+// precede dans les commandes ; la zone d'un repere dure jusqu'au repere suivant. Les reperes du moteur passent par la
+// file du thread d'enregistrement (une op, a sa place parmi les dessins) ; ceux des etapes HD et des MidPasses sont
+// ecrits directement (le principal enregistre lui-meme a ce moment, apres une attente). Relus a la reouverture de
+// l'emplacement (sa barriere attendue). Avec WXL_VK_LABELS=1 au lancement, chaque repere porte aussi une etiquette
+// VK_EXT_debug_utils (Nsight, VulkanProfiler). Eteint : rien n'est ecrit, rien n'est cree.
+        constexpr uint32_t kMarks = 384, kLabel = 48, kRows = 128;
+        struct MarkSlot
+        {
+            VkQueryPool pool  = VK_NULL_HANDLE;
+            uint32_t    count = 0;
+            char        label[kMarks][kLabel] = {};
+        };
+        struct Row
+        {
+            char   label[kLabel] = {};
+            double ms = 0.0, n = 0.0;
+        };
+        struct Zones
+        {
+            bool     on = false, tried = false, ok = false, active = false;
+            uint32_t slot = 0;
+            MarkSlot slots[kFramesInFlight];
+            char     zone[kLabel] = "hors monde (interface, presentation)";
+            Row      rows[kRows];
+            uint32_t rowCount = 0;
+            uint64_t frames = 0, skipped = 0, overflow = 0, refused = 0;
+            double   span = 0.0, gpu = 0.0;
+            uint64_t gpuFrames = 0;
+            std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+        };
+        Zones z;
+
+        struct MarkOp
+        {
+            VkQueryPool pool;
+            uint32_t    index;
+            char        label[kLabel];
+        };
+
+        // Chaque repere ferme la plage de la zone precedente et ouvre la sienne (memes regles que les horodatages : les
+        // reperes sont enregistres dans l'ordre de la file). ZonesEnd ferme la derniere. Une plage peut passer d'un
+        // tampon principal a l'autre de la meme file, ce que VK_EXT_debug_utils permet.
+        bool labelOpen = false;
+
+        void LabelClose(VkCommandBuffer cmd)
+        {
+            if (!labelOpen || !g_gpu0EndLabel) return;
+            g_gpu0EndLabel(cmd);
+            labelOpen = false;
+        }
+
+        void Label(VkCommandBuffer cmd, const char* text)
+        {
+            if (!g_gpu0BeginLabel) return;
+            LabelClose(cmd);
+            VkDebugUtilsLabelEXT l = {};
+            l.sType      = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+            l.pLabelName = text;
+            g_gpu0BeginLabel(cmd, &l);
+            labelOpen = true;
+        }
+
+        void RunMarkOp(VkCommandBuffer cmd, const void* data)
+        {
+            const MarkOp& o = *static_cast<const MarkOp*>(data);
+            s.dapi->CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, o.pool, o.index);
+            Label(cmd, o.label);
+        }
+
+        void Copy(char* to, const char* from)
+        {
+            std::strncpy(to, from ? from : "?", kLabel - 1);
+            to[kLabel - 1] = '\0';
+        }
+
+        bool ZonesInit()
+        {
+            z.tried = true;
+            if (!t.available) return false;
+            VkQueryPoolCreateInfo info = {};
+            info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+            info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+            info.queryCount = kMarks;
+            for (MarkSlot& m : z.slots)
+                if (s.dapi->CreateQueryPool(s.device, &info, nullptr, &m.pool) != VK_SUCCESS)
+                {
+                    m.pool = VK_NULL_HANDLE;
+                    return false;
+                }
+            return true;
+        }
+
+        void ZonesClear()
+        {
+            z.rowCount = 0;
+            z.frames = z.skipped = z.overflow = z.refused = z.gpuFrames = 0;
+            z.span = z.gpu = 0.0;
+            z.last = std::chrono::steady_clock::now();
+        }
+
+        void AddRow(const char* label, double ms)
+        {
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                for (uint32_t i = 0; i < z.rowCount; ++i)
+                    if (!std::strcmp(z.rows[i].label, label))
+                    {
+                        z.rows[i].ms += ms;
+                        z.rows[i].n += 1.0;
+                        return;
+                    }
+                if (z.rowCount < kRows) break;
+                label = "(autres zones)";
+            }
+            if (z.rowCount >= kRows) return;
+            Row& r = z.rows[z.rowCount++];
+            Copy(r.label, label);
+            r.ms = ms;
+            r.n  = 1.0;
+        }
+
+        /// L'image precedente de cet emplacement : ses zones ajoutees aux totaux.
+        void ZonesHarvest(MarkSlot& m)
+        {
+            const uint32_t n = m.count;
+            m.count = 0;
+            if (n < 2 || !m.pool) return;
+            static uint64_t r[2 * kMarks];
+            const VkResult got = s.dapi->GetQueryPoolResults(s.device, m.pool, 0, n, sizeof(uint64_t) * 2 * n, r,
+                                                             2 * sizeof(uint64_t),
+                                                             VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            if (got != VK_SUCCESS && got != VK_NOT_READY) { ++z.skipped; return; }
+            for (uint32_t i = 0; i < n; ++i)
+                if (!r[2 * i + 1]) { ++z.skipped; return; }
+            for (uint32_t i = 0; i + 1 < n; ++i)
+            {
+                const uint64_t d  = (r[2 * (i + 1)] - r[2 * i]) & t.mask;
+                const double   ms = d > (t.mask >> 1) ? 0.0 : static_cast<double>(d) * t.nsPerTick / 1.0e6;
+                AddRow(m.label[i], ms);
+            }
+            const uint64_t all = (r[2 * (n - 1)] - r[0]) & t.mask;
+            z.span += all > (t.mask >> 1) ? 0.0 : static_cast<double>(all) * t.nsPerTick / 1.0e6;
+            ++z.frames;
+            if (t.frame.last >= 0.0) { z.gpu += t.frame.last; ++z.gpuFrames; }
+        }
+
+        void ZonesWrite()
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration<double>(now - z.last).count() < 2.0) return;
+            if (z.frames)
+            {
+                static Row sorted[kRows];
+                std::copy(z.rows, z.rows + z.rowCount, sorted);
+                std::sort(sorted, sorted + z.rowCount, [](const Row& a, const Row& b) { return a.ms > b.ms; });
+                const double f = static_cast<double>(z.frames);
+                if (std::FILE* out = std::fopen("Logs/gpu-zones.txt", "ab"))
+                {
+                    std::fprintf(out, "GPU0 images %llu | du premier au dernier repere %.3f ms/image | image GPU entiere %.3f ms/image | "
+                                      "images sautees %llu, reperes en trop %llu, reperes hors file %llu\r\n",
+                                 static_cast<unsigned long long>(z.frames), z.span / f,
+                                 z.gpuFrames ? z.gpu / static_cast<double>(z.gpuFrames) : -1.0,
+                                 static_cast<unsigned long long>(z.skipped), static_cast<unsigned long long>(z.overflow),
+                                 static_cast<unsigned long long>(z.refused));
+                    for (uint32_t i = 0; i < z.rowCount; ++i)
+                        std::fprintf(out, "   %-46s %7.3f ms/image  (%.1f fois/image)\r\n", sorted[i].label, sorted[i].ms / f,
+                                     sorted[i].n / f);
+                    std::fclose(out);
+                }
+            }
+            ZonesClear();
+        }
+
+        bool Take(const char* name, uint32_t& index)
+        {
+            if (!z.active || !t.recording) return false;
+            MarkSlot& m = z.slots[z.slot];
+            if (m.count >= kMarks)
+            {
+                ++z.overflow;
+                return false;
+            }
+            index = m.count++;
+            Copy(m.label[index], name);
+            return true;
+        }
+
+        void Direct(VkCommandBuffer cmd, const char* name)
+        {
+            uint32_t i = 0;
+            if (!cmd || !Take(name, i)) return;
+            s.dapi->CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, z.slots[z.slot].pool, i);
+            Label(cmd, z.slots[z.slot].label[i]);
+        }
+
+        /// A l'ouverture de l'image (FrameGpuOpen) : l'image precedente de l'emplacement relue, sa reserve remise a zero,
+        /// le premier repere (la zone en cours).
+        void ZonesOpen(VkCommandBuffer main, uint32_t slot)
+        {
+            z.active = false;
+            LabelClose(main);   // une plage restee ouverte (image abandonnee) ne deborde pas sur la suivante
+            if (!z.on)
+            {
+                for (MarkSlot& m : z.slots) m.count = 0;
+                return;
+            }
+            if (!z.tried) z.ok = ZonesInit();
+            if (!z.ok || slot >= kFramesInFlight) return;
+            MarkSlot& m = z.slots[slot];
+            ZonesHarvest(m);
+            ZonesWrite();
+            s.dapi->CmdResetQueryPool(main, m.pool, 0, kMarks);
+            z.slot   = slot;
+            z.active = true;
+            Direct(main, z.zone);
+        }
+
+        /// A la fin de l'image (FrameGpuEnd, apres l'attente du thread d'enregistrement) : le dernier repere.
+        void ZonesEnd(VkCommandBuffer main)
+        {
+            if (!z.active) return;
+            Direct(main, "fin");
+            LabelClose(main);
+            z.active = false;
+        }
 
         /// A lane that has not run for a whole window reads as not run (-1), not as its old figures.
         bool Stale(const Ring& r) { return r.count == 0 || t.harvests > r.at + kGpuWindow; }
@@ -182,6 +418,7 @@ namespace wxlvk::native::present::detail
         s.dapi->CmdWriteTimestamp(main, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, sl.pool, kMainStart);
         sl.open     = true;
         t.recording = true;
+        ZonesOpen(main, slot);   // Claude GPU0
     }
 
     void FrameGpuPrePass(VkCommandBuffer pre, uint32_t slot)
@@ -197,6 +434,7 @@ namespace wxlvk::native::present::detail
     {
         if (!t.recording || slot != t.current || !main) return;
         GpuSlot& sl = t.slots[slot];
+        ZonesEnd(main);   // Claude GPU0
         s.dapi->CmdWriteTimestamp(main, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, sl.pool, kFrameEnd);
         sl.ended    = true;
         sl.breaks   = s.breaksThisFrame;
@@ -220,6 +458,46 @@ namespace wxlvk::native::present
         GpuSlot& sl = t.slots[t.current];
         s.dapi->CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, sl.pool, kLaneFirst + 2 * lane + 1);
         sl.lanes |= 1u << lane;
+    }
+
+    // Claude GPU0 (mesure seulement)
+    void SetGpuZones(bool on)
+    {
+        using namespace detail;
+        if (on == z.on) return;
+        z.on = on;   // pris en compte a l'ouverture de l'image suivante (sa reserve remise a zero d'abord)
+        ZonesClear();
+    }
+    bool GpuZonesOn() { return detail::z.on; }
+
+    void GpuZone(const char* name)
+    {
+        using namespace detail;
+        if (!z.on) return;
+        Copy(z.zone, name);
+        if (!z.active || !t.recording || !s.open || s.failed) return;
+        uint32_t i = 0;
+        if (!Take(name, i)) return;
+        MarkOp op = {};
+        op.pool  = z.slots[z.slot].pool;
+        op.index = i;
+        Copy(op.label, name);
+        VkCommandBuffer cmd = s.slots[s.fi].main;
+        if (wxlvk::recordthread::QueueOp(&RunMarkOp, cmd, &op, sizeof op)) return;
+        ++z.refused;
+        if (wxlvk::recordthread::Async())
+        {
+            wxlvk::recordthread::DrainTag("chrono GPU (repere hors file)");
+            wxlvk::recordthread::Drain();
+        }
+        RunMarkOp(cmd, &op);
+    }
+
+    void GpuMarkDirect(VkCommandBuffer cmd, const char* name)
+    {
+        using namespace detail;
+        if (!z.active) return;
+        Direct(cmd, name ? name : z.zone);
     }
 
     void GetGpuTimes(GpuTimes& out)

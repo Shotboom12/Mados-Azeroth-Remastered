@@ -4,7 +4,7 @@
 namespace HD::Fsr {
 class Core;
 namespace Runtime {
-// Step A of the integration: the AMD runtime is loaded and asked for its providers on the
+// Step A of the integration (POUR-CLAUDE.md): the AMD runtime is loaded and asked for its providers on the
 // device the game created, the device's features and formats are checked, and both statuses say what stands.
 // Nothing here changes an image: no context is created, no dispatch is recorded.
 void Startup();  // render thread, once the Vulkan device exists (CGxDeviceVulkan::DeviceCreate)
@@ -34,7 +34,7 @@ void NoteGenerationFailure(const char* why);
 // The generation ran (rendered frames / presents counted by AMD's swapchain over the last interval): the status
 // shows both, the generated ones being presents minus rendered frames -- never a faster simulation.
 void NoteGenerationRate(double renderedPerSecond, double shownPerSecond);
-// HD 2026-11-01 (Q1): share of the rendered frames whose object motion (M1) was composed, measured by the pass
+// Claude 2026-11-01 (Q1): share of the rendered frames whose object motion (M1) was composed, measured by the pass
 // over 120 frames; negative = M1 not asked. The statuses say it instead of "camera only".
 void NoteObjectMotion(double percent);
 }

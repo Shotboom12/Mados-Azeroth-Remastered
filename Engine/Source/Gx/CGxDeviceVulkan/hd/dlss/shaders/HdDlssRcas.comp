@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HD 2026-11-02 (DLSS): sharpening after DLSS, which has none of its own since SDK 310. The same robust contrast
+// Claude 2026-11-02 (DLSS): sharpening after DLSS, which has none of its own since SDK 310. The same robust contrast
 // adaptive sharpening (RCAS) FSR applies after its upscale, with the same strength curve, so hdFSRSharpness means
 // the same thing for both up to 1: con = exp2(-(2 - 2 * sharpness)). hdDLSSSharpness goes to 2: above 1, RCAS at
 // FSR's maximum and its change pushed further (boost 1..2), clamped to the displayable range.

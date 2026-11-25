@@ -64,7 +64,7 @@ private:
         uint32_t entry = 0xFFFFFFFFu;
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkPipelineLayout layout = VK_NULL_HANDLE;
-        bool bones = false, wind = false, failed = false;
+        bool bones = false, wind = false, failed = false, table = false;
     };
 
     static int __cdecl Wanted(void* self);

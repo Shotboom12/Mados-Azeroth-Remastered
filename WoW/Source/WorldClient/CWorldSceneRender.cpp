@@ -198,8 +198,7 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     { HD::CataRenderPerf::Scope hdShadowScope(HD::CataRenderPerf::Stage::Shadows); CShadowQuery::Update(); }
     CShaderEffect::UpdateProjMatrix();
     CWorldScene::ApplyFogState();
-    CWorldScene::RenderChunks();
-    CWorldScene::RenderMapObjDefGroups();
+    CWorldScene::RenderMapObjDefGroups(); // Claude ORDRE1: the ground first or last (CWorldScene::HdRenderGround)
     CWorldScene::RenderHorizon();
 
     if (CWorldScene::s_unk_ADF570.m_maxViewDepth >= 0.0f) {

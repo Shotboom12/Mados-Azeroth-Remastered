@@ -427,7 +427,7 @@ namespace
     {
         if (b.count == 0) return;
         const bool      inl = MainNamed(r);
-        VkCommandBuffer cmd = inl ? present::Outside() : present::PrePass();
+        VkCommandBuffer cmd = inl ? present::Outside("hors-passe Textures:430") : present::PrePass();
         const uint32_t  n   = cmd ? texture::RecordRegions(cmd, r.image, b.src, b.regions, b.count) : 0u;
         if (n)
         {
@@ -573,7 +573,7 @@ namespace
             // The chain under the transfer rule: inline when the main buffer named the image this
             // frame (the level-0 copy went inline too), else ahead of the frame's draws.
             const bool inlineChain = MainNamed(r);
-            VkCommandBuffer cmd = inlineChain ? present::Outside() : present::PrePass();
+            VkCommandBuffer cmd = inlineChain ? present::Outside("hors-passe Textures:576") : present::PrePass();
             if (cmd && texture::RecordGenerateMips(cmd, r.image))
             {
                 (inlineChain ? r.lastRef : r.prePass) = present::Serial();
@@ -588,6 +588,12 @@ namespace
 
 namespace wxlvk::native::impl
 {
+    bool TexReady(const void* tex)
+    {
+        void* t = const_cast<void*>(tex);
+        return !t || (!At<uint8_t>(t, gxdev::kTexNeedsRecreate) && RecOf(t));
+    }
+
     void __fastcall ITexMarkAsUpdated(void* device, void* edx, CGxTex* tex)
     {
         if (tex && tex == g_filling)

@@ -52,4 +52,9 @@ float StreamingDistance(float farClip,float cornerDistance,float nativeDistance)
 float EnvironmentScale(float nativeScale);
 float HorizonScale(float nativeScale);
 float LargeObjectFadeEnd(float nativeEnd);
+// Claude LV11 2026-11-14: the 2 /hd sliders "Objets : distance" (hdObjDist) and "Objets lumineux : distance" (hdLitObjDist).
+// ObjFadeEnd: fade end in yards of size level 0..2 (tiny, small, medium) at least this far, 0 = Normal (unchanged).
+// LitFadeEnd: yards the light of a lit map doodad is kept, 0 = Normal (Blizzard).
+float ObjFadeEnd(uint32_t level);
+float LitFadeEnd();
 }

@@ -86,7 +86,7 @@ namespace wxlvk::native::render::jitter
     void Apply(VkViewport& viewport)
     {
         if (!g.inWorld || !g.active || !wxlvk::native::present::OnBackBuffer()) return;
-        // HD 2026-11-01 (Q1): under FSR the sky / full-range draws are jittered too (AMD: jitter ALL rendering);
+        // Claude 2026-11-01 (Q1): under FSR the sky / full-range draws are jittered too (AMD: jitter ALL rendering);
         // the engine's own TAA path keeps skipping them.
         if (viewport.maxDepth >= 0.999f
 #ifdef WOWDECOMP_FSR

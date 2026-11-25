@@ -35,11 +35,11 @@ namespace
     /// The most records the table holds. The client's archives hold 1578 byte-distinct records across
     /// every archive; 2048 leaves room for custom patch archives and a re-run that splits a container.
     /// HD: 4096, for the HD materials' own records beside them (tools/bls_tools/hd_blobs.py, ~800).
-    constexpr uint32_t kMaxRecords = 4096;
+    constexpr uint32_t kMaxRecords = 16384;   // HD LV41 (Claude): was 4096
 
     /// The most name entries. 3105 names in the archives (every Name:perm plus the bare Name of each
     /// record 0), many folded onto shared records; 4096 is the bound. HD: 8192, with the HD records' names.
-    constexpr uint32_t kMaxNames = 8192;
+    constexpr uint32_t kMaxNames = 32768;     // HD LV41 (Claude): was 8192 (uint16 index, kNoName 0xFFFF)
 
     /// The manifest's place, relative to the DLL (src/common/ModulePath.hpp).
     constexpr const char* kManifestRelative = "shaders\\translated\\manifest.txt";

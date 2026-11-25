@@ -7,6 +7,6 @@ bool Prepare(NativeFrame,VkExtent2D actualRenderExtent,VkRect2D worldViewport,ui
 bool Shutdown(uint64_t completed);
 bool NeedsBeforeSpells();bool NeedsAfterSpells();bool ComposedFog(uint64_t serial);bool ComposedShafts(uint64_t serial);
 const char* Status();void Stop();uint64_t LastUsed();bool SafeAdvancedSetting(const char*);
-// HD 2026-11-02 lot L2: the loaded lamp catalogue (read only, scene/render thread), nullptr before Startup.
+// Claude 2026-11-02 lot L2: the loaded lamp catalogue (read only, scene/render thread), nullptr before Startup.
 const Source::LampCatalog* Catalogue();
 }

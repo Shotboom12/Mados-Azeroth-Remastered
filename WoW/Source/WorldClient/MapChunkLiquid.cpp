@@ -1,3 +1,5 @@
+#include <algorithm> // Claude B3
+#include <vector> // Claude B3
 #include "MapChunkLiquid.h"
 #include <cmath>
 #include "Engine/Source/Gx/CGxBuf.h"
@@ -283,8 +285,104 @@ CAaSphere* CChunkLiquid::GetSphere() {
     return &this->m_sphere;
 }
 
+// Claude B3: the chunks' water buffers share their pools, up to 64 buffers a page (native/Pools.cpp follows 64 drawn
+// ranges of a dynamic pool), so that draws with the same state go out as one (HdCataWater.cpp). A freed place is taken
+// again by a buffer of the same sizes; a page goes when its last buffer does.
+struct HdLiquidPage {
+    struct Slot {
+        uint32_t vertexAt, vertexBytes, indexAt, indexBytes;
+        bool     used;
+    };
+
+    // One page holds a whole view's water: the groups break where the page changes.
+    static const uint32_t kSlots = 1024, kVertexBytes = 4096 * 1024, kIndexBytes = 1024 * 1024;
+
+    CGxPool* vertexPool;
+    CGxPool* indexPool;
+    uint32_t vertexSize;
+    uint32_t vertexUsed, indexUsed, slotCount, live;
+    Slot     slots[kSlots];
+};
+
+static std::vector<HdLiquidPage*> s_hdLiquidPages;
+
+void HdPoolManyRanges(void* device, void* pool); // native/Pools.cpp (wxl)
+
+static HdLiquidPage* HdLiquidPlace(uint32_t vertexSize, uint32_t vertexBytes, uint32_t indexBytes, uint32_t& slot) {
+    if (vertexBytes > HdLiquidPage::kVertexBytes || indexBytes > HdLiquidPage::kIndexBytes) {
+        return nullptr;
+    }
+
+    for (HdLiquidPage* page : s_hdLiquidPages) {
+        if (page->vertexSize != vertexSize) {
+            continue;
+        }
+
+        for (uint32_t i = 0; i < page->slotCount; i++) {
+            HdLiquidPage::Slot& s = page->slots[i];
+            if (!s.used && s.vertexBytes == vertexBytes && s.indexBytes == indexBytes) {
+                s.used = true;
+                page->live++;
+                slot = i;
+                return page;
+            }
+        }
+    }
+
+    HdLiquidPage* page = nullptr;
+
+    for (HdLiquidPage* p : s_hdLiquidPages) {
+        if (p->vertexSize == vertexSize && p->slotCount < HdLiquidPage::kSlots && p->vertexUsed + vertexBytes <= HdLiquidPage::kVertexBytes && p->indexUsed + indexBytes <= HdLiquidPage::kIndexBytes) {
+            page = p;
+            break;
+        }
+    }
+
+    if (!page) {
+        page = new HdLiquidPage();
+        page->vertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic, HdLiquidPage::kVertexBytes, GxPoolHintBit_Unk3, "CChunkBuf_Vertex");
+        page->indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, HdLiquidPage::kIndexBytes, GxPoolHintBit_Unk3, "CChunkBuf_Index");
+        page->vertexSize = vertexSize;
+
+        // Its many buffers are drawn in any order: the device tells them apart (else a new one copies the whole page).
+        if (g_theGxDevicePtr->DeviceApi() == GxApi_Vulkan) {
+            HdPoolManyRanges(g_theGxDevicePtr, page->vertexPool);
+            HdPoolManyRanges(g_theGxDevicePtr, page->indexPool);
+        }
+
+        s_hdLiquidPages.push_back(page);
+    }
+
+    HdLiquidPage::Slot& s = page->slots[page->slotCount];
+    s.vertexAt = page->vertexUsed;
+    s.vertexBytes = vertexBytes;
+    s.indexAt = page->indexUsed;
+    s.indexBytes = indexBytes;
+    s.used = true;
+    page->vertexUsed += vertexBytes;
+    page->indexUsed += indexBytes;
+    page->live++;
+    slot = page->slotCount++;
+    return page;
+}
+
+static void HdLiquidRelease(HdLiquidPage* page, uint32_t slot) {
+    page->slots[slot].used = false;
+
+    if (--page->live) {
+        return;
+    }
+
+    g_theGxDevicePtr->PoolDestroy(page->vertexPool);
+    g_theGxDevicePtr->PoolDestroy(page->indexPool);
+    s_hdLiquidPages.erase(std::find(s_hdLiquidPages.begin(), s_hdLiquidPages.end(), page));
+    delete page;
+}
+
 // INLINED
 CMapChunkLiquidBuf::CMapChunkLiquidBuf() {
+    this->m_hdPage = nullptr; // Claude B3
+    this->m_hdSlot = 0;
     this->m_flags = 0;
     this->m_flushTimer = 0.0f;
     this->m_vertexDataSize = 0;
@@ -312,6 +410,11 @@ CMapChunkLiquidBuf::~CMapChunkLiquidBuf() {
         if (buf != g_theGxDevicePtr->BufStream(buf->m_pool->m_target, 0, 0)) {
             g_theGxDevicePtr->BufDestroy(buf);
         }
+    }
+
+    if (this->m_hdPage) { // Claude B3: its pools are the page's
+        HdLiquidRelease(this->m_hdPage, this->m_hdSlot);
+        return;
     }
 
     if (this->m_vertexPool) {
@@ -373,10 +476,13 @@ CMapChunkLiquidBuf* CMapChunkLiquidBuf::CreateBuf(uint32_t vertexCount, uint32_t
 
     CMapChunkLiquidBuf* buf = new (mem) CMapChunkLiquidBuf();
 
-    CGxPool* vertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic, vertexSize * vertexCount, GxPoolHintBit_Unk3, "CChunkBuf_Vertex");
-    CGxPool* indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, 2 * indexCount, GxPoolHintBit_Unk3, "CChunkBuf_Index");
-    CGxBuf* vertexBuf = g_theGxDevicePtr->BufCreate(vertexPool, vertexSize, vertexCount, 0);
-    CGxBuf* indexBuf = g_theGxDevicePtr->BufCreate(indexPool, 2, indexCount, 0);
+    // Claude B3: a place in a shared page (whole vertices of one size: the offsets are whole)
+    buf->m_hdPage = HdLiquidPlace(vertexSize, vertexSize * vertexCount, 2 * indexCount, buf->m_hdSlot);
+    const HdLiquidPage::Slot* slot = buf->m_hdPage ? &buf->m_hdPage->slots[buf->m_hdSlot] : nullptr;
+    CGxPool* vertexPool = slot ? buf->m_hdPage->vertexPool : g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic, vertexSize * vertexCount, GxPoolHintBit_Unk3, "CChunkBuf_Vertex");
+    CGxPool* indexPool = slot ? buf->m_hdPage->indexPool : g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, 2 * indexCount, GxPoolHintBit_Unk3, "CChunkBuf_Index");
+    CGxBuf* vertexBuf = g_theGxDevicePtr->BufCreate(vertexPool, vertexSize, vertexCount, slot ? slot->vertexAt : 0);
+    CGxBuf* indexBuf = g_theGxDevicePtr->BufCreate(indexPool, 2, indexCount, slot ? slot->indexAt : 0);
 
     buf->m_flushTimer = 0.0f;
     buf->m_indexDataSize = 2 * indexCount;

@@ -19,15 +19,8 @@ void main() {
     if(any(greaterThanEqual(pixel,size))) return;
     vec4 original=imageLoad(frame,pixel);
     vec3 c=pc.flags.x!=0u?original.bgr:original.rgb;
-    vec3 outColor;
-    // Algebraic integer form of uv.x < .5 and uv.x > .5 - 2/width.
-    // Keeps the exact centre on the right for odd widths, without reciprocal rounding.
-    int centre=2*pixel.x+1;
-    if(pc.grade.z>0.5 && centre<size.x) {
-        outColor=centre>size.x-4?vec3(1):c;
-    } else {
-        vec3 g=mix(Lut(lutA,c),Lut(lutB,c),pc.grade.x);
-        outColor=clamp(mix(c,g,pc.grade.y),0.0,1.0);
-    }
+    // AR1: grading always applied, no split-screen view (grade.z/w unused).
+    vec3 g=mix(Lut(lutA,c),Lut(lutB,c),pc.grade.x);
+    vec3 outColor=clamp(mix(c,g,pc.grade.y),0.0,1.0);
     imageStore(frame,pixel,vec4(pc.flags.x!=0u?outColor.bgr:outColor,original.a));
 }

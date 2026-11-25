@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdint>
 namespace HD::Fsr {
-struct Options {bool upscale=false,generate=false;uint32_t quality=1;float sharpness=.2f;bool dlss=false;}; // dlss: HD 2026-11-02, hdDLSS (WOWDECOMP_DLSS only)
+struct Options {bool upscale=false,generate=false;uint32_t quality=1;float sharpness=.2f;bool dlss=false;}; // dlss: Claude 2026-11-02, hdDLSS (WOWDECOMP_DLSS only)
 struct Readiness {
  bool vulkan=false,runtime=false,deviceFeatures=false,worldTarget=false,depth=false,motion=false;
  bool nativeUi=false,reactiveMasks=false,upscaleValidated=false,generationValidated=false,pacingSwapchain=false;

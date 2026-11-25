@@ -1,3 +1,4 @@
+#include "Engine/Source/Base/HdCpuF.h" // CPU-F R2: host write publication
 // Images: create them, fill them (uploads, clears, generated mip chains), and destroy them.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -227,6 +228,7 @@ namespace wxlvk::vk::texture
         submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers    = &s.cmd;
+        HD::CpuF::PublishHostWrites();
         r = d.QueueSubmit(s.queue, 1, &submit, s.fence);
         if (r != VK_SUCCESS) { Fail("vkQueueSubmit (clear)", r); return false; }
         r = d.WaitForFences(s.device, 1, &s.fence, VK_TRUE, UINT64_MAX);

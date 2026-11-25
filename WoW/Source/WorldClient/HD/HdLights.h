@@ -26,7 +26,9 @@ class CM2Light;
 
 namespace HD {
     // Lights one draw can take (4 pixel constants each).
-    const int32_t kLightsMax = 4;
+    // Claude LV40: 16 lights per ground draw under Vulkan (the HdTerrain SPIR-V modules loop over c16.z lights, kit-LV40);
+    // the D3D9 HLSL still reads 4 (HdTerrain.cpp clamps the count there). Was 4 (DX9 era): lights cut at chunk edges.
+    const int32_t kLightsMax = 16;
 
     // hdLights (0..3).
     int32_t LightsMode();
@@ -41,6 +43,11 @@ namespace HD {
     // ones that really light this ground win (the sphere only bounds the search: a chunk's sphere also holds what
     // stands on it and is much bigger than its ground).
     int32_t LightsForGround(CM2Scene* scene, const C3Vector& camera, const CAaSphere& sphere, const C3Vector* ground, int32_t groundCount, float* out);
+    // Claude 2026-11-04 lot T1: false only when this frame's lights are already gathered for this scene and none of them
+    // reaches the sphere (the very test LightsForGround makes first): it then picks no light, with or without ground points.
+    bool LightsGroundNeeded(CM2Scene* scene, const CAaSphere& sphere);
+    // Claude B3: the same test over the lights LightsForGround can pick (the Lumen lamps are none of them).
+    bool LightsGroundPossible(CM2Scene* scene, const CAaSphere& sphere);
 
 
     // Read-only export of the ALREADY gathered frame cache. Render thread only;
@@ -59,6 +66,13 @@ namespace HD {
 
     // A model's light leaves its scene (detached or freed): forget its last animated state.
     void LightsForget(const CM2Light* light);
+
+    // Claude LV39: a test set by Lumen (HdLumenBridge): true = Lumen lights the ground for the light at this world position
+    // itself, with its shadow cube (a lamp of its catalogue). hdLights 1 then leaves that one light out of the ground (no double
+    // light, no unshadowed copy over Lumen's shadows) and keeps every other (an NPC's torch, a fire, a lamp Lumen does not
+    // know): with hdLights 0 those fell back to 3.3.5's per-vertex light, which lights whole squares of terrain or nothing.
+    using LumenLampTest=bool(*)(const float position[3]);
+    void SetLumenLampTest(LumenLampTest);
 }
 
 #endif

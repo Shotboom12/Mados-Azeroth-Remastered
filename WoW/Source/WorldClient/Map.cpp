@@ -3,6 +3,9 @@
 #include "WoW/Source/WorldClient/HD/HdCataRenderPerf.h"
 #include "WoW/Source/WorldClient/HD/HdDetailDoodad.h"
 #include "Map.h"
+#include "WoW/Source/WorldClient/HD/HdGpuFixed.h"
+#include "WoW/Source/WorldClient/HD/HdGpuScene.h" // Claude voie B
+#include "WoW/Source/WorldClient/HD/HdCataMirror.h" // Claude LV31
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #if defined(_MSC_VER)
 #include <malloc.h>
@@ -1918,23 +1921,31 @@ void CMap::ProcessChunkLiquidUpdateList() {
 // VERIFY: cd78794a manual
 // OFFSET: 0x007B54A0
 void CMap::ProcessDetailDoodadUpdateList() {
+    // Claude 2026-11-04 lot C2: the ages are no longer counted one by one (the whole list, hdGrassKeep frames of grass,
+    // walked every frame). m_age holds the grass clock of the last draw and the list is in draw order (World.cpp puts a
+    // drawn instance at its tail), so the walk stops at the first instance not yet due: same frees, same order.
+    const uint32_t clock = ++HD::g_detailDoodadClock;
     CDetailDoodadInst* inst = CMap::s_detailDoodadUpdateList.Head();
     uint32_t keep = HD::DetailDoodadKeepFrames(); // HD: hdGrassKeep, 0 = native
     uint32_t keepBuffers = keep ? keep : 10;
     uint32_t keepInst = keep ? keep : 20;
 
     while (inst) {
+        const uint32_t age = clock - inst->m_age;
+
+        if (age <= keepBuffers) {
+            break; // every later instance was drawn later (younger)
+        }
+
         CDetailDoodadInst* next = CMap::s_detailDoodadUpdateList.Next(inst);
-        HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::GrassInsts); // HD: grass kept off screen
+        HD::CataRenderPerf::Add(HD::CataRenderPerf::Counter::GrassInsts); // HD: off-screen grass past hdGrassKeep (lot C2)
 
-        if (++inst->m_age > keepBuffers) {
-            if (inst->HasBatches()) {
-                inst->FreeBuffers();
-            }
+        if (inst->HasBatches()) {
+            inst->FreeBuffers();
+        }
 
-            if (inst->m_age > keepInst) {
-                CDetailDoodad::FreeInst(inst);
-            }
+        if (age > keepInst) {
+            CDetailDoodad::FreeInst(inst);
         }
 
         inst = next;
@@ -2104,7 +2115,7 @@ void CMap::PreUpdateAreas(bool addToScene) {
         for (int32_t i = lastPending; i >= 0; i--) {
             CMapArea* area = entries[i].m_area;
 
-            if (area->m_asyncObject && (entries[i].m_dist < 1111.1111f || (entries[i].m_dist < 71111.109f && !CWorldScene::FrustumCull(&area->m_bounds)))) {
+            if (area->m_asyncObject && (entries[i].m_dist < 1111.1111f || (entries[i].m_dist < 71111.109f && !CWorldScene::FrustumCull(&area->m_bounds) && !HD::CataMirrorOutside(area->m_bounds)))) { // Claude LV31
                 AsyncFileReadLinkObject(area->m_asyncObject, 1);
             }
         }
@@ -3167,6 +3178,7 @@ CMapDoodadDef* CMap::AllocDoodadDef() {
 // VERIFY: ef01a812 manual
 // OFFSET: 0x007C0240
 void CMap::FreeDoodadDef(CMapDoodadDef* doodadDef) {
+    HD::GpuFixed::Forget(doodadDef); HD::GpuScene::Forget(doodadDef);   // Claude voie B
     SI2::StopSound(&doodadDef->m_soundKitObject, 0, -1.0f, 1);
     doodadDef->m_lameAssLink.Unlink();
     CMap::doodadDefHash.Unlink(doodadDef);
@@ -3395,6 +3407,8 @@ CChunkLiquid* CMap::AllocChunkLiquid() {
 // VERIFY: c9309208 manual
 // OFFSET: 0x007C09F0
 void CMap::FreeBaseObjLink(CMapBaseObjLink* link) {
+    if (link->m_owner && (link->m_owner->m_type & 0x40)) { HD::GpuFixed::Forget(static_cast<CMapDoodadDef*>(link->m_owner)); HD::GpuScene::Forget(static_cast<CMapDoodadDef*>(link->m_owner)); }   // Claude voie B
+    if (link->m_owner && (link->m_owner->m_type & 0x40) && link->m_ref && (link->m_ref->m_type & 4)) ++static_cast<CMapChunk*>(link->m_ref)->m_hdLinkGen;   // Claude B4
     link->m_ownerLink.Unlink();
     link->m_refLink.Unlink();
     link->m_owner->m_refCount--;
@@ -3549,6 +3563,7 @@ void CMap::FreeBaseObjLinksInBounds(CAaBox* box) {
 // VERIFY: 86bfa752 auto
 // OFFSET: 0x007C1FF0
 void CMap::LinkObjectToMapObjDefGroup(CMapStaticEntity* object, CMapObjDefGroup* mapObjDefGroup) {
+    if (object->m_type & 0x40) { HD::GpuFixed::Forget(static_cast<CMapDoodadDef*>(object)); HD::GpuScene::Forget(static_cast<CMapDoodadDef*>(object)); }   // Claude voie B
     CMapBaseObjLink* link = CMap::AllocBaseObjLink(object);
     link->m_ref = mapObjDefGroup;
 
@@ -3567,6 +3582,7 @@ void CMap::LinkObjectToMapObjDefGroup(CMapStaticEntity* object, CMapObjDefGroup*
 // VERIFY: d4db675a auto
 // OFFSET: 0x007C2040
 bool CMap::LinkObjectToMapExterior(CMapStaticEntity* object) {
+    if (object->m_type & 0x40) { HD::GpuFixed::Forget(static_cast<CMapDoodadDef*>(object)); HD::GpuScene::Forget(static_cast<CMapDoodadDef*>(object)); }   // Claude voie B
     bool linked = false;
 
     if (CMap::bDungeon) {
@@ -3607,6 +3623,7 @@ bool CMap::LinkObjectToMapExterior(CMapStaticEntity* object) {
                 }
             } else if (object->m_type & 0x40) {
                 chunk->m_doodadDefLinkList.LinkToTail(link);
+                ++chunk->m_hdLinkGen;   // Claude B4
             }
 
             object->m_flags = static_cast<MapObjFlag>(object->m_flags | MAPOBJ_FLAG_EXTERIOR);

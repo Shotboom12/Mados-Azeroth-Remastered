@@ -1,3 +1,4 @@
+#include "native/record/RecordThread.hpp"
 // HD: Vulkan backend (gxApi vulkan). See CGxDeviceVulkan.h for the slot plan.
 //
 // The slots wxl-vulkan-api (WarcraftXL, GPL-3.0) implements forward to its functions in wxl/src/native/
@@ -14,6 +15,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 
 #include "native/Perf.hpp"
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/mt/HdVkRecordThread.h"
 #include "native/Render.hpp"
 #include "native/Slots.hpp"
 #include "native/render/DoodadBatch.hpp"
@@ -32,7 +34,7 @@
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanBloom.h" // HD: hdBloom / hdRays
 #include "Engine/Source/Gx/CGxDeviceVulkan/hd/HdVulkanGrade.h" // HD: hdGrade
 #ifdef WOWDECOMP_LUMEN
-#include "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvClient.h" // HD 2026-11-02: kit R1 lot L0 (Lumenveil R2)
+#include "Engine/Source/Gx/CGxDeviceVulkan/hd/lumen/LvClient.h" // Claude 2026-11-02: kit R1 lot L0 (Lumenveil R2)
 #include "wxl/Script.hpp"
 #include "native/Present.hpp"
 #include <cstdio>
@@ -127,10 +129,11 @@ CGxDeviceVulkan::CGxDeviceVulkan() {
 }
 
 CGxDeviceVulkan::~CGxDeviceVulkan() {
+    HD::VkRecordThread::Shutdown();
     HD::VulkanShadows::Shutdown(); // HD step 4: idempotent after DeviceDestroy
     HD::VulkanAO::Shutdown(); // HD: idempotent after DeviceDestroy
 #ifdef WOWDECOMP_LUMEN
-    LumenShutdown(); // HD 2026-11-02 kit R1 lot L0: idempotent after DeviceDestroy
+    LumenShutdown(); // Claude 2026-11-02 kit R1 lot L0: idempotent after DeviceDestroy
 #endif
     HD::VulkanFog::Shutdown(); // HD: idempotent
     HD::VulkanBloom::Shutdown(); // HD: idempotent
@@ -475,6 +478,7 @@ void CGxDeviceVulkan::DefaultTexUserFunc(EGxTexCommand command, uint32_t width, 
 // --- ported from wxl-vulkan-api (wxl/src/native/<file>.cpp) ----------------------------------------------------------
 
 void CGxDeviceVulkan::ITexMarkAsUpdated(CGxTex* texId) {
+    wxlvk::recordthread::DrainTag("ITexMarkAsUpdated"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::ITexMarkAsUpdated(this, nullptr, W<wd::CGxTex>(texId));               // Textures.cpp
 }
 
@@ -483,18 +487,22 @@ void CGxDeviceVulkan::IRsSendToHw(EGxRenderState which) {
 }
 
 void CGxDeviceVulkan::ICursorCreate(const CGxFormat& format) {
+    wxlvk::recordthread::DrainTag("ICursorCreate"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::ICursorCreate(this, nullptr, W<const wd::CGxFormat>(&format));          // Cursor.cpp
 }
 
 void CGxDeviceVulkan::ICursorDraw() {
+    wxlvk::recordthread::DrainTag("ICursorDraw"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::ICursorDraw(this, nullptr);                                            // Scene.cpp
 }
 
 int32_t CGxDeviceVulkan::DeviceCreate(GxWindowProc windowProc, const CGxFormat& format) {
+    HD::VkRecordThread::Initialize();
     CGxDevice::Log("CGxDeviceVulkan::DeviceCreate(): Vulkan device, log in Logs\\Vulkan.log");
     int32_t created = impl::DeviceCreate(this, nullptr, reinterpret_cast<WNDPROC>(windowProc), W<const wd::CGxFormat>(&format));   // Device.cpp
     wxlcompat::SeamsEnable(created != 0);
     if (created) HD::CataWater::Service::Startup(); // HD: Cata water, step A (hd/CataWaterService.h)
+    if (created) HD::VkRecordThread::EnableDefault(); // HD (Claude) lot MT4: MT2 on by default
     if (created) { HD::VulkanModelLights::Init(); HD::Lamp::Native::Init(); HD::Lamp::Owner::Init(); } // HD: hdModelLightTest diagnostic (hd/HdVulkanModelLights.h)
     if (created && !HD::VulkanShadows::Init()) { // HD step 4: hdSunShadows (hd/HdVulkanShadows.h)
         CGxDevice::Log("HD Vulkan sun shadows: initialization failed");
@@ -515,12 +523,13 @@ int32_t CGxDeviceVulkan::DeviceCreate(GxWindowProc windowProc, const CGxFormat& 
         CGxDevice::Log("HD Vulkan grade: initialization failed; grade unavailable");
     }
 #ifdef WOWDECOMP_LUMEN
-    if (created) LumenStartup(); // HD 2026-11-02 kit R1 lot L0: R2 owner, every hdLv* case OFF, no Prepare yet
+    if (created) LumenStartup(); // Claude 2026-11-02 kit R1 lot L0: R2 owner, every hdLv* case OFF, no Prepare yet
 #endif
     return created;
 }
 
 void CGxDeviceVulkan::DeviceDestroy() {
+    HD::VkRecordThread::Shutdown();
     if (!HD::VulkanShadows::Shutdown()) { // HD step 4: its serial must finish before the device goes
         CGxDevice::Log("HD Vulkan sun shadows: shutdown could not finish its serial; retry before device destruction");
         return;
@@ -530,7 +539,7 @@ void CGxDeviceVulkan::DeviceDestroy() {
         return;
     }
 #ifdef WOWDECOMP_LUMEN
-    if (!LumenShutdown()) { // HD 2026-11-02 kit R1 lot L0: R2 stages go before the native fog/bloom
+    if (!LumenShutdown()) { // Claude 2026-11-02 kit R1 lot L0: R2 stages go before the native fog/bloom
         CGxDevice::Log("HD Lumen R2: outstanding serial; retry before device destruction");
         return;
     }
@@ -557,60 +566,74 @@ void CGxDeviceVulkan::DeviceDestroy() {
 }
 
 void CGxDeviceVulkan::DeviceEvictResources() {
+    wxlvk::recordthread::DrainTag("DeviceEvictResources"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::DeviceEvictResources(this, nullptr);                                   // Device.cpp
 }
 
 int32_t CGxDeviceVulkan::DeviceSetFormat(const CGxFormat& format) {
+    wxlvk::recordthread::DrainTag("DeviceSetFormat"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     return impl::DeviceSetFormat(this, nullptr, W<const wd::CGxFormat>(&format)); // Device.cpp
 }
 
 void CGxDeviceVulkan::DeviceSetBaseMipLevel(uint32_t level) {
+    wxlvk::recordthread::DrainTag("DeviceSetBaseMipLevel"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::DeviceSetBaseMipLevel(this, nullptr, level);                           // Textures.cpp
 }
 
 void CGxDeviceVulkan::DeviceSetGamma(float gamma) {
+    wxlvk::recordthread::DrainTag("DeviceSetGamma"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::DeviceSetGammaLevel(this, nullptr, gamma);                             // Device.cpp
 }
 
 void CGxDeviceVulkan::DeviceSetGamma(const CGxGammaRamp& ramp) {
+    wxlvk::recordthread::DrainTag("DeviceSetGamma"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::DeviceSetGammaRamp(this, nullptr, W<const wd::CGxGammaRamp>(&ramp));   // Device.cpp
 }
 
 void CGxDeviceVulkan::DeviceReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels) {
+    wxlvk::recordthread::DrainTag("DeviceReadPixels"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::DeviceReadPixels(this, nullptr, W<wd::CiRect>(&rect), W<wd::TSGrowableArray>(&pixels));   // Targets.cpp
 }
 
 int32_t CGxDeviceVulkan::DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) {
+    wxlvk::recordthread::DrainTag("DeviceWM"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::DeviceWM(this, nullptr, static_cast<uint32_t>(wm), param1, param2);    // Device.cpp
     return 0;
 }
 
 void CGxDeviceVulkan::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint32_t plane) {
+    if (!(wxlvk::recordthread::OpsQueued() && impl::TargetsReady(this, W<wd::CGxTex>(texture)))) { wxlvk::recordthread::DrainTag("DeviceSetRenderTarget"); wxlvk::recordthread::Drain(); }   // Claude CPU-B: queued in order unless a texture is made here
     impl::DeviceSetRenderTarget(this, nullptr, static_cast<uint32_t>(buffer), W<wd::CGxTex>(texture), plane);   // Targets.cpp
 }
 
 void CGxDeviceVulkan::DeviceSaveDepthSurface() {
+    if (!wxlvk::recordthread::OpsQueued()) { wxlvk::recordthread::DrainTag("DeviceSaveDepthSurface"); wxlvk::recordthread::Drain(); }   // Claude CPU-B: reads the target only
     impl::CaptureDepthStencilSurface(this, nullptr);                             // Targets.cpp
 }
 
 void CGxDeviceVulkan::DeviceRestoreDepthSurface() {
+    if (!wxlvk::recordthread::OpsQueued()) { wxlvk::recordthread::DrainTag("DeviceRestoreDepthSurface"); wxlvk::recordthread::Drain(); }   // Claude CPU-B: its pass end queued in order
     impl::BindDepthStencilSurface(this, nullptr);                                // Targets.cpp
 }
 
 void CGxDeviceVulkan::DeviceResolveDepthBuffer(CGxTex* texture) {
+    if (!(wxlvk::recordthread::OpsQueued() && impl::TargetsReady(this, W<wd::CGxTex>(texture)))) { wxlvk::recordthread::DrainTag("DeviceResolveDepthBuffer"); wxlvk::recordthread::Drain(); }   // Claude CPU-B
     impl::DeviceResolveDepthBuffer(this, nullptr, W<wd::CGxTex>(texture));       // Targets.cpp
 }
 
 void CGxDeviceVulkan::DeviceCopyTex(CGxTex* source, uint32_t sourcePlane, CGxTex* dest, uint32_t destPlane) {
+    wxlvk::recordthread::DrainTag("DeviceCopyTex"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::DeviceCopyTex(this, nullptr, W<wd::CGxTex>(source), sourcePlane, W<wd::CGxTex>(dest), destPlane);   // Targets.cpp
 }
 
 void CGxDeviceVulkan::ScenePresent() {
+    wxlvk::recordthread::DrainTag("ScenePresent"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     HD::VulkanModelLights::Tick(); HD::Lamp::Native::Tick(); // HD: hdModelLightInfo status, no rendering
     impl::ScenePresent(this, nullptr);                                           // Scene.cpp
 }
 
 void CGxDeviceVulkan::SceneClear(uint32_t mask, CImVector color) {
+    if (!wxlvk::recordthread::OpsQueued()) { wxlvk::recordthread::DrainTag("SceneClear"); wxlvk::recordthread::Drain(); }   // Claude CPU-B: PassClearing queues the begin and the clear in order
     uint32_t bits;
     memcpy(&bits, &color, sizeof(bits));
     impl::SceneClear(this, nullptr, mask, bits);                                 // Scene.cpp
@@ -621,10 +644,12 @@ void CGxDeviceVulkan::Draw(CGxBatch* batch, int32_t count) {
 }
 
 void CGxDeviceVulkan::PoolSizeSet(CGxPool* pool, uint32_t size) {
+    wxlvk::recordthread::DrainTag("PoolSizeSet"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::PoolSizeSet(this, nullptr, W<wd::CGxPool>(pool), size);                // Pools.cpp
 }
 
 void CGxDeviceVulkan::PoolDestroy(CGxPool* pool) {
+    wxlvk::recordthread::DrainTag("PoolDestroy"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::PoolDestroy(this, nullptr, W<wd::CGxPool>(pool));                      // Pools.cpp
 }
 
@@ -641,63 +666,78 @@ void CGxDeviceVulkan::BufData(CGxBuf* buf, const void* data, uint32_t size, uint
 }
 
 void CGxDeviceVulkan::TexDestroy(CGxTex* texId) {
+    wxlvk::recordthread::DrainTag("TexDestroy"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::TexDestroy(this, nullptr, W<wd::CGxTex>(texId));                       // Textures.cpp
 }
 
 int32_t CGxDeviceVulkan::TexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane) {
+    wxlvk::recordthread::DrainTag("TexCopy"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     return impl::TexCopy(this, nullptr, W<wd::CGxTex>(dest), W<wd::C2iVector>(&destPos), W<wd::C2iVector>(&sourcePos), W<wd::C2iVector>(&size), level, plane) ? 1 : 0;   // Targets.cpp
 }
 
 int32_t CGxDeviceVulkan::TexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceRect, uint32_t level, uint32_t face) {
+    wxlvk::recordthread::DrainTag("TexStretch"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     return impl::TexStretch(this, nullptr, W<wd::CGxTex>(dest), W<wd::CiRect>(destRect), W<wd::CiRect>(sourceRect), level, face) ? 1 : 0;   // Targets.cpp
 }
 
 void CGxDeviceVulkan::QueryCreate(CGxQuery*& query, EGxQueryType type) {
+    wxlvk::recordthread::DrainTag("QueryCreate"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::QueryCreate(this, nullptr, reinterpret_cast<wd::CGxQuery**>(&query), static_cast<uint32_t>(type));   // Queries.cpp
 }
 
 void CGxDeviceVulkan::QueryDestroy(CGxQuery*& query) {
+    wxlvk::recordthread::DrainTag("QueryDestroy"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::QueryDestroy(this, nullptr, reinterpret_cast<wd::CGxQuery**>(&query));   // Queries.cpp
 }
 
 bool CGxDeviceVulkan::QueryBegin(CGxQuery* query) {
+    wxlvk::recordthread::DrainTag("QueryBegin"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     return impl::QueryBegin(this, nullptr, W<wd::CGxQuery>(query));              // Queries.cpp
 }
 
 bool CGxDeviceVulkan::QueryEnd(CGxQuery* query) {
+    wxlvk::recordthread::DrainTag("QueryEnd"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     return impl::QueryEnd(this, nullptr, W<wd::CGxQuery>(query)) != 0;          // Queries.cpp
 }
 
 bool CGxDeviceVulkan::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_t& data) {
+    wxlvk::recordthread::DrainTag("QueryGetParam"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     return impl::QueryGetParam(this, nullptr, W<wd::CGxQuery>(query), static_cast<uint32_t>(param), &data) != 0;   // Queries.cpp
 }
 
 bool CGxDeviceVulkan::QueryGetData(CGxQuery* query, uint32_t& data) {
+    wxlvk::recordthread::DrainTag("QueryGetData"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     return impl::QueryGetData(this, nullptr, W<wd::CGxQuery>(query), &data);     // Queries.cpp
 }
 
 void CGxDeviceVulkan::ShaderCreate(CGxShader** shaders, EGxShTarget target, const char* path, const char* name, uint32_t permutations) {
+    wxlvk::recordthread::DrainTag("ShaderCreate"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::ShaderCreate(this, nullptr, reinterpret_cast<wd::CGxShader**>(shaders), static_cast<uint32_t>(target), path, name, permutations);   // Shaders.cpp
 }
 
 void CGxDeviceVulkan::ShaderDestroy(CGxShader*& shader) {
+    wxlvk::recordthread::DrainTag("ShaderDestroy"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::ShaderDestroy(this, nullptr, reinterpret_cast<wd::CGxShader**>(&shader));   // Shaders.cpp
 }
 
 void CGxDeviceVulkan::IShaderCreate(CGxShader* shader) {
+    wxlvk::recordthread::DrainTag("IShaderCreate"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::IShaderCreate(this, nullptr, W<wd::CGxShader>(shader));                // Shaders.cpp
 }
 
 void CGxDeviceVulkan::CursorSetVisible(int32_t visible) {
+    wxlvk::recordthread::DrainTag("CursorSetVisible"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::CursorSetVisible(this, nullptr, visible);                              // Cursor.cpp
 }
 
 // --- stubs (wxl/src/native/Stubs.cpp) --------------------------------------------------------------------------------
 
 int32_t CGxDeviceVulkan::DeviceCreate(void* window, const CGxFormat& format) {
+    HD::VkRecordThread::Initialize();
     int32_t created = impl::DeviceCreateOnWindow(this, nullptr, static_cast<HWND>(window), W<const wd::CGxFormat>(&format));
     wxlcompat::SeamsEnable(created != 0);
     if (created) HD::CataWater::Service::Startup(); // HD: Cata water, step A (hd/CataWaterService.h)
+    if (created) HD::VkRecordThread::EnableDefault(); // HD (Claude) lot MT4: MT2 on by default
     if (created) { HD::VulkanModelLights::Init(); HD::Lamp::Native::Init(); HD::Lamp::Owner::Init(); } // HD: hdModelLightTest diagnostic (hd/HdVulkanModelLights.h)
     if (created && !HD::VulkanShadows::Init()) { // HD step 4: hdSunShadows (hd/HdVulkanShadows.h)
         CGxDevice::Log("HD Vulkan sun shadows: initialization failed");
@@ -718,16 +758,18 @@ int32_t CGxDeviceVulkan::DeviceCreate(void* window, const CGxFormat& format) {
         CGxDevice::Log("HD Vulkan grade: initialization failed; grade unavailable");
     }
 #ifdef WOWDECOMP_LUMEN
-    if (created) LumenStartup(); // HD 2026-11-02 kit R1 lot L0: R2 owner, every hdLv* case OFF, no Prepare yet
+    if (created) LumenStartup(); // Claude 2026-11-02 kit R1 lot L0: R2 owner, every hdLv* case OFF, no Prepare yet
 #endif
     return created;
 }
 
 void CGxDeviceVulkan::LogCrashInfo(char* buffer, uint32_t size) {
+    wxlvk::recordthread::DrainTag("LogCrashInfo"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::LogCrashInfo(this, nullptr, buffer, size);
 }
 
 void CGxDeviceVulkan::IShaderReload(CGxShader* shader, const char* path, const char* name) {
+    wxlvk::recordthread::DrainTag("IShaderReload"); wxlvk::recordthread::Drain();   // HD MT2: every slot but Draw / IRsSendToHw / BufLock / BufUnlock / BufData: the record thread idle first
     impl::IShaderReload(this, nullptr, W<wd::CGxShader>(shader), path, name);
 }
 

@@ -34,5 +34,5 @@ namespace wxlvk::native::render::framestats
     bool Get(WXL_VkFrameStats& out);
 
     /// The frame line (INFO).
-    void Log(const char* when);
+    void Log(const char* when, bool includeSession = true);
 }

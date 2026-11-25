@@ -6,7 +6,7 @@
 #include <cstdint>
 #include "wxl/VkRenderApi.h"
 
-namespace HD {struct ForeverFog;} // HD 2026-11-02 kit R1 lot L1
+namespace HD {struct ForeverFog;} // Claude 2026-11-02 kit R1 lot L1
 namespace HD::VulkanFog {
 // Append this exact point in wxl as documented; there is deliberately no BeforeUi fallback.
 constexpr uint32_t Point = 5;
@@ -58,6 +58,7 @@ void Record(const WXL_VkStageContext& ctx);
 bool Shutdown();
 bool CurrentScatter(uint64_t serial,VkImageView& view,VkExtent2D& extent);
 float ForeverFogHere(HD::ForeverFog& fog); // Forever fog at the camera and its weight (0 = none), read only
+float ForeverFogHereAt(HD::ForeverFog& fog,float bandTime); // Claude 2026-11-13 lot LV10: same place, any time (0-2880), clear weather
 bool ReferenceRequested();                 // hdFog asked this frame (the native fog may still skip)
 void SetSubpixelOffset(float x,float y);
 }

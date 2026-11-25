@@ -1,0 +1,7 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Claude OMBRE1: the horizontal blur (HdSunBlur.comp), see HdSunFlou.glsl. The vertical one is in HdSunApplyFused.
+#include "HdSunCommon.glsl"
+#include "HdSunFlou.glsl"
+void main(){ivec2 px=ivec2(gl_GlobalInvocationID.xy),last=imageSize(contactTarget)-1;if(any(greaterThan(px,last)))return;
+ vec2 v=flou(px,ivec2(1,0),last,linearDepth(px),texelFetch(lowEndpoint,px,0).a);imageStore(contactTarget,px,vec4(v,v.y,1));}

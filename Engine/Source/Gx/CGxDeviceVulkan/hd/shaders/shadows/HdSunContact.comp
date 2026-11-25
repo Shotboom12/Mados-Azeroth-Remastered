@@ -1,33 +1,108 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#define HD_SUN_ROT // HD (Claude) SH3: per-pixel PCSS tap rotation (see HdSunCommon.glsl)
+#ifdef HD_SUN_CONTACT_OPT
+// Claude LAT1, 18 nov 2026: the PCSS map reads are issued in batches in the optimized pass only (the contact ray
+// read-ahead was tried and dropped: the proof found ~1.5 contact pixels a frame differing); the original pass
+// (hdSunContactOpt 0) stays as it was, the reference of the proof (hdSunContactOpt 2).
+#extension GL_EXT_control_flow_attributes : require
+#define HD_SUN_LAT1
+#endif
 #include "HdSunCommon.glsl"
+// HD (Claude) OPT5, 4 nov 2026: same image, less work. (1) Grass pixels take v=1 below, so their contact ray is not
+// marched. (2) A facet fully turned away from the sun ends at the back-face value, which is never above a marched
+// result (that result is mix(1,s,strength) with s>=0, so >= 1-strength), so the march is skipped there too.
+// (3) The own-plane test is only worked out for a sample that would otherwise be a hit.
 void main(){ivec2 px=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(px,imageSize(contactTarget))))return;
  float z=linearDepth(px),v=1;
- if(z>0&&pc.flags.w!=0u){vec2 uv=(vec2(px)+.5)*c.screen.xy;vec3 p=pointAt(uv,z),n=normalAt(px,p),L=normalize(c.sun.xyz);
+ // HD (Claude) RM7 diag, 9 nov 2026: hdSunDebug 8 terrainAt (black = terrain), 9 class 1 alone (black), 10 class/5 (grey),
+ // 11 depth tag matching alone (black). Written raw, shown by the apply pass like view 2.
+ // 12 raw alpha 0, 13 plain bit, 14 mover bit, 15 interior bit, 19 albedo rgb grey, 20+k class k (all black = true)
+ if(pc.flags.x>=8u&&pc.flags.x<=25u){vec4 al=texelFetch(sceneAlbedo,px,0);uint raw=uint(al.a*255.0+.5),cls=raw&31u;float o=1;
+  if(pc.flags.x==8u)o=z>0&&terrainAt(px,z)?0:1;else if(pc.flags.x==9u)o=cls==1u?0:1;else if(pc.flags.x==10u)o=float(cls)/5.0;else if(pc.flags.x==11u)o=z>0&&matching(texelFetch(sceneNormal,px,0).w,z)?0:1;
+  else if(pc.flags.x==12u)o=raw==0u?0:1;else if(pc.flags.x==13u)o=(raw&128u)!=0u?0:1;else if(pc.flags.x==14u)o=(raw&64u)!=0u?0:1;else if(pc.flags.x==15u)o=(raw&32u)!=0u?0:1;
+  else if(pc.flags.x==19u)o=dot(al.rgb,vec3(1.0/3.0));else if(pc.flags.x>=20u)o=cls==pc.flags.x-20u?0:1;
+  imageStore(contactTarget,px,vec4(o,1,1,1));return;}
+ vec4 lo=vec4(0),hi=vec4(0);bool over=false,loose=false;
+ if(z>0){lo=texelFetch(lowEndpoint,px,0);hi=texelFetch(highEndpoint,px,0);over=overRecord(px,lo,hi,z);loose=!over&&looseGrass(px,lo,hi,z);}
+ // HD (Claude) SH3: rotation of the PCSS taps for this pixel (interleaved gradient noise)
+ {float a=6.2831853*fract(52.9829189*fract(dot(vec2(px),vec2(.06711056,.00583715))));sunRot=vec2(cos(a),sin(a));}
+ float ray=1,back=1; // HD (Claude) SH3: the contact ray and the back-face rule kept apart (v = their min, as before)
+#ifdef HD_SUN_CONTACT_OPT
+ // GPT: evaluate the regular receiver before contact. Below the lower blend
+ // endpoint the final mix selects 1.0 for the ray, so marching cannot affect it.
+ vec3 p,n,L;
+ float receiverSun=1;
+ if(z>0&&!over&&!loose){
+  vec2 uv=(vec2(px)+.5)*c.screen.xy;
+  p=pointAt(uv,z);n=normalAt(px,p);L=normalize(c.sun.xyz);
+  float nl=dot(n,L);
+  receiverSun=visibility(p+n*(c.settings.y+1.5*(1.0-smoothstep(.05,.35,nl))),lo.a<0,n,z);
+ }
+ if(z>0&&pc.flags.w!=0u&&!over&&!loose){
+#else
+ if(z>0&&pc.flags.w!=0u&&!over&&!loose){vec2 uv=(vec2(px)+.5)*c.screen.xy;vec3 p=pointAt(uv,z),n=normalAt(px,p),L=normalize(c.sun.xyz);
+#endif
+  // HD (Claude) O1: a facet that turns its back to the sun is in its own shadow, whatever the depth noise says. The ray test
+  // only caught it 60-90 % of the time past 100 yd and flickered with the FSR jitter (the waves); the own-plane rule below
+  // would have removed it altogether. Decided from the geometric normal, with a soft edge around the terminator.
+  bool backFace=false,fullBack=false;
+  if(c.extra.y>.5){vec3 ng=geometricNormal(px,p);if(dot(ng,ng)>.25){// HD (Claude) SH1, 6 nov 2026: close to the camera the terminator follows the smooth shading normal n (the one the game's
+  // own light uses), so a low-poly hill no longer goes dark facet by facet with a straight edge on every triangle; the
+  // true facet plane (ng) takes over between 100 and 200 yd, where it keeps the far rock faces free of waves (O1).
+  vec3 nt=mix(n,ng,smoothstep(100.0,200.0,z));if(dot(nt,nt)<.25)nt=ng;nt=normalize(nt);
+  float t=clamp((.10-dot(nt,L))/.20,0.0,1.0);
+  // HD (Claude) SH2, 7 nov 2026: a model that writes no smooth normal (big Tanaris rocks) had n==ng above, so SH1 could not
+  // help and every triangle turned from the sun went dark with a straight edge. Near the camera such a pixel keeps the
+  // game's own lighting (it shades the model with its real normals); the facet rule fades back in between 100 and 200 yd
+  // for the far waves (O1). A facet fully turned away still skips the contact ray, as before (OPT5): same cost.
+  // HD (Claude) SH5, 8 nov 2026: Max's choice: near the camera every surface (the terrain too: the dark zigzag line along
+  // the foot of the hills) keeps the game's own lighting; the facet rule only fades in between 100 and 200 yd (O1 waves).
+  // A facet fully turned away from the sun still skips the contact ray (OPT5): the game's lighting already shades it.
+  float k=smoothstep(100.0,200.0,z);
+  back=1.0-t*t*(3.0-2.0*t)*c.contact.z*k;backFace=true;fullBack=t>=1.0;}}
   vec3 a=p+n*c.settings.y+L*c.contact.y,b=a+L*c.sun.w;
-  if(a.z>0&&b.z>0){vec2 from=project(a),to=project(b),span=(to-from)/c.screen.xy;int steps=clamp(int(ceil(max(abs(span.x),abs(span.y)))),1,64);
-   float prev=-c.contact.y;
+  if(!fullBack&&a.z>0&&b.z>0
+#ifdef HD_SUN_CONTACT_OPT
+     &&!(receiverSun<=.6)
+#endif
+  ){vec2 from=project(a),to=project(b),span=(to-from)/c.screen.xy;int steps=clamp(int(ceil(max(abs(span.x),abs(span.y)))),1,64);
    for(int i=1;i<=steps;++i){float t=float(i)/steps;vec2 at=mix(from,to,t);if(any(lessThan(at,c.rect.xy))||any(greaterThan(at,c.rect.xy+1/c.rect.zw)))break;
     float rayZ=1/mix(1/a.z,1/b.z,t);ivec2 sp=ivec2(at/c.screen.xy);float surface=linearDepth(sp);float delta=rayZ-surface;
     float prevZ=1/mix(1/a.z,1/b.z,float(i-1)/steps);
-    // HD O1: a sample lying on the receiver's own plane (within D32 steps, a 0.2 % depth margin and
-    // 1.7 degrees of normal error along the ray) is the receiver itself, not an occluder. Far away a pixel and a
-    // D32 step are wider than the 5 cm start offset, and the surface read at the pixel centre came out in front
-    // of the ray: false shadow in waves that followed the camera and the jitter.
-    float nd=dot(pointAt((vec2(sp)+.5)*c.screen.xy,1),n),own=abs(nd)>1e-6?dot(p,n)/nd:-1;
-    bool ownPlane=c.extra.y>.5&&own>0&&abs(surface-own)<=2*depthStep(surface)+.002*surface+.03*t*c.sun.w;
-    if(surface>0&&delta>=0&&delta<c.contact.x+abs(prevZ-rayZ)&&!ownPlane){v=mix(1.0,smoothstep(.85,1.0,t),c.contact.z);break;}prev=surface>0?delta:-c.contact.y;
+    if(surface>0&&delta>=0&&delta<c.contact.x+abs(prevZ-rayZ)){
+     // HD (Claude) O1: a sample lying on the receiver's own plane (within D32 steps, a 0.2 % depth margin and
+     // 1.7 degrees of normal error along the ray) is the receiver itself, not an occluder. Far away a pixel and a
+     // D32 step are wider than the 5 cm start offset, and the surface read at the pixel centre came out in front
+     // of the ray: false shadow in waves that followed the camera and the jitter.
+     float nd=dot(pointAt((vec2(sp)+.5)*c.screen.xy,1),n),own=abs(nd)>1e-6?dot(p,n)/nd:-1;
+     bool ownPlane=c.extra.y>.5&&own>0&&abs(surface-own)<=2*depthStep(surface)+.002*surface+.03*t*c.sun.w;
+     // HD (Claude) RM6, 8 nov 2026 (Max): the ground of the hills no longer casts the contact ray's shadow (the dark
+     // zigzag along the foot of every hill). A terrain sample is skipped and the march goes on; grass, rocks, models,
+     // buildings and characters still shade as before.
+     if(!ownPlane&&!terrainAt(sp,surface)){ray=mix(1.0,smoothstep(.85,1.0,t),c.contact.z);break;}}
    }
   }
-  // HD O1: a facet that turns its back to the sun is in its own shadow, whatever the depth noise says. The ray test
-  // only caught it 60-90 % of the time past 100 yd and flickered with the FSR jitter (the waves); the own-plane rule above
-  // would have removed it altogether. Decided from the geometric normal, with a soft edge around the terminator.
-  if(c.extra.y>.5){vec3 ng=geometricNormal(px,p);if(dot(ng,ng)>.25){float t=clamp((.10-dot(ng,L))/.20,0.0,1.0);v=min(v,1.0-t*t*(3.0-2.0*t)*c.contact.z);}}
+  if(!backFace)back=1;
  }
- float sun=1;if(z>0){vec2 uv=(vec2(px)+.5)*c.screen.xy;vec4 lo=texelFetch(lowEndpoint,px,0),hi=texelFetch(highEndpoint,px,0);
+ float sun=1;if(z>0){vec2 uv=(vec2(px)+.5)*c.screen.xy;
   // HD: the grass takes the sun of the ground behind it, so it fades into the ground's shadow
-  if(overRecord(px,lo,hi,z)){vec4 nr=texelFetch(sceneNormal,px,0);vec3 n=dot(nr.xyz,nr.xyz)>.25?normalize(nr.xyz):vec3(0,0,-1);v=1;float rz=recordDepth(px);sun=visibility(pointAt(uv,rz)+n*c.settings.y,lo.a<0,n,rz);}
+  if(over){vec4 nr=texelFetch(sceneNormal,px,0);vec3 n=dot(nr.xyz,nr.xyz)>.25?normalize(nr.xyz):vec3(0,0,-1);v=1;float rz=recordDepth(px);sun=visibility(pointAt(uv,rz)+n*c.settings.y,lo.a<0,n,rz);}
   // (moved a yard towards the sun, out of its own tuft's shadow)
-  else if(looseGrass(px,lo,hi,z)){v=1;sun=visibility(pointAt(uv,z)+normalize(c.sun.xyz),false,vec3(0),z);}
-  else{vec3 p=pointAt(uv,z),n=normalAt(px,p);sun=visibility(p+n*c.settings.y,lo.a<0,n,z);}}
+  else if(loose){v=1;sun=visibility(pointAt(uv,z)+normalize(c.sun.xyz),false,vec3(0),z);}
+  else{
+#ifdef HD_SUN_CONTACT_OPT
+   sun=receiverSun;
+#else
+   vec3 p=pointAt(uv,z),n=normalAt(px,p);
+   // HD (Claude) SH4, 7 nov 2026: a slope seen by the sun at a grazing angle (smooth normal almost across the light) is
+   // looked up 1.5 yd out along that normal: the hill's own coarse triangles in the map no longer shade it one facet at a
+   // time (grey triangles); there the smooth terminator above (SH1, back-face rule) does the shading. Ground facing the
+   // sun (flat sand, n.L >= .35) keeps the plain normal bias, so the start of a cast shadow does not move.
+   float nl=dot(n,normalize(c.sun.xyz));sun=visibility(p+n*(c.settings.y+1.5*(1.0-smoothstep(.05,.35,nl))),lo.a<0,n,z);
+#endif
+   // HD (Claude) SH3, 7 nov 2026: where the shadow map already sees the blocker (sun below .95: a hill, a rock in the map),
+   // its soft penumbra wins over the contact ray, which only knows hit or miss and cut the start of the hill's shadow with a
+   // hard edge. Where the map sees nothing (sun ~1: grass, small details), the contact ray works as before.
+   ray=mix(ray,1.0,1.0-smoothstep(.6,.95,sun));v=min(ray,back);}}
  imageStore(contactTarget,px,vec4(v,sun,sun,1));}

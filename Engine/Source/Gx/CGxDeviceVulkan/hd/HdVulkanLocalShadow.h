@@ -18,6 +18,7 @@ struct alignas(16) Parameters {
 };
 static_assert(sizeof(Parameters)==544 && offsetof(Parameters,flags)==528,"std140 local shadow parameters");
 bool BuildMatrices(const Light& light,float (&matrices)[6][16]);
+bool BuildMatricesUpTo(const Light& light,float maxRadius,float (&matrices)[6][16]); // Claude LV35
 uint32_t Face(Vec3 direction);
 bool Project(const Light& light,const float (&matrices)[6][16],Vec3 point,uint32_t& face,float& u,float& v,float& depth);
 bool Prepare(const WXL_VkStageContext& ctx,const Snapshot& map,uint32_t mode,float compareBias,Parameters& params);

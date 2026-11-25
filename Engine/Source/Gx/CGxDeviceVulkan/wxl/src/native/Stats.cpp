@@ -32,6 +32,7 @@
 #include "wxl/Script.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 
 // By default the extension logs errors, warnings and one summary line when the device is destroyed.
 // WXL_VK_STATS=1 adds the detailed counters: one block about once a minute, and one at the end.
@@ -45,6 +46,15 @@ namespace
     /// Presents between two saves of the pipeline cache (and two stats blocks): about a minute at
     /// 60 fps.
     constexpr uint64_t kStatsEvery = 3600;
+
+    bool FrameLogWanted()
+    {
+        static const bool enabled = [] {
+            const char* setting = std::getenv("WXL_VK_FRAME_LOG");
+            return setting && setting[0] == '1' && setting[1] == '\0';
+        }();
+        return enabled;
+    }
 
     /// Every module's counters, in the order a reader of the log wants them.
     void LogStats()
@@ -102,13 +112,15 @@ namespace wxlvk::native
         // The frame's figures and the memory budget (wxl.vk.render GetFrameStats, GetMemoryBudget), every present.
         wxlvk::native::render::framestats::OnPresent(presents);
         wxlvk::native::render::budget::OnPresent(presents);
+        if (FrameLogWanted() && presents && presents % present::kGpuWindow == 0)
+            wxlvk::native::render::framestats::Log("mesure GPU", false);
         if (presents % kStatsEvery != 0) return;
         if (wxlvk::settings::StatsWanted())
         {
             LogStats();
             wxlvk::vk::context::LogValidationSummary();
         }
-        pipelines::SavePipelineCache();
+        pipelines::SavePipelineCache(true);   // Claude SAUV1: off the main thread
     }
 
     void OnDeviceDestroy()

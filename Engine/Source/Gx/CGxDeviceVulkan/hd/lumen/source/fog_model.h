@@ -222,8 +222,26 @@ float LowSunWeight(float sunElevation);
 float NightWeight(float sunElevation);
 float LampNightWeight(float sunElevation);
 float LampDayShare(const Config& cfg, float sunElevation);
+// Claude 2026-11-05 lot J2: the lamps follow the clock, not the sun (the HD sun only sets at the 22:10 sun/moon
+// handover): 1 until 6:00, off at 7:00, starting at 21:30, full at 22:00 (same hours as HD::ExtraLamps::NightAtDay).
+float LampHourWeight(float dayFraction);
+float LampDayShareAt(const Config& cfg, float dayFraction);
 float LampFogDensityGain(float nearGroundDensity);
 float LampNearCameraShare(float cameraYards);
+// Claude 2026-11-13 lot LV10 (hdLvDensityAdapt): how foggy this place is at one hour of its day, clear weather, per unit
+// of Lumenveil density: For Ever near-ground density (or the 3.3.5 haze + ground fog from the zone fog distance), with
+// the fog banks of the hour, the evening haze and the morning mist (same rules as BuildFogParams). 0 = unknown.
+float DayFogIndex(const Config& cfg, float authoredNear, float fogDistance, float dayFraction, float dry);
+struct AdaptiveDensityInfo
+{
+    bool valid = false;
+    float clearestHour = 0.0f, foggiestHour = 0.0f, ratio = 1.0f, now = 1.0f, multiplier = 1.0f;
+};
+// The Lumenveil density multiplier for now: userDensity at the clearest moment of this place's day, x1 at its foggiest,
+// smooth in between (power law), and never a morning clearer than noon: when the day varies less than userDensity^(4/3),
+// the foggiest moment keeps a little more than x1. authored/fogDistance: 48 samples (every 30 game minutes) + now.
+float AdaptiveDensity(const Config& cfg, float userDensity, const float* authored, const float* fogDistance,
+                      float nowFraction, float dry, AdaptiveDensityInfo* info);
 void SceneLight(const FrameInputs& in, float* light);
 void AlbedoPerSceneLight(const FrameInputs& in, float* albedoPerLight);
 float SelfLitShare(const FrameInputs& in);

@@ -26,6 +26,7 @@ void Initialize(){
  if(initialized)return;
  auto*t=CVar::Register("hdCataHorizonIndex","HD: Cata-style WDL WMO spatial selection, 0 native; built at map load",1,"0",Toggle,CATEGORY_GRAPHICS,false,nullptr,false);
  auto*v=CVar::Register("hdCataHorizonVerify","HD: compare every omitted WDL WMO to native frustum; fallback on first mismatch (debug cost)",1,"0",Verify,CATEGORY_GRAPHICS,false,nullptr,false);
+ {static bool hdDef1Once=false;if(!hdDef1Once){hdDef1Once=true;if(v&&v->m_intValue!=0)v->InternalSet("0",true,false,false,false);}} // Claude DEF1: diagnostic journal off at every start (a test never leaves it on)
  info=CVar::Register("hdCataHorizonInfo","HD: index status and memory",0,"not loaded",nullptr,CATEGORY_GRAPHICS,false,nullptr,false);
  initialized=true;enabled=t&&t->m_intValue!=0;verify=v&&v->m_intValue!=0;Status("initialized");
 }

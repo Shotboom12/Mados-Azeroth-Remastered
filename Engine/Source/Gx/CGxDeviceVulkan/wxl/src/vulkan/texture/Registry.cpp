@@ -285,6 +285,7 @@ namespace wxlvk::vk::texture::detail
         s.owned[i]    = s.owned[last];
         s.owned[last] = Owned();
         --s.ownedCount;
+        NoteCount();
     }
 
     void FreeTables()

@@ -82,6 +82,8 @@ namespace wxlvk::native::render
         g_api.RequestDepthPyramid  = &RequestDepthPyramid;
         g_api.GetDepthPyramid      = &GetDepthPyramid;
         g_api.GetFrameStats        = &GetFrameStats;
+        g_api.GetTextureView       = &GetTextureView;   // Claude LV28
+        g_api.BeginReplayAside     = &BeginReplayAside;   // Claude CPU-A
 
         const bool seam = api->HookAttachByName(kGroundEffectPoint, reinterpret_cast<void*>(&GroundEffectPass),
                                                 reinterpret_cast<void**>(&g.groundEffectPass),

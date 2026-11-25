@@ -1,17 +1,27 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "HdSunCommon.glsl"
+#ifdef HD_SUN_FUSED
+// Claude OMBRE1: the vertical blur is worked out here (the same 8-bit value the blur pass would have stored), one pass less.
+#include "HdSunFlou.glsl"
+vec2 shadowAt(ivec2 px,float z,float la){vec2 v=flou(px,ivec2(0,1),textureSize(contactSource,0)-1,z,la);return floor(clamp(v,0.0,1.0)*255.0+.5)/255.0;}
+#else
+vec2 shadowAt(ivec2 px,float z,float la){return texelFetch(contactSource,px,0).rg;}
+#endif
 void main(){ivec2 px=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(px,imageSize(sceneColour))))return;
  vec2 frameUv=(vec2(px)+.5)*c.screen.xy;if(any(lessThan(frameUv,c.rect.xy))||any(greaterThanEqual(frameUv,c.rect.xy+1/c.rect.zw)))return;
  vec4 colour=imageLoad(sceneColour,px);float z=linearDepth(px);vec4 lo=texelFetch(lowEndpoint,px,0),hi=texelFetch(highEndpoint,px,0);
  bool valid=z>0&&matching(lo.a,z)&&matching(hi.a,z)&&lo.a*hi.a>0;
+ // HD (Claude) RM7 diag: views 8..11 written by the contact pass, shown on every pixel with a depth
+ if(pc.flags.x>=8u&&pc.flags.x<=25u){if(z>0)imageStore(sceneColour,px,vec4(vec3(texelFetch(contactSource,px,0).r),colour.a));return;}
  // HD: the grass over the ground: darkened by the ground's sun behind it (yellow in the coverage view)
- if(overRecord(px,lo,hi,z)||looseGrass(px,lo,hi,z)){float g=texelFetch(contactSource,px,0).g;vec3 rgb=colour.rgb*mix(1.0,mix(c.contact.w,1.0,g),c.settings.w);
+ if(overRecord(px,lo,hi,z)||looseGrass(px,lo,hi,z)){float g=shadowAt(px,z,lo.a).g;vec3 rgb=colour.rgb*mix(1.0,mix(c.contact.w,1.0,g),c.settings.w);
   if(pc.flags.x==4u)rgb=vec3(1,1,0);else if(pc.flags.x==1u||pc.flags.x==3u)rgb=vec3(g);else if(pc.flags.x==7u)rgb=colour.rgb;
   imageStore(sceneColour,px,vec4(rgb,colour.a));return;}
  if(!valid){if(pc.flags.x==4u)imageStore(sceneColour,px,vec4(1,0,1,colour.a));return;}
- float sun=texelFetch(contactSource,px,0).g;
- float contact=texelFetch(contactSource,px,0).r;float visible=min(sun,contact);
+ vec2 blurred=shadowAt(px,z,lo.a); // Claude OMBRE1
+ float sun=blurred.g;
+ float contact=blurred.r;float visible=min(sun,contact);
  vec3 delta=mix(lo.rgb,hi.rgb,visible); // Endpoint RGB is in engine RGB, unlike byte-swizzled scene storage.
  if(c.jitter.z>.5)delta=delta.bgr;
  vec3 rgb=colour.rgb+delta*c.settings.w;

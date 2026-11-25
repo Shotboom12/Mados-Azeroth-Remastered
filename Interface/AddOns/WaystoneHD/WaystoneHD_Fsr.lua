@@ -2,7 +2,7 @@
 -- 2 nov 2026 : panneau complet. Le FSR tourne par le chemin teste et valide en jeu (hdFSRTest 2) :
 -- des que la mise a l'echelle ou la generation d'images est cochee, hdFSRTest passe a 2 ; les deux decochees -> 0.
 -- M4 (vent) reste toujours coupe : il fait sautiller les feuillages (systeme de vent jamais demarre).
--- 2 nov 2026 : case DLSS (hdDLSS, NVIDIA RTX). DLSS remplace le FSR pour la mise a l'echelle (memes entrees) ;
+-- 2 nov 2026 (Claude) : case DLSS (hdDLSS, NVIDIA RTX). DLSS remplace le FSR pour la mise a l'echelle (memes entrees) ;
 -- les deux cases s'excluent ; la generation d'images reste celle du FSR. Case grisee si l'exe n'a pas DLSS.
 local window, checks = nil, {}
 local names = { [0] = "Native AA (anti-crenelage, pas de gain de FPS)", [1] = "Qualite", [2] = "Equilibre", [3] = "Performance" }

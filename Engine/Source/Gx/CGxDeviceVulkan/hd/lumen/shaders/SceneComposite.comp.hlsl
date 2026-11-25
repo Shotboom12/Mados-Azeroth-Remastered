@@ -236,7 +236,24 @@ float4 LowRes(float2 local,float viewZ,out float3 halo){
  uint cls=((uint)round(material.a*255))&31;
  float decoded=tag>=.505&&tag<=.995?(tag-.505)/.49*16-4:0;
  bool covered=normal.w>.5&&(tag>=.999||(tag>=.505&&tag<=.995&&abs(decoded-clamp(log2(max(z,.0625)),-4,12))<=.03));
- if(covered&&cls>=1&&cls<=4){float3 albedo=material.rgb;float3 lit=Light.Load(int3(id.xy,0)).rgb;
+ // Claude LV11 hdLvLampView: why a surface takes or not the lamp light. magenta = class 0 or > 4, blue = depth tag or
+ // normal rejected, dark scene = no lamp light here, red = lamp light but PointGain ~0 (already saturated), green = added.
+ // Claude LV19 hdLvLampView 6: LampSurfaces' diagnostic output as colour (red reach, green class skipped, blue facing).
+ if(LvConstants[10].y>5.5&&!IsSky(raw)){result=saturate(Lamps.Load(int3((int2)local,0)).rgb);}
+ else
+ // Claude LV17 hdLvLampView 5: the normal LampSurfaces uses for a covered pixel (G-buffer, turned to the camera), as colour.
+ if(LvConstants[10].y>4.5&&!IsSky(raw)){if(covered&&dot(normal.xyz,normal.xyz)>1e-8){float3 n=normalize(normal.xyz);float3 at=ViewRayAtUnitDepth(float2(id.xy)+.5)*z;n=dot(n,at)>0?-n:n;result=n*.5+.5;}else result=float3(.5,.5,.5);}
+ // Claude LV17 hdLvLampView 4: the lamp light alone (LampSurfaces + blur output), grey scale, before the composite's gain.
+ else if(LvConstants[10].y>3.5&&!IsSky(raw)){float3 irr=max(Lamps.Load(int3((int2)local,0)).rgb,0);float g=dot(irr,float3(.2126,.7152,.0722));result=(1-exp(-g*4)).xxx;}
+ // Claude LV16 hdLvLampView 3: yellow = pixel judged thin by LampSurfaces (its .w facing code 1, kept by the blur).
+ else if(LvConstants[10].y>2.5&&!IsSky(raw)){result=Lamps.Load(int3((int2)local,0)).w>.75?float3(1,.9,0):before*.3;}
+ // Claude LV16 hdLvLampView 2: the base light term of the G-buffer (PointGain's base), as written by the draw.
+ else if(LvConstants[10].y>1.5&&!IsSky(raw)){if(cls<1||cls>4)result=float3(1,0,1);else if(!covered)result=float3(0,.35,1);else result=Light.Load(int3(id.xy,0)).rgb;}
+ else if(LvConstants[10].y>0&&!IsSky(raw)){float3 irr=max(Lamps.Load(int3((int2)local,0)).rgb,0);
+ if(cls<1||cls>4)result=float3(1,0,1);else if(!covered)result=float3(0,.35,1);else if(!any(irr>0))result=before*.3;
+ else{float3 g=PointGain(Light.Load(int3(id.xy,0)).rgb,irr)*LvConstants[10].x;float m=max(g.r,max(g.g,g.b));
+ result=m<.002?float3(1,0,0):float3(0,.25+.75*saturate(m*4),0);}}
+ else if(covered&&cls>=1&&cls<=4){float3 albedo=material.rgb;float3 lit=Light.Load(int3(id.xy,0)).rgb;
  float3 irradiance=max(Lamps.Load(int3((int2)local,0)).rgb,0);
  // Preserve the already rendered scene; add only the selected lamp delta to its real material.
  if(any(irradiance>0))result=Gamma(Linear(before)+Linear(albedo)*PointGain(lit,irradiance)*LvConstants[10].x);

@@ -198,8 +198,8 @@ float InterleavedGradientNoise(float2 pixel)
 }
 
 
-static const float kLampSlots = 237;
-static const float kLampTableRows = 8;
+static const float kLampSlots = 497;            // Claude LV41: 256 lamps + 128 windows + 48 effects + 1 lantern + 64 far halos (was 237)
+static const float kLampTableRows = 10;         // Claude LV34: + kLampCubeRow; LV37: + kLampCubeCentreRow
 static const float kLampSphereRow = 0;
 static const float kLampLightRow = 1;
 static const float kLampScreenRow = 2;
@@ -208,6 +208,8 @@ static const float kLampSurfaceRow = 4;
 static const float kLampViewRow = 5;
 static const float kLampEmitRow = 6;
 static const float kLampCoreRow = 7;
+static const float kLampCubeRow = 8;            // Claude LV34: x cube + 1, y radius, z fade, w 1 = wants a cube
+static const float kLampCubeCentreRow = 9;      // Claude LV37: xyz where the cube was drawn (view), w its near (< 0: all faces)
 
 float SlotU(float slot)
 {

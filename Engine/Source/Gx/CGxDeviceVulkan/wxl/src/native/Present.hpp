@@ -166,16 +166,37 @@ namespace wxlvk::native::present
      *        records the rest as before
      * @return VkCommandBuffer cmd : as Pass()
      */
-    VkCommandBuffer PassClearing(const PassClear& clear, uint32_t& folded);
+    VkCommandBuffer PassClearing(const PassClear& clear, uint32_t& folded, bool* queued = nullptr);
+    /// Claude CPU-B: after PassClearing set *queued: the clear's rest, queued in order. False: drain, then record it.
+    bool QueueClear(uint32_t n, const VkClearAttachment* a, const VkClearRect& r);
 
     /**
      * The main command buffer OUTSIDE any render pass, for an inline transfer: ends the pass if
      * one is open, which is a pass break, counted. Null without a frame.
      */
-    VkCommandBuffer Outside();
+    VkCommandBuffer Outside(const char* tag = nullptr);   ///< Claude CPU-E (measure): `tag` names the drain it may wait for
+
+    /// Claude CPU-E (hdVkCopyQueue): Outside() without the drain -- the pass, if one is open, ended by a queued op (a pass
+    /// break, counted as Outside() counts it). False: not possible now (no frame, the queue off or full): nothing done, the
+    /// caller does the original (Outside(), then records).
+    bool OutsideQueued();
+    /// Claude CPU-E, after OutsideQueued(): CopySunShadowLayers' commands (for the colour then the depth: source to
+    /// TRANSFER_SRC, destination to TRANSFER_DST, the copy, both to SHADER_READ_ONLY) queued as one op, computed here from the
+    /// layouts the queue will have (the overlay). `images` = source colour, source depth, destination colour, destination
+    /// depth. False when a source's layout is UNDEFINED there: nothing queued, as the original refuses.
+    bool QueueLayerCopies(wxlvk::vk::texture::Image* const images[4]);
 
     /// The frame's pre-pass transfer command buffer, begun on first use. Null without a frame.
     VkCommandBuffer PrePass();
+
+    /// Claude CPU-A: the most aside segments a frame takes (capture/Aside.hpp).
+    constexpr uint32_t kMaxAsideSegments = 4;
+    /// Claude CPU-A, outside any pass: the main command buffer ended here and continued in a new one, returned; `aside`
+    /// (recorded elsewhere, ended before the submit) is submitted between the two. Null when it cannot be (no frame, a pass
+    /// open, the frame's segments all taken): nothing changed.
+    VkCommandBuffer SplitForAside(VkCommandBuffer aside);
+    /// Claude CPU-A: the main command buffer's current piece (null without a frame); no side effect.
+    VkCommandBuffer CurrentMain();
 
     /// Whether a frame is being recorded.
     bool FrameOpen();
@@ -409,7 +430,7 @@ namespace wxlvk::native::present
     };
 
     /// Makes `t` the current target; ends a pass open on another one (not counted as a break).
-    void SetTarget(const TargetDesc& t);
+    void SetTarget(const TargetDesc& t, bool queue = false);   ///< Claude CPU-B: queue = the open pass's end may be queued
 
     /// The current target.
     const TargetDesc& Target();
@@ -458,6 +479,11 @@ namespace wxlvk::native::present
      *         of this frame yet
      */
     bool SceneDepth(VkCommandBuffer cmd, VkImageLayout layout, VkImageView& view, VkFormat& format);
+
+    /// HD LV27: keeps the back depth (outside a pass) before the liquids, and puts it back after them. Restore does
+    /// nothing unless this frame's Save succeeded. False: nothing kept / nothing put back.
+    bool SaveSceneDepth(VkCommandBuffer cmd);
+    bool RestoreSceneDepth(VkCommandBuffer cmd);
 
 #ifdef WOWDECOMP_FSR
     // --- the FSR world target (src/native/present/WorldTarget.cpp) ---------------------------------------
@@ -628,4 +654,14 @@ namespace wxlvk::native::present
         uint32_t passBreaks = 0;   ///< the latest submitted frame's
     };
     void GetGpuTimes(GpuTimes& out);
+
+    // --- Claude GPU0 (17 nov 2026, MESURE SEULEMENT) : le temps GPU de l'image, zone par zone -----------------------
+    // hdGpuZones 1 : un horodatage GPU a chaque changement de zone (etapes du moteur, bandes du soleil, etapes HD,
+    // MidPasses), a sa place dans les commandes ; Logs\gpu-zones.txt toutes les 2 s. Eteint : aucune commande ajoutee.
+    void SetGpuZones(bool on);
+    bool GpuZonesOn();
+    /// Thread principal : la zone du moteur change (le repere passe par la file du thread d'enregistrement).
+    void GpuZone(const char* name);
+    /// Thread principal, en enregistrement direct (apres une attente) : `name` commence ici ; null = retour a la zone.
+    void GpuMarkDirect(VkCommandBuffer cmd, const char* name);
 }

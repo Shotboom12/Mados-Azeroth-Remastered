@@ -127,6 +127,8 @@ namespace wxlvk::vk::pipelines
      * overlay). Record() also forgets on its own when the command buffer handle changes.
      */
     void InvalidateBindings();
+    /// Claude CPU-B: InvalidateBindings without the drain: run by a queued pass begin on the record thread, in order.
+    void ResetBindings();
 
     /**
      * A render pass class was made (src/native/Present.cpp): remembers its formats, and builds
@@ -156,6 +158,7 @@ namespace wxlvk::vk::pipelines
         char                              vertPath[160] = {};   ///< under shaders/: the shadow variant
         char                              fragPath[160] = {};   ///< under shaders/: the pixel module, alpha-tested only; "" otherwise
         bool                              bones = false;
+        bool                              table = false;  ///< Claude B3: a terrain group's entry: its rows in set 2, the texture table in set 3 (the mirror)
         bool                              wind = false;   ///< a tree-wind entry: set 3, its push values at 0, the matrix at 16
     };
 
@@ -166,7 +169,16 @@ namespace wxlvk::vk::pipelines
      * @param bool alphaTest : with the entry's pixel module (its alpha test), else no fragment stage
      * @return bool ok : false when the entry has no shadow variant or cannot be described
      */
-    bool ShadowSourceFor(uint32_t entryIndex, bool alphaTest, ShadowSource& out);
+    bool ShadowSourceFor(uint32_t entryIndex, bool alphaTest, ShadowSource& out, bool multiFaces = false);   // Claude CUBES1: the .shadowmv.spv variant
+
+    /// Claude ANIM1: the .shadowskin.spv variant's sources (shadowskingen.py: the shadow variant that also keeps its clip
+    /// positions in set 3) -- no alpha test, no tree wind -- and the set layouts 0..2 its pipeline layout starts with (the
+    /// entry's set 0, the ring's, the palette's: set 2 is the palette's even for an entry without one, which never reads it).
+    bool ShadowSkinSourceFor(uint32_t entryIndex, ShadowSource& out, VkDescriptorSetLayout sets[3]);
+
+    /// Claude LV25: the cull mode and front face pipeline entry `entryIndex` draws with (its key's EGxCull, CullState);
+    /// false when it cannot be read (the caller then keeps both faces).
+    bool ShadowCullFor(uint32_t entryIndex, VkCullModeFlags& mode, VkFrontFace& front);
 
     /// HD: what a captured draw's MIRROR pipeline is built from (the Cata water's reflection,
     /// Engine/Source/Gx/CGxDeviceVulkan/hd/CataMirror.cpp): the shadow variant's vertex side (its clip position
@@ -258,6 +270,7 @@ namespace wxlvk::vk::pipelines
         uint64_t prewarmSkipped;      ///< persisted keys not pre-warmed (a module md5 no longer in the manifest, a failed build)
         uint64_t prewarmVerified;     ///< pre-warmed entries whose first draw resolved to the same sources
         uint64_t prewarmRebuilt;      ///< ... resolved to other sources and were rebuilt
+        uint64_t sourcesRebuilt;      ///< Claude PIPE1: built entries rebuilt because their shader names resolved to other modules since (HD terrain swap)
         uint64_t prewarmTicks;        ///< QPC ticks the pre-warm took
         uint32_t keysLoaded;          ///< entries read from pipeline-keys.bin
         uint64_t bufferBinds;         ///< vertex / index buffer binds recorded
@@ -310,10 +323,23 @@ namespace wxlvk::vk::pipelines
      * temporary file and a rename) when pipelines were built since the last save or the load, and
      * the list of built keys beside it (pipeline-keys.bin, the pre-warm's input). Cheap when
      * nothing changed.
+     * Claude SAUV1: background = true (the stats line, every 3600 presents) reads and writes both
+     * files on a thread of their own: the 66 MB cache written during a present was a 70 ms hitch
+     * about once a minute. false (exit) waits for that thread and saves on the caller.
      */
-    void SavePipelineCache();
+    void SavePipelineCache(bool background = false);
 
     /// The persisted VkPipelineCache, for pipelines built outside this module (the rendering API's
     /// consumers); VK_NULL_HANDLE before Init() or when it could not be made.
     VkPipelineCache PipelineCache();
+
+    /// Claude voie B: set 2's layout (the bone palette, one dynamic storage buffer); VK_NULL_HANDLE without the palette ring.
+    VkDescriptorSetLayout BonesLayout();
+
+    /// Claude B3 (pipelines/Table.cpp): one table of sampled images, bound whole as set 3 of the terrain's groups. Engine
+    /// thread. Place: the image's slot with the sampler a world draw of these engine flags takes (RecordInputs.cpp
+    /// Textures), made on first use and kept until long unused; -1 when the image is not drawable from a table.
+    bool TableReady();
+    int32_t TablePlace(const wxlvk::vk::texture::Image& image, uint32_t texFlags);
+    VkDescriptorSet TableSet();
 }

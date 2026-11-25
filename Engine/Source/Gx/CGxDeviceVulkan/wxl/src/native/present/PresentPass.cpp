@@ -1,3 +1,5 @@
+#include "Engine/Source/Base/HdCpuF.h" // CPU-F R2: host write publication
+#include "native/record/RecordThread.hpp"
 // The present pass (scale, gamma LUT), and finishing a frame.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -15,6 +17,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "native/present/Internal.hpp"
+#include "capture/Aside.hpp"   // Claude CPU-A
 
 namespace wxlvk::native::present::detail
 {
@@ -374,6 +377,9 @@ namespace wxlvk::native::present::detail
     /// Ends, submits and (if an image was acquired) presents the open frame.
     void FinishFrame(bool visible)
     {
+        if (wxlvk::recordthread::Async()) { wxlvk::recordthread::DrainTag("fin d image (soumission)"); wxlvk::recordthread::Drain(); }   // HD MT2: the record thread idle first
+        // Claude CPU-A: the replay thread's segments recorded and ended before anything is submitted.
+        if (!wxlvk::capture::aside::Join()) { if (s.open) Fail("CPU-A: an aside segment could not be recorded", VK_ERROR_INITIALIZATION_FAILED); return; }
         if (!s.open) return;
         const context::Handles* h = context::Get();
         const loader::Device&   d = *s.dapi;
@@ -416,7 +422,7 @@ namespace wxlvk::native::present::detail
             s.swapLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         }
 
-        VkCommandBuffer buffers[2];
+        VkCommandBuffer buffers[2 + 2 * kMaxAsideSegments];
         uint32_t        count = 0;
         if (s.preBegun)
         {
@@ -425,6 +431,8 @@ namespace wxlvk::native::present::detail
             if (r != VK_SUCCESS) return Fail("vkEndCommandBuffer (pre-pass)", r);
             buffers[count++] = slot.pre;
         }
+        for (uint32_t i = 0; i < slot.chainCount; ++i) buffers[count++] = slot.chain[i];   // Claude CPU-A
+        slot.chainCount = 0;
         VkResult r = d.EndCommandBuffer(slot.main);
         if (r != VK_SUCCESS) return Fail("vkEndCommandBuffer", r);
         buffers[count++] = slot.main;
@@ -453,6 +461,7 @@ namespace wxlvk::native::present::detail
         }
         wxlvk::host::SubmitExtras hostLink;   // WXL_HOST: a composite's timeline wait and signal; else nothing
         wxlvk::host::DecorateSubmit(submit, hostLink);
+        HD::CpuF::PublishHostWrites();
         r = d.QueueSubmit(h->graphicsQueue, 1, &submit, slot.fence);
         wxlvk::host::AfterSubmit(hostLink, r == VK_SUCCESS);
         if (r != VK_SUCCESS) return Fail("vkQueueSubmit", r);

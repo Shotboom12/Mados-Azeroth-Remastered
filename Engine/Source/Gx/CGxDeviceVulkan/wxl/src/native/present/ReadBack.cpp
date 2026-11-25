@@ -1,3 +1,5 @@
+#include "Engine/Source/Base/HdCpuF.h" // CPU-F R2: host write publication
+#include "native/record/RecordThread.hpp"
 // The present path's targets, copies and read-backs.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -15,6 +17,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "native/present/Internal.hpp"
+#include "capture/Aside.hpp"   // Claude CPU-A
 
 using namespace wxlvk::native::present::detail;
 
@@ -22,14 +25,16 @@ namespace wxlvk::native::present
 {
     // --- targets, copies, read-back -------------------------------------------------------------------
 
-    void SetTarget(const TargetDesc& t)
+    void SetTarget(const TargetDesc& t, bool queue)
     {
         if (SameTarget(t, s.target)) return;
-        EndPass();
+        EndPass(queue);   // Claude CPU-B
         s.target = t;
     }
 
     const TargetDesc& Target() { return s.target; }
+
+    bool QueueClear(uint32_t n, const VkClearAttachment* a, const VkClearRect& r) { return detail::QueueClear(n, a, r); }
 
     bool OnBackBuffer() { return s.passOpen ? s.passColour.back : s.target.colour == nullptr; }
 
@@ -148,6 +153,65 @@ namespace wxlvk::native::present
         return true;
     }
 
+    // HD LV27 (Claude 2026-11-15): the back depth kept before the liquids and put back after them, so the Cata water can
+    // write its depth for the lamp reflections (hdLvWaterLamps) while every later pass reads the depth it read before.
+    namespace
+    {
+        void CopyDepth(VkCommandBuffer cmd, VkImage from, VkImage to)
+        {
+            VkImageCopy c = {};
+            c.srcSubresource.aspectMask = AspectOf(s.depthFormat);
+            c.srcSubresource.layerCount = 1;
+            c.dstSubresource            = c.srcSubresource;
+            c.extent                    = VkExtent3D{ s.depthExtent.width, s.depthExtent.height, 1 };
+            s.dapi->CmdCopyImage(cmd, from, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, to, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        }
+    }
+
+    bool SaveSceneDepth(VkCommandBuffer cmd)
+    {
+        s.depthSavedValid = false;
+        if (!cmd || s.depthImage == VK_NULL_HANDLE || s.depthFresh || s.depthLayout == VK_IMAGE_LAYOUT_UNDEFINED
+            || !s.depthExtent.width || !s.depthExtent.height) return false;
+        if (s.depthSaved == VK_NULL_HANDLE
+            && !MakeRaw(s.depthFormat, s.depthExtent, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                            | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, s.depthSaved, s.depthSavedView, s.depthSavedBlock,
+                        "kept depth"))
+        {
+            s.depthSaved = VK_NULL_HANDLE;
+            return false;
+        }
+        if (s.passOpen && s.passHasDepth && s.passDepth.back) EndPass();
+        const VkImageAspectFlags aspect = AspectOf(s.depthFormat);
+        const VkImageLayout back = s.depthLayout;
+        Barrier(cmd, s.depthImage, aspect, 1, 1, back, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false);
+        Barrier(cmd, s.depthSaved, aspect, 1, 1, s.depthSavedLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
+        CopyDepth(cmd, s.depthImage, s.depthSaved);
+        Barrier(cmd, s.depthImage, aspect, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, back, false);
+        s.depthSavedLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        s.depthSavedValid  = true;
+        s.backTouched      = true;
+        return true;
+    }
+
+    bool RestoreSceneDepth(VkCommandBuffer cmd)
+    {
+        if (!s.depthSavedValid) return false;
+        s.depthSavedValid = false;
+        if (!cmd || s.depthImage == VK_NULL_HANDLE || s.depthSaved == VK_NULL_HANDLE
+            || s.depthLayout == VK_IMAGE_LAYOUT_UNDEFINED) return false;
+        if (s.passOpen && s.passHasDepth && s.passDepth.back) EndPass();
+        const VkImageAspectFlags aspect = AspectOf(s.depthFormat);
+        const VkImageLayout back = s.depthLayout;
+        Barrier(cmd, s.depthSaved, aspect, 1, 1, s.depthSavedLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false);
+        Barrier(cmd, s.depthImage, aspect, 1, 1, back, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, false);
+        CopyDepth(cmd, s.depthSaved, s.depthImage);
+        Barrier(cmd, s.depthImage, aspect, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, back, false);
+        s.depthSavedLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        s.backTouched      = true;
+        return true;
+    }
+
     void Transition(VkCommandBuffer cmd, texture::Image& image, VkImageLayout to)
     {
         if (!cmd || image.handle == VK_NULL_HANDLE || image.layout == to) return;
@@ -158,6 +222,7 @@ namespace wxlvk::native::present
 
     bool FlushAndWait()
     {
+        if (wxlvk::recordthread::Async()) { wxlvk::recordthread::DrainTag("lecture GPU (soumission)"); wxlvk::recordthread::Drain(); }   // HD MT2: the record thread idle first
         if (!s.open) return true;
         if (s.failed) return false;
         wxlvk::native::perf::Scope timed(wxlvk::native::perf::kFlush);
@@ -177,7 +242,13 @@ namespace wxlvk::native::present
             ++s.stats.passBreaks;
             ++s.breaksThisFrame;
         }
-        VkCommandBuffer buffers[2];
+        // Claude CPU-A: the replay thread's segments recorded and ended first.
+        if (!wxlvk::capture::aside::Join(true))
+        {
+            Fail("CPU-A: an aside segment could not be recorded (flush)", VK_ERROR_INITIALIZATION_FAILED);
+            return false;
+        }
+        VkCommandBuffer buffers[2 + 2 * kMaxAsideSegments];
         uint32_t        count = 0;
         if (s.preBegun)
         {
@@ -190,6 +261,8 @@ namespace wxlvk::native::present
             }
             buffers[count++] = slot.pre;
         }
+        for (uint32_t i = 0; i < slot.chainCount; ++i) buffers[count++] = slot.chain[i];   // Claude CPU-A
+        slot.chainCount = 0;
         // Everything the GPU wrote is made visible to the host reads that follow the wait.
         VkMemoryBarrier m = {};
         m.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -217,6 +290,7 @@ namespace wxlvk::native::present
         submit.pCommandBuffers    = buffers;
         wxlvk::host::SubmitExtras hostLink;   // WXL_HOST: a composite's timeline wait and signal; else nothing
         wxlvk::host::DecorateSubmit(submit, hostLink);
+        HD::CpuF::PublishHostWrites();
         r = d.QueueSubmit(h->graphicsQueue, 1, &submit, slot.fence);
         wxlvk::host::AfterSubmit(hostLink, r == VK_SUCCESS);
         if (r != VK_SUCCESS)

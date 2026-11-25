@@ -219,6 +219,7 @@ namespace wxlvk::vk::loader
         PFN_vkDestroyDescriptorPool      DestroyDescriptorPool      = nullptr;
         PFN_vkResetDescriptorPool        ResetDescriptorPool        = nullptr;
         PFN_vkAllocateDescriptorSets     AllocateDescriptorSets     = nullptr;
+        PFN_vkFreeDescriptorSets         FreeDescriptorSets         = nullptr;   ///< Claude voie B
         PFN_vkUpdateDescriptorSets       UpdateDescriptorSets       = nullptr;
         PFN_vkCreateSampler              CreateSampler              = nullptr;
         PFN_vkDestroySampler             DestroySampler             = nullptr;
@@ -232,6 +233,7 @@ namespace wxlvk::vk::loader
         PFN_vkCmdSetViewport             CmdSetViewport             = nullptr;
         PFN_vkCmdSetScissor              CmdSetScissor              = nullptr;
         PFN_vkCmdDrawIndexed             CmdDrawIndexed             = nullptr;
+        PFN_vkCmdDrawIndexedIndirect     CmdDrawIndexedIndirect     = nullptr;   ///< Claude voie B: the GPU-chosen fixed casters
         PFN_vkCmdDraw                    CmdDraw                    = nullptr;
         /// The two dynamic states some pipelines add (render state 0, the polygon offset, and
         /// state 84, the blend factor of blend mode 11); 1.0 core.

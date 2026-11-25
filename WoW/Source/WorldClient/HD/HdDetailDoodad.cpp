@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <string>
 #include <thread>
 #include <vector>
 #include <windows.h>
@@ -14,6 +15,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
 #include "Engine/Source/Gx/Types.h"
 #include "WoW/Source/WorldClient/HD/HdGxShader.h"
+#include "WoW/Source/WorldClient/HD/HdShaderBuild.h" // Claude BLZ1
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "WoW/Source/WorldClient/DetailDoodad.h"
 #include "WoW/Source/WorldClient/HD/HdGrassWind.h"
@@ -145,7 +147,7 @@ void main(
     [branch] if (cHdLight.z > 0.5) {
         // HD: Forever (detaildoodad.bls = its terrain formula). Ambient: horizon colour for a wall, sky colour for
         // ground facing up, ground colour for an overhang; the client's ambient is the sky colour (Forever's when
-        // hdForeverLight is 1, so horizon and ground are then Forever's own colours). Then a wrap of the sun over it,
+        // the world ambient uses the resolved For Ever profile). Then a wrap of the sun over it,
         // and the sun on its own in COLOR1.yzw.
         float3 nn = normalize(n);
         float up = dot(normalize(cWorldView[2].xyz), nn);
@@ -365,7 +367,6 @@ void main(
 }
 )HLSL";
 
-    typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 
     // CDetailDoodad::s_vertexShader[6]: slot = 3 * point lights + min(shadow mode, 2)
     // CDetailDoodad::s_pixelShader[8]: slot = shadow mode + 4 * PCF
@@ -379,13 +380,12 @@ void main(
     std::vector<uint8_t> s_vertexCode[kVertexSlots]; // written by the compile thread before s_state = StateReady
     std::vector<uint8_t> s_pixelCode[kPixelSlots];
     char s_threadInfo[260] = "";             // written by the compile thread before s_state changes to Ready/Failed
-    char s_refusedInfo[200] = "";            // a grass shader we cannot replace: then none is replaced (all or nothing)
+    char s_refusedInfo[300] = "";            // Claude BLZ1: the last grass shader we could not give our code (an ERROR)
     int32_t s_shownState = -1;
     int32_t s_inUse = 0;                     // shaders holding our code right now (shown in hdGrassInfo)
     bool s_ours = false;                     // all 14 grass shaders hold our code (vertex constants are needed)
     float s_vertexConstants[44];             // c49..c52 for this frame (DetailDoodadShaders), HD: c53..c59 grass wind per chunk
 
-    std::map<CGxShader*, std::vector<uint8_t> > s_original; // Blizzard's code of each shader we changed
     struct Retired { IUnknown* object; ULONGLONG time; };
     std::vector<Retired> s_retired;          // D3D shaders we replaced, released a little later (may still be bound)
 
@@ -397,74 +397,45 @@ void main(
         if (registered) return;
         registered = true;
         HD::ShaderCVars(); // HD: hdShaderDump
-        s_light = CVar::Register("hdGrassLight", "HD: 1 = WoW Forever lighting on grass, 2 = our shaders with 3.3.5 lighting, 3 = test view (sun after shadow only), 0 = Blizzard shaders", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        s_light = CVar::Register("hdGrassLight", "Azeroth Remastered: 1 = our grass lighting, 3 = test view (sun after shadow only). No other value (AR1)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_info = CVar::Register("hdGrassInfo", "HD: hdGrassLight status (read only)", 0, "not started", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         HD::GrassWindRegister(); // HD: grass wind cvars
     }
 
-    void SetMacro(D3D_SHADER_MACRO* macros, int32_t i, const char* name, int32_t value, char (*values)[4]) {
-        snprintf(values[i], 4, "%d", value);
-        macros[i].Name = name;
-        macros[i].Definition = values[i];
-    }
-
-    bool Compile(D3DCompileFn compile, const char* source, const char* name, const D3D_SHADER_MACRO* macros, const char* profile, std::vector<uint8_t>& out, const char* what, int32_t index) {
-        ID3DBlob* code = nullptr;
-        ID3DBlob* errors = nullptr;
-        HRESULT hr = compile(source, strlen(source), name, macros, nullptr, "main", profile, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
-        if (FAILED(hr) || !code) {
-            snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: %s %d: %s", what, index, errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown");
-            if (errors) errors->Release();
-            if (code) code->Release();
-            return false;
-        }
-        if (errors) errors->Release();
-        const uint8_t* bytes = static_cast<const uint8_t*>(code->GetBufferPointer());
-        out.assign(bytes, bytes + code->GetBufferSize());
-        code->Release();
-        return true;
-    }
-
-    // Compile thread: every slot, all or nothing.
+    // Compile thread: every slot, all or nothing (Claude BLZ1: from HD\ShaderCache when it holds them, else on every
+    // core; the world load waits for it, HD::DetailDoodadShadersWait).
     void CompileAll() {
-        ULONGLONG start = GetTickCount64();
-        HMODULE module = LoadLibraryA("d3dcompiler_47.dll");
-        D3DCompileFn compile = module ? reinterpret_cast<D3DCompileFn>(GetProcAddress(module, "D3DCompile")) : nullptr;
-        if (!compile) {
-            snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: d3dcompiler_47.dll not found, Blizzard shaders kept");
+        std::vector<HD::ShaderBuild::Job> jobs;
+        for (int32_t p = 0; p < kVertexSlots; p++) {
+            HD::ShaderBuild::Job job;
+            job.Define("SHADOW", p % 3);
+            job.Define("POINT_LIGHTS", p / 3);
+            job.source = kVertexShader;
+            job.name = "HdGrassVS";
+            job.profile = "vs_3_0";
+            job.out = &s_vertexCode[p];
+            job.what = "DetailDoodad vertex";
+            job.index = p;
+            jobs.push_back(job);
+        }
+        for (int32_t p = 0; p < kPixelSlots; p++) {
+            HD::ShaderBuild::Job job;
+            job.Define("SHADOW", p & 3);
+            job.Define("PCF", p >> 2);
+            job.source = kPixelShader;
+            job.name = "HdGrassPS";
+            job.profile = "ps_3_0";
+            job.out = &s_pixelCode[p];
+            job.what = "DetailDoodad pixel";
+            job.index = p;
+            jobs.push_back(job);
+        }
+        if (!HD::ShaderBuild::Build("HdGrass", jobs, s_threadInfo, sizeof(s_threadInfo))) {
             s_state.store(StateFailed);
             return;
         }
-        int32_t total = 0;
-        for (int32_t p = 0; p < kVertexSlots; p++) {
-            D3D_SHADER_MACRO macros[3];
-            char values[2][4];
-            SetMacro(macros, 0, "SHADOW", p % 3, values);
-            SetMacro(macros, 1, "POINT_LIGHTS", p / 3, values);
-            macros[2].Name = nullptr;
-            macros[2].Definition = nullptr;
-            if (!Compile(compile, kVertexShader, "HdGrassVS", macros, "vs_3_0", s_vertexCode[p], "DetailDoodad vertex", p)) {
-                s_state.store(StateFailed);
-                return;
-            }
-            HD::ShaderDump("HdGrass", false, 0, p, &s_vertexCode[p][0], s_vertexCode[p].size()); // HD
-            total++;
-        }
-        for (int32_t p = 0; p < kPixelSlots; p++) {
-            D3D_SHADER_MACRO macros[3];
-            char values[2][4];
-            SetMacro(macros, 0, "SHADOW", p & 3, values);
-            SetMacro(macros, 1, "PCF", p >> 2, values);
-            macros[2].Name = nullptr;
-            macros[2].Definition = nullptr;
-            if (!Compile(compile, kPixelShader, "HdGrassPS", macros, "ps_3_0", s_pixelCode[p], "DetailDoodad pixel", p)) {
-                s_state.store(StateFailed);
-                return;
-            }
-            HD::ShaderDump("HdGrass", true, 0, p, &s_pixelCode[p][0], s_pixelCode[p].size()); // HD
-            total++;
-        }
-        snprintf(s_threadInfo, sizeof(s_threadInfo), "%d shaders compiled in %u ms", total, static_cast<uint32_t>(GetTickCount64() - start));
+        for (int32_t p = 0; p < kVertexSlots; p++) HD::ShaderDump("HdGrass", false, 0, p, &s_vertexCode[p][0], s_vertexCode[p].size()); // HD
+        for (int32_t p = 0; p < kPixelSlots; p++) HD::ShaderDump("HdGrass", true, 0, p, &s_pixelCode[p][0], s_pixelCode[p].size()); // HD
         s_state.store(StateReady);
     }
 
@@ -472,9 +443,9 @@ void main(
         s_shownState = state;
         if (!s_info) return;
         char text[500];
-        if (state == StateCompiling) snprintf(text, sizeof(text), "compiling (Blizzard shaders until done)");
+        if (s_refusedInfo[0]) snprintf(text, sizeof(text), "%s", s_refusedInfo); // Claude BLZ1: an error stays shown
+        else if (state == StateCompiling) snprintf(text, sizeof(text), "compiling (the world load waits for it)");
         else if (state == StateIdle) snprintf(text, sizeof(text), "not started");
-        else if (state == StateReady && s_refusedInfo[0]) snprintf(text, sizeof(text), "%s; %s", s_threadInfo, s_refusedInfo);
         else if (state == StateReady) snprintf(text, sizeof(text), "%s, %d in use", s_threadInfo, s_inUse);
         else snprintf(text, sizeof(text), "%s", s_threadInfo);
         s_info->Set(text, true, false, false, false);
@@ -519,51 +490,62 @@ void main(
         return code->size() >= 4 ? code : nullptr;
     }
 
-    // Gives the shader our code (want) or Blizzard's back; returns true if it holds our code afterwards.
-    bool Apply(CGxShader* shader, bool vertex, int32_t slot, bool want) {
-        if (!shader) return false;
-        bool ours = shader->unused_0028 == kOursMark;
-        if (want == ours) return ours;
+    // Claude BLZ1: a grass shader we could not give our code. It is an ERROR, shown in hdGrassInfo and
+    // Logs\HdErreurs.txt (once per reason), never a quiet return to Blizzard's look.
+    void Refuse(const char* what, int32_t slot, const char* why) {
+        static std::map<std::string, bool> s_refused;
+        char text[300];
+        snprintf(text, sizeof(text), "ERROR: DetailDoodad %s %d not ours: %s", what, slot, why);
+        if (s_refused[text]) return;
+        s_refused[text] = true;
+        snprintf(s_refusedInfo, sizeof(s_refusedInfo), "%s", text);
+        ShowState(s_state.load());
+        HD::ShaderBuild::Error(text);
+    }
+
+    // Gives the shader our code, once and for good (Claude BLZ1: no way back to Blizzard's).
+    void Apply(CGxShader* shader, bool vertex, int32_t slot) {
+        if (!shader || shader->unused_0028 == kOursMark) return;
         ReleaseRetired(false);
-        if (!want) {
-            std::map<CGxShader*, std::vector<uint8_t> >::iterator it = s_original.find(shader);
-            if (it != s_original.end() && !it->second.empty()) SetCode(shader, &it->second[0], static_cast<uint32_t>(it->second.size()));
-            shader->unused_0028 = 0;
-            s_inUse--;
-            return false;
-        }
         const std::vector<uint8_t>* code = OurCode(shader, vertex, slot);
-        if (!code) return false; // checked by AllReplaceable before
-        s_original[shader].assign(shader->m_code.m_data, shader->m_code.m_data + shader->m_code.Count());
+        if (!code) return; // checked by AllReplaceable before
         SetCode(shader, &(*code)[0], static_cast<uint32_t>(code->size()));
         shader->unused_0028 = kOursMark;
         s_inUse++;
-        return true;
     }
 
-    // All or nothing: one grass shader we cannot replace and every one stays Blizzard's (our pixel shader needs our
-    // vertex shader's sun in COLOR1). Returns false then.
+    // Our pixel shader needs our vertex shader's sun in COLOR1: the 14 grass shaders take our code together. One we
+    // have no code for is an ERROR (Refuse); none is changed then.
     bool AllReplaceable() {
+        bool all = true;
         for (int32_t p = 0; p < kVertexSlots + kPixelSlots; p++) {
             bool vertex = p < kVertexSlots;
             int32_t slot = vertex ? p : p - kVertexSlots;
             CGxShader* shader = vertex ? CDetailDoodad::s_vertexShader[slot] : CDetailDoodad::s_pixelShader[slot];
-            if (shader && shader->unused_0028 == kOursMark) continue;
+            if (!shader || shader->unused_0028 == kOursMark) continue; // no shader: nothing is drawn with it
             if (!OurCode(shader, vertex, slot)) {
-                snprintf(s_refusedInfo, sizeof(s_refusedInfo), "refused DetailDoodad %s %d, Blizzard shaders kept", vertex ? "vertex" : "pixel", slot);
-                return false;
+                Refuse(vertex ? "vertex" : "pixel", slot, "no code of ours (not shader model 3, or no translated Vulkan module)");
+                all = false;
             }
         }
+        return all;
+    }
+
+    bool AllOurs() {
+        for (int32_t p = 0; p < kVertexSlots; p++) if (CDetailDoodad::s_vertexShader[p] && CDetailDoodad::s_vertexShader[p]->unused_0028 != kOursMark) return false;
+        for (int32_t p = 0; p < kPixelSlots; p++) if (CDetailDoodad::s_pixelShader[p] && CDetailDoodad::s_pixelShader[p]->unused_0028 != kOursMark) return false;
         return true;
     }
 
-    // Every grass shader to our code (want) or Blizzard's; true if all of them hold ours afterwards.
-    bool ApplyAll(bool want) {
-        bool all = true;
-        for (int32_t p = 0; p < kVertexSlots; p++) all = Apply(CDetailDoodad::s_vertexShader[p], true, p, want) && all;
-        for (int32_t p = 0; p < kPixelSlots; p++) all = Apply(CDetailDoodad::s_pixelShader[p], false, p, want) && all;
-        return all;
+    void ApplyAll() {
+        for (int32_t p = 0; p < kVertexSlots; p++) Apply(CDetailDoodad::s_vertexShader[p], true, p);
+        for (int32_t p = 0; p < kPixelSlots; p++) Apply(CDetailDoodad::s_pixelShader[p], false, p);
     }
+}
+
+void HD::DetailDoodadShadersWait() {
+    if (s_state.load() == StateIdle) return; // grass without shaders (CDetailDoodad::s_bUseShaders 0): nothing to wait for
+    HD::ShaderBuild::Wait(s_state, StateCompiling);
 }
 
 void HD::DetailDoodadShadersStart() {
@@ -579,21 +561,19 @@ void HD::DetailDoodadShaders() {
     int32_t state = s_state.load();
     if (state != s_shownState) ShowState(state);
 
-    int32_t mode = s_light ? s_light->m_intValue : 1;
-    if (mode == 0 && s_inUse == 0) {
-        // HD: Blizzard's shaders and nothing of ours in place: touch nothing (no extra D3D call)
-        s_ours = false;
-        return;
-    }
+    const int32_t mode = HD::LightModeOf(s_light);
     bool d3d9 = HD::ShaderSwapDevice(); // HD: D3D9, or Vulkan through the translated modules
-    bool want = state == StateReady && mode != 0 && d3d9 && !s_refusedInfo[0];
     int32_t inUse = s_inUse;
-    if (want && !AllReplaceable()) {
-        want = false;
-        ShowState(state);
+    // Claude BLZ1: all 14 together, once and for good. The world load waited for the compile (HD::DetailDoodadShadersWait).
+    bool ours = AllOurs();
+    if (!ours) {
+        if (state != StateReady) Refuse("all", 0, state == StateFailed ? s_threadInfo : "drawn before the compile finished");
+        else if (!d3d9) Refuse("all", 0, "device without shader swap (gxApi must be vulkan)");
+        else if (AllReplaceable()) {
+            ApplyAll();
+            ours = true;
+        }
     }
-    bool ours = ApplyAll(want);
-    if (want && !ours) ours = ApplyAll(false); // one did not take ours: all go back to Blizzard's
     s_ours = ours;
     if (s_inUse != inUse) ShowState(state);
     if (!ours) return;
@@ -601,7 +581,6 @@ void HD::DetailDoodadShaders() {
     // HD: constants of our shaders. Pixel c15 now (the grass pixel shader is bound once for all grass); vertex
     // c49..c52 after the client's constants of each chunk (DetailDoodadVertexConstants: terrain and buildings use the
     // same registers between two grass frames).
-    bool forever = mode == 1 || mode == 3;
     bool test = mode == 3;
     float horizon[3];
     float ground[3];
@@ -609,7 +588,7 @@ void HD::DetailDoodadShaders() {
     float* v = s_vertexConstants;
     v[0] = 0.0f;
     v[1] = 0.0f;
-    v[2] = forever ? 1.0f : 0.0f;       // c49.z Forever lighting
+    v[2] = 1.0f;                        // c49.z our lighting, always (AR1)
     v[3] = test ? 1.0f : 0.0f;          // c49.w test view (read by the pixel shader through c15.y)
     v[4] = HD::LightAmbientStrength();  // c50.x
     v[5] = 0.0f;
@@ -622,7 +601,7 @@ void HD::DetailDoodadShaders() {
     v[11] = 0.0f;
     v[15] = 0.0f;
     HD::GrassWindPrepare(); // HD: wind phases and player position for this frame (c53..c59 per chunk)
-    float pixel[4] = { forever ? 1.0f : 0.0f, test ? 1.0f : 0.0f, 0.0f, 0.0f };
+    float pixel[4] = { 1.0f, test ? 1.0f : 0.0f, 0.0f, 0.0f };
     HD::PixelConstantsSet(15, pixel, 1); // HD: also the vertex row the Vulkan modules read
 }
 
@@ -634,9 +613,8 @@ void HD::DetailDoodadVertexConstants(const C44Matrix& world) {
 }
 
 void HD::DetailDoodadShadersForget() {
-    if (s_inUse) ApplyAll(false);
+    // Claude BLZ1: the shaders are about to be released; their code is not given back to Blizzard's.
     s_ours = false;
-    s_original.clear();
     s_inUse = 0;
     ReleaseRetired(true);
 }

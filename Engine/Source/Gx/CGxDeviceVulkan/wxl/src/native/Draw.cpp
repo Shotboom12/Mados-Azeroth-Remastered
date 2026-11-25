@@ -1,3 +1,4 @@
+#include "native/record/RecordThread.hpp"
 // The native device's draw: slot 1 IRsSendToHw, slot 42 Draw, the D3D constant registers, and the
 // D3D viewport / scissor rectangle the draw and the clear (slot 39) share.
 // Copyright (C) 2026 WarcraftXL
@@ -189,6 +190,12 @@ namespace
     /// Bumped by every flush that wrote a vertex register from c31 (Cmd::kPaletteBase) up: the
     /// bone-palette storage buffer is uploaded again only when it moved (Cmd::paletteSerial).
     uint64_t g_paletteSerial = 1;
+    /// Claude MT5: the rows of g_vsRegs a flush wrote since the last draw the record thread took with its delta
+    /// (wxlvk::recordthread, DrawPacket::SnapshotDelta). Empty when lo > hi. Everything at the start: the record
+    /// thread's copy of the file begins at zero, the file may not.
+    uint32_t g_vsDeltaLo = 0;
+    uint32_t g_vsDeltaHi = kRegs - 1;
+    static_assert(kRegs == Cmd::kVertexRegsHigh, "MT5: the record thread's copy is the whole 256-row file");
 
     /// IShaderConstantsFlush, into g_vsRegs / g_psRegs: the dirty ranges [start, end] of both
     /// shadows, then the ranges reset to "none" (start 0xFF, end 0) as D3D leaves them.
@@ -205,6 +212,9 @@ namespace
                                   vs1 - vs0 + 1u);
             if (vs1 + 1u > g_vsHighWater) g_vsHighWater = vs1 + 1u;
             if (vs1 >= Cmd::kPaletteBase) ++g_paletteSerial;
+            const bool deltaEmpty = g_vsDeltaLo > g_vsDeltaHi;   // Claude MT5
+            if (deltaEmpty || vs0 < g_vsDeltaLo) g_vsDeltaLo = vs0;
+            if (deltaEmpty || vs1 > g_vsDeltaHi) g_vsDeltaHi = vs1;
             any = true;
         }
         vs0 = 0xFFu;
@@ -434,7 +444,11 @@ namespace
                 wxlvk::native::impl::PrepareTexture(device, reinterpret_cast<void*>(tex));
         }
 
-        VkCommandBuffer cmd = present::Pass();
+        VkCommandBuffer cmd;
+        {
+            wxlvk::recordthread::DrawPassScope own;   // HD MT2: the draw's own pass request does not drain (a pass change still does)
+            cmd = present::Pass();
+        }
         phase.Mark(perf::kDrawPrepare);
         if (!cmd)
         {
@@ -472,7 +486,9 @@ namespace
         const bool     inQuery     = present::QueryActive();
         const bool     vkQuery     = inQuery && present::QueryInPass();
         const uint64_t drawnBefore = inQuery ? pipelines::DrawnCount() : 0;
-        pipelines::Record(cmd, present::RenderPass(), present::Slot(), c);
+        if (!wxlvk::recordthread::Enabled()
+            || !wxlvk::recordthread::TryRecord(cmd, present::RenderPass(), present::Slot(), c, inQuery))
+            pipelines::Record(cmd, present::RenderPass(), present::Slot(), c);
         if (inQuery)
         {
             const bool drawn = pipelines::DrawnCount() != drawnBefore;
@@ -493,6 +509,12 @@ namespace
 namespace wxlvk::native::impl
 {
     uint64_t DrawsTotal() { return g_draws; }
+
+    // Claude MT5 (see DrawPacket.hpp).
+    const float (*VsRegisterFile())[4] { return g_vsRegs; }
+    bool VsDelta(uint32_t& lo, uint32_t& hi) { lo = g_vsDeltaLo; hi = g_vsDeltaHi; return lo <= hi; }
+    void VsDeltaTaken() { g_vsDeltaLo = kRegs; g_vsDeltaHi = 0; }
+    void VsDeltaAll() { g_vsDeltaLo = 0; g_vsDeltaHi = kRegs - 1; }
 
     bool PlaceDraw(const void* device, const VkExtent2D& extent, VkViewport& viewport, VkRect2D& scissor)
     {
@@ -764,13 +786,14 @@ namespace wxlvk::native::impl
         wxl::ScriptMgr::Log(WXL_LOG_INFO,
                             "native: pipeline builds: %llu at a draw, %llu pre-warmed at bring-up in %.1f ms "
                             "(%u key(s) listed, %llu not built); pre-warmed at their first draw: %llu "
-                            "verified, %llu rebuilt; %.1f ms building in all",
+                            "verified, %llu rebuilt; %llu rebuilt as their shaders changed (PIPE1); %.1f ms building in all",
                             static_cast<unsigned long long>(p.buildsAtDraw),
                             static_cast<unsigned long long>(p.prewarmed),
                             static_cast<double>(p.prewarmTicks) * tickMs, p.keysLoaded,
                             static_cast<unsigned long long>(p.prewarmSkipped),
                             static_cast<unsigned long long>(p.prewarmVerified),
                             static_cast<unsigned long long>(p.prewarmRebuilt),
+                            static_cast<unsigned long long>(p.sourcesRebuilt),
                             static_cast<double>(buildTicks) * tickMs);
         wxlvk::vk::wind::LogStats();
         const uint64_t paletteDraws = p.paletteUploads + p.paletteReused;

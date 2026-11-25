@@ -85,7 +85,7 @@ namespace wxlvk::host
         bool Record(const WXL_VkHostFrame& frame)
         {
             State&          s   = G();
-            VkCommandBuffer cmd = present::Outside();
+            VkCommandBuffer cmd = present::Outside("hors-passe Compose:88");
             VkImage         back = VK_NULL_HANDLE;
             VkFormat        format{};
             VkExtent2D      extent{};

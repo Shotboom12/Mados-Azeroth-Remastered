@@ -22,6 +22,8 @@
 #include "vulkan/pipelines/Internal.hpp"
 
 #include "native/render/WmoGroups.hpp"
+#include "vulkan/pipelines/Async.hpp" // HD MT2 (Claude 2026-11-04): the record split between the engine thread and the record thread
+#include "native/record/RecordThread.hpp" // Claude CPU-B: the proof's count of capture stamps
 #include "../../../../hd/HdVulkanShadowBridge.h"
 
 #include <intrin.h>
@@ -32,7 +34,7 @@
 #include <initializer_list>
 #include <cstdio>
 namespace {
-// DIAG M2 (2026-10-31): names the programs that make a frame unsafe (each distinct reason+vs+ps logged once, 64 max).
+// DIAG M2 (Claude, 2026-10-31): names the programs that make a frame unsafe (each distinct reason+vs+ps logged once, 64 max).
 void FsrUnsafeNote(const char*why,const wxlvk::draw::Cmd&c,const wxlvk::vk::pipelines::detail::PipelineEntry*entry,unsigned mode,unsigned blend,int colorWrite){
  static unsigned long long seen[64],hits[64],total=0;static unsigned count=0;
  unsigned long long h=1469598103934665603ULL;for(const char*t:{why,(const char*)c.vs,(const char*)c.ps})for(const char*q=t;q&&*q;++q){h^=(unsigned char)*q;h*=1099511628211ULL;}h^=blend*31u+unsigned(colorWrite)+c.vertexFormat*977u;
@@ -44,7 +46,7 @@ void FsrUnsafeNote(const char*why,const wxlvk::draw::Cmd&c,const wxlvk::vk::pipe
  ++hits[i];
  if(++total%20000==0){char line[900];int n=std::snprintf(line,sizeof line,"fsr: M2 DIAG unsafe totals after %llu:",total);for(unsigned k=0;k<count&&n>0&&n<int(sizeof line)-24;++k)n+=std::snprintf(line+n,sizeof line-n," #%u=%llu",k+1,hits[k]);wxl::ScriptMgr::Log(WXL_LOG_WARN,"%s",line);}
 }
-// DIAG M3 (2026-10-31): every distinct (model file, vs, ps, final mode, reasons) of a depth-writing draw on the motion pass,
+// DIAG M3 (Claude 2026-10-31): every distinct (model file, vs, ps, final mode, reasons) of a depth-writing draw on the motion pass,
 // logged once: which model parts get a motion writer (mode 2 rigid / 3 skin) and why the others do not. Read only.
 bool FsrDiagNamed(const char*n){static const char*k[]={"transport","zeppelin","ship","boat","gunship","elevator"};
  for(const char*w:k){const size_t l=std::strlen(w);for(const char*p=n;p&&*p;++p){size_t j=0;while(j<l&&p[j]&&(p[j]|32)==w[j])++j;if(j==l)return true;}}return false;}
@@ -57,7 +59,7 @@ void FsrModelNote(const wxlvk::draw::Cmd&c,unsigned bits,int mode,const char*why
  wxl::ScriptMgr::Log(WXL_LOG_WARN,"fsr: M3 DIAG %s model \"%s\" (section bones %u, model bones %u, scope %u): vs=\"%s\" ps=\"%s\" mode %d rigid %s skin %s wind %s | why not rigid: %s | why not skin: %s | blend %u colorWrite %d topology %u vconst %u paletteCount %u indices %u",
   priority?"TRANSPORT":"model",name?name:"(no DrawBatch)",HD::Fsr::Rigid::DiagSectionBones(),HD::Fsr::Rigid::DiagModelBones(),HD::Fsr::Rigid::DiagScopeKind(),c.vs,c.ps,mode,(bits&8u)?"yes":"no",(bits&32u)?"yes":"no",(bits&64u)?"yes":"no",whyRigid,whySkin,c.blend,c.colorWrite,c.topology,c.vconst,c.paletteCount,c.indexCount);
 }
-// DIAG herbe M4 (2026-10-31): every distinct grass draw on the motion pass (HdGrass/DetailDoodad), logged once with
+// DIAG herbe M4 (Claude 2026-10-31): every distinct grass draw on the motion pass (HdGrass/DetailDoodad), logged once with
 // the first CanDraw condition that refuses it. Read only.
 void FsrGrassNote(const wxlvk::draw::Cmd&c,unsigned bits,int mode){
  static unsigned long long seen[96];static unsigned count=0;
@@ -99,9 +101,11 @@ namespace
 #ifdef WOWDECOMP_FSR
         if(HD::Fsr::Rigid::Active()&&wxlvk::native::present::WorldObjectMotionPass(pass)){
             key.bones|=16u;
+            if(!c.gpuScene){ // Claude B2: a scene group's copies are still: the zero marker (the camera's own motion)
             if(HD::Fsr::WindMotion::Global().CanDraw(c,dr.windDraw))key.bones|=64u;
             if(HD::Fsr::Skin::Global().CanDraw(c,dr.windDraw!=nullptr))key.bones|=32u;
             if(HD::Fsr::Rigid::Prepare(c,dr.windDraw!=nullptr,dr.rigidReprojection,&dr.rigidCookie))key.bones|=8u;
+            }
         }
 #endif
 
@@ -143,9 +147,9 @@ namespace
             HD::Fsr::Rigid::UnsafeFrame();key.bones&=~120u;failed=nullptr;
             dr.entry=Pipeline(key,pass,failed); // optional velocity may fail; preserve original colour draw
         }
-        if((key.bones&16u)&&(!std::strncmp(c.vs,"HdGrass",7)||!std::strncmp(c.vs,"DetailDoodad",12))) // DIAG herbe M4 (2026-10-31)
+        if((key.bones&16u)&&(!std::strncmp(c.vs,"HdGrass",7)||!std::strncmp(c.vs,"DetailDoodad",12))) // DIAG herbe M4 (Claude 2026-10-31)
             FsrGrassNote(c,key.bones,dr.entry?int(dr.entry->velocityMode):-1);
-        if((key.bones&16u)&&c.depthWrite&&c.depthTest&&HD::Fsr::Rigid::DiagModelName()) // DIAG M3 (2026-10-31)
+        if((key.bones&16u)&&c.depthWrite&&c.depthTest&&HD::Fsr::Rigid::DiagModelName()) // DIAG M3 (Claude 2026-10-31)
             FsrModelNote(c,key.bones,dr.entry?int(dr.entry->velocityMode):-1,HD::Fsr::Rigid::WhyNoRigid(c,dr.windDraw!=nullptr),HD::Fsr::Skin::Global().WhyNot(c,dr.windDraw!=nullptr));
 #endif
         if (!dr.entry && (key.bones & 2u))
@@ -263,6 +267,7 @@ namespace
             entry->velocityMode==4?(entry->bones?layout.motionWindBones:layout.motionWind):
             entry->velocityMode==3?layout.skinBones:
 #endif
+            entry->table ? layout.table :   // Claude B3
             entry->bones ? (entry->wind ? layout.windBones : layout.bones)
                                                          : (entry->wind ? layout.wind : layout.pipeline);
 
@@ -371,6 +376,7 @@ namespace
             b.set0   = VK_NULL_HANDLE;
             b.set1   = VK_NULL_HANDLE;
             b.set2   = VK_NULL_HANDLE;
+            b.set3   = VK_NULL_HANDLE;
             b.push   = false;
         }
         if (!entry->usesRing)
@@ -420,7 +426,7 @@ namespace
         {
             // Set 2, the palette: set 0 and 1 above leave it bound (same layout), so only a palette
             // change rebinds it.
-            const VkDescriptorSet boneSet = s.bonesSets[frameSlot];
+            const VkDescriptorSet boneSet = c.gpuIndirect ? c.gpuPaletteSet : s.bonesSets[frameSlot];   // Claude voie B
             if (b.set2 != boneSet || b.set2Offset != dr.paletteOffset)
             {
                 d.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout, 2, 1, &boneSet, 1,
@@ -432,6 +438,12 @@ namespace
             else
                 ++s.stats.setBindsSkipped;
             ++s.stats.bonesDraws;
+        }
+        if (entry->table && b.set3 != wxlvk::vk::pipelines::TableSet())   // Claude B3
+        {
+            b.set3 = wxlvk::vk::pipelines::TableSet();
+            d.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout, 3, 1, &b.set3, 0, nullptr);
+            ++s.stats.setBinds;
         }
         if (entry->wind
 #ifdef WOWDECOMP_FSR
@@ -472,6 +484,12 @@ namespace
             b.push=false; // the UI push-constant cache must not claim these values
         }
 #endif
+        if (c.instanceCount > 1u || (c.gpuIndirect && !c.gpuScene && !c.gpuTerrain))   // Claude B2: the .gpus twins take no push value (nor B3's)
+        {
+            // Claude INST1: the .inst twin's one push value, the palette rows between two copies (voie B: its .gpu twin).
+            d.CmdPushConstants(cmd, pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof c.instanceRows, &c.instanceRows);
+            b.push = false;
+        }
         return true;
     }
 
@@ -490,6 +508,60 @@ namespace
     }
 
     /**
+     * Claude PERF2: an M2 batch whose own extent the engine gave (c.modelReach, c.modelBones): exact and tight. Every
+     * vertex is sum w_i (A_i v + t_i) over the section's bones (weights summing to 1), and each component of A_i v is at
+     * most |row_k of A_i| |v|: the vertex lies in the box of the bones' translations widened by |row_k| * modelReach on
+     * each view axis -- its sphere's radius is the box's half-diagonal plus modelReach * sqrt(|r0|^2 + |r1|^2 + |r2|^2).
+     * Only the section's own rows (c31 .. c31 + 3 n), never the palette's stale high-water rows of earlier models. A
+     * bone scaled to nothing still places its vertices at its translation: kept in the box. False (the fixed reach
+     * then) when anything is missing. The fixed kModelReach (30 yd) put a unit's draws into every face of every lamp
+     * cube round it (measured: 16 views a draw, 6 ms a frame in Darkshire at night). Not for a swaying tree (the
+     * wind moves its vertices past the bind pose).
+     */
+    bool ExactModelBound(const Cmd& c, const PipelineEntry* entry, bool skinned, float out[4])
+    {
+        constexpr float kMaxRadius = 250.0f;
+        if (!(c.modelBones > 0 && c.modelReach >= 0.0f && std::isfinite(c.modelReach))) return false;
+        const uint32_t n = c.modelBones;
+        const float (*rows)[4] = c.vertexRows + Cmd::kPaletteBase;
+        if (skinned && entry->bones)
+        {
+            if (!c.paletteRows || c.paletteCount < 3 * n) return false;
+            rows = c.paletteRows;
+        }
+        else if (skinned ? Cmd::kPaletteBase + 3 * n > Cmd::kVertexRegs : n != 1)
+            return false;
+        float lo[3] = { 3.0e38f, 3.0e38f, 3.0e38f }, hi[3] = { -3.0e38f, -3.0e38f, -3.0e38f };
+        float frob = 0.0f;
+        for (uint32_t b = 0; b < n; ++b)
+        {
+            float f2 = 0.0f;
+            for (int k = 0; k < 3; ++k)
+            {
+                const float* r = rows[b * 3 + k];
+                const float  t = r[3];
+                if (!std::isfinite(t)) return false;
+                lo[k] = t < lo[k] ? t : lo[k];
+                hi[k] = t > hi[k] ? t : hi[k];
+                f2 += r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+            }
+            if (!std::isfinite(f2)) return false;
+            frob = f2 > frob ? f2 : frob;
+        }
+        float h2 = 0.0f, centre[3];
+        for (int k = 0; k < 3; ++k)
+        {
+            centre[k] = 0.5f * (lo[k] + hi[k]);
+            const float h = 0.5f * (hi[k] - lo[k]);
+            h2 += h * h;
+        }
+        const float radius = std::sqrt(h2) + c.modelReach * std::sqrt(frob) + 0.05f;
+        if (!std::isfinite(radius) || !(radius < kMaxRadius)) return false;
+        out[0] = centre[0]; out[1] = centre[1]; out[2] = centre[2]; out[3] = radius;
+        return true;
+    }
+
+    /**
      * A model draw's bounding sphere in view space (the replay's culling, WXL_VK_REPLAY_CULL_FRUSTUM), conservative:
      * the model's own extent is not known here, so round where its transforms put the model's origin -- the static
      * model's c31..c33, or, skinned, every bone's rows (c31 + 3 i: the bone palette's high-water rows, stale ones
@@ -498,18 +570,41 @@ namespace
      * whose frustum misses its sphere). Radius < 0 (never culled) for a draw with no model rows or a sphere so wide the
      * test would be worth nothing.
      */
-    void ModelBound(const Cmd& c, const PipelineEntry* entry, float out[4])
+    void ModelBound(const Cmd& c, const PipelineEntry* entry, float out[4], bool exact = true, uint32_t own = 0)   // Claude PREUVE1: exact = false, the bound before PERF2
     {
         constexpr float    kModelReach = 30.0f;    ///< yd round a model's transforms its geometry is taken to stay within
         constexpr float    kMaxRadius  = 250.0f;   ///< past this the bound is dropped (unknown)
-        constexpr uint32_t kMaxBones   = 64;
+        constexpr uint32_t kMaxBones   = 256;   // HD LV41 (Claude): was 64, a 75-bone palette lost its last bones from the bound
         out[0] = out[1] = out[2] = 0.0f;
         out[3] = -1.0f;
         if (!c.vertexRows || !entry->vrec) return;
         const bool skinned = (entry->vrec->inputMask & (1u << wxlvk::vk::manifest::kBlendWeight0)) != 0u;
+        // Claude PERF2: an M2 batch whose own extent the engine gave (c.modelReach, c.modelBones): exact and tight. Every
+        // vertex is sum w_i (A_i v + t_i) over the section's bones (weights summing to 1), and each component of A_i v is
+        // at most |row_k of A_i| |v|: the vertex lies in the box of the bones' translations widened by
+        // |row_k| * modelReach on each view axis -- its sphere's radius is the box's half-diagonal plus
+        // modelReach * sqrt(|r0|^2 + |r1|^2 + |r2|^2). Only the section's own rows (c31 .. c31 + 3 n), never the
+        // palette's stale high-water rows of earlier models. A bone scaled to nothing still places its vertices at
+        // its translation: kept in the box. The fixed kModelReach (30 yd) made a unit's shadow drawn into every face
+        // of every lamp cube round it (measured: 16 views a draw, 6 ms a frame in Darkshire at night).
+        if (exact && !entry->wind && ExactModelBound(c, entry, skinned, out)) return;
         const float (*rows)[4] = c.vertexRows + Cmd::kPaletteBase;
         uint32_t bones = 1;
-        if (skinned)
+        // Claude INST1-CUBES: `own` = the section's bone count (the engine gave it, c.modelBones): the same 30 yd round
+        // the section's own rows alone -- its bones read through indices, weights or not -- never the palette's stale
+        // high-water rows past them, which held whatever model wrote them last (with INST1 the sun shadows' instanced
+        // copies, scattered over 640 yd: a sphere past kMaxRadius, none at all, the draw in every cube).
+        const bool ownSkinned = own > 0u && (entry->vrec->inputMask & ((1u << wxlvk::vk::manifest::kBlendWeight0)
+                                                                    | (1u << wxlvk::vk::manifest::kBlendIndices0))) != 0u;
+        if (ownSkinned)
+        {
+            if (!entry->bones || !c.paletteRows || c.paletteCount < 3 * own) return;
+            rows  = c.paletteRows;
+            bones = own;
+        }
+        else if (own > 0u)
+            bones = 1;
+        else if (skinned)
         {
             if (entry->bones && c.paletteRows && c.paletteCount >= 3)
             {
@@ -553,13 +648,16 @@ namespace
     }
 
     /// The shadow replay's capture (src/capture/): an opaque world draw, as bound.
-    void Capture(const Cmd& c, const Draft& dr, const VkBuffer* vbs, uint32_t vbCount)
+    void Capture(const Cmd& c, const Draft& dr, const VkBuffer* vbs, uint32_t vbCount, const float* wmoBound = nullptr, int onBack = -1)
     {
         const PipelineEntry* entry = dr.entry;
         const Key&           key   = dr.key;
-        if (!wxlvk::capture::Open() || !entry->usesRing || !entry->translated || !entry->vrec) return;
+        if (onBack >= 0 && wxlvk::recordthread::passQueue >= 2)   // Claude CPU-B: the proof's count
+            wxlvk::recordthread::NoteCaptureStamp(wxlvk::capture::Open(-1), wxlvk::capture::Open(onBack));
+        if (!wxlvk::capture::Open(onBack) || !entry->usesRing || !entry->translated || !entry->vrec) return;
+        if (c.instanceCount > 1u || (c.gpuIndirect && !c.gpuScene && !c.gpuTerrain)) return;   // Claude INST1: a replay would draw copy 0 alone (voie B: its GPU commands)
         const bool variant = entry->wind ? (entry->bones ? entry->vrec->shadowWindBones : entry->vrec->shadowWind)
-                                         : (entry->bones ? entry->vrec->shadowBones : entry->vrec->shadow);
+                                         : (entry->bones && !entry->table ? entry->vrec->shadowBones : entry->vrec->shadow);
         if (!variant || !key.depthWrite || !key.depthTest || key.blend > 1u || key.colorWrite == 0u || entry->pointList)
             return;
         wxlvk::capture::Draw cd = {};
@@ -577,6 +675,7 @@ namespace
         cd.count        = c.indexCount;
         cd.vertexOffset = c.vertexOffset;
         cd.indexed      = c.indexed ? 1u : 0u;
+        cd.items        = c.vertexItems;   // Claude ANIM1
         cd.alphaTest    = (key.blend == 1u || c.alphaRef != 0u) ? 1u : 0u;
         // A mover: a model draw (its vertex layout carries bone weights, which the terrain and the map
         // objects have not) of a UNIT -- a model one of whose draws wears a character's, a creature's or
@@ -602,27 +701,130 @@ namespace
         // Its bound for the replay's culling: the units' and the M2 doodads' (and the swaying trees'); a map object's its
         // group's box (the engine's group renderer runs round this draw: native/render/WmoGroups.cpp); none for the terrain.
         cd.bound[3] = -1.0f;
+        if (c.gpuTerrain)
+        {
+            // Claude B3: one record a chunk, as its own draw would give: the engine's own buffers, its rows at set 2's
+            // offset (the .gputr shadow twins); the water's mirror draws the whole group by its indirect commands.
+            const HD::GpuTerrainData::Draw& g = *c.gpuTerrain;
+            std::memcpy(cd.boundOld, cd.bound, sizeof cd.boundOld);
+            cd.bones     = c.gpuReplaySet;
+            cd.palette   = c.gpuPaletteSet;
+            cd.groupArgs = wxlvk::capture::Room() >= g.count ? c.gpuArgs : VK_NULL_HANDLE;
+            for (uint32_t n = 0; n < g.count; ++n)
+            {
+                const HD::GpuTerrainData::Chunk& m = g.chunks[n];
+                cd.groupOffset   = c.gpuArgsOffset;
+                cd.groupCommands = c.gpuDrawCount;
+                cd.groupRecords  = n == 0u ? g.count : 0u;
+                cd.firstIndex    = m.firstIndex;
+                cd.count         = m.indexCount;
+                cd.vertexOffset  = m.vertexOffset;
+                cd.instance      = m.instance;
+                cd.bonesOffset   = m.instance * HD::GpuTerrainData::kRows * 16u;
+                wxlvk::capture::Note(cd);
+            }
+            return;
+        }
+        if (c.gpuScene)
+        {
+            // Claude B2: one record a copy, as the copy's own draw would give: the shared store's section, the copy's
+            // three rows at the palette's start (the stream's 3600-byte set at their offset), its one-bone bounds.
+            const HD::GpuSceneData::Draw& g = *c.gpuScene;
+            if (!g.replay) return;
+            cd.bones = c.gpuReplaySet;
+            cd.palette = c.gpuPaletteSet;
+            // Claude B3: the water's mirror draws the group whole, by the same indirect commands.
+            uint32_t records = 0;
+            for (uint32_t n = 0; n < g.cmdCount; ++n) records += g.cmds[n].copies;
+            cd.groupArgs     = wxlvk::capture::Room() >= records ? c.gpuArgs : VK_NULL_HANDLE;
+            cd.groupOffset   = c.gpuArgsOffset;
+            cd.groupCommands = c.gpuDrawCount;
+            cd.groupRecords  = records;
+            for (uint32_t n = 0; n < g.cmdCount; ++n)
+            {
+                const HD::GpuSceneData::Cmd& m = g.cmds[n];
+                cd.firstIndex   = m.firstIndex;
+                cd.count        = m.indexCount;
+                cd.vertexOffset = m.vertexOffset;
+                for (uint32_t i = m.firstCopy; i < m.firstCopy + m.copies; ++i)
+                {
+                    const HD::GpuSceneData::Copy& p = g.copies[i];
+                    cd.bonesOffset = g.rowsAt + p.at * 48u;
+                    std::memcpy(cd.boundOld, p.boundOld, sizeof cd.boundOld);
+                    std::memcpy(cd.bound, p.bound[3] >= 0.0f ? p.bound : p.boundOld, sizeof cd.bound);
+                    cd.instance = g.rowsAt / 48u + p.at;
+                    wxlvk::capture::Note(cd);
+                    cd.groupRecords = 0u;
+                }
+            }
+            return;
+        }
         if (cd.live || cd.doodad || entry->wind)
         {
             // A bone-palette draw's bound is a function of its palette (the serial moves whenever a row from c31 up
             // changes, WritePalette's own test): a model's batches share it, so it is computed once for the run.
             const bool palette = entry->bones && c.paletteRows && c.paletteCount >= 3
                                  && (entry->vrec->inputMask & (1u << wxlvk::vk::manifest::kBlendWeight0)) != 0u;
-            if (palette && s.boundValid && s.boundSerial == c.paletteSerial && s.boundCount == c.paletteCount)
-                std::memcpy(cd.bound, s.boundValue, sizeof cd.bound);
+            // Claude PREUVE1: the bound before PERF2, exactly as it was made and cached then (the exclusion boxes test its centre).
+            // Claude INST1-CUBES: a section whose bone count the engine gave: its own rows only (ModelBound's `own`).
+            const uint32_t own = !entry->wind && c.modelBones > 0 && c.modelReach >= 0.0f ? c.modelBones : 0u;
+            const bool ownPalette = own > 0u && entry->bones && c.paletteRows && c.paletteCount >= 3
+                                    && (entry->vrec->inputMask & ((1u << wxlvk::vk::manifest::kBlendWeight0)
+                                                                | (1u << wxlvk::vk::manifest::kBlendIndices0))) != 0u;
+            const bool cached = own > 0u ? ownPalette : palette;
+            if (cached && s.boundValid && s.boundSerial == c.paletteSerial && s.boundCount == c.paletteCount && s.boundOwn == own)
+                std::memcpy(cd.boundOld, s.boundValue, sizeof cd.boundOld);
             else
             {
-                ModelBound(c, entry, cd.bound);
-                s.boundValid = palette;
-                if (palette)
+                ModelBound(c, entry, cd.boundOld, false, own);
+                s.boundValid = cached;
+                if (cached)
                 {
                     s.boundSerial = c.paletteSerial;
                     s.boundCount  = c.paletteCount;
-                    std::memcpy(s.boundValue, cd.bound, sizeof cd.bound);
+                    s.boundOwn    = own;
+                    std::memcpy(s.boundValue, cd.boundOld, sizeof cd.boundOld);
+                }
+            }
+            // Claude PERF2: the exact bound (the section's own bones and reach) for the views' culling; the old one when it has none.
+            std::memcpy(cd.bound, cd.boundOld, sizeof cd.bound);
+            if (!entry->wind && c.modelBones > 0 && c.modelReach >= 0.0f)
+            {
+                // Claude INST1-CUBES: a draw reads the palette by its bone indices, weights or not (Diffuse_T1:11, a doodad
+                // with one influence a vertex: indices and no weights). Taken for a rigid one (c31 alone), its exact bound
+                // was refused (n > 1) and its fallback read the stale c31 rows: a sphere off the model, or none at all
+                // when those rows held the instanced sun-shadow bones (INST1), and it went into every cube.
+                const bool skinned = (entry->vrec->inputMask & ((1u << wxlvk::vk::manifest::kBlendWeight0)
+                                                              | (1u << wxlvk::vk::manifest::kBlendIndices0))) != 0u;
+                const bool paletteExact = entry->bones && c.paletteRows && c.paletteCount >= 3 && skinned;
+                if (paletteExact && s.exactValid && s.exactSerial == c.paletteSerial && s.exactCount == c.paletteCount
+                    && s.exactBones == c.modelBones && s.exactReach == c.modelReach)
+                {
+                    if (s.exactFound) std::memcpy(cd.bound, s.exactValue, sizeof cd.bound);
+                }
+                else
+                {
+                    float e[4];
+                    const bool found = ExactModelBound(c, entry, skinned, e);
+                    if (found) std::memcpy(cd.bound, e, sizeof cd.bound);
+                    s.exactValid = paletteExact;
+                    if (paletteExact)
+                    {
+                        s.exactSerial = c.paletteSerial; s.exactCount = c.paletteCount;
+                        s.exactBones = c.modelBones; s.exactReach = c.modelReach;
+                        s.exactFound = found;
+                        if (found) std::memcpy(s.exactValue, e, sizeof s.exactValue);
+                    }
                 }
             }
         }
-        else if (cd.mapobj && c.vertexRows) wxlvk::native::render::wmogroups::DrawBound(c.vertexRows, cd.bound);
+        else if (cd.mapobj && c.vertexRows)
+        {
+            // HD MT2 (Claude 2026-11-04): on the record thread, the bound the engine thread computed while the group was current.
+            if (wmoBound) std::memcpy(cd.bound, wmoBound, sizeof cd.bound);
+            else wxlvk::native::render::wmogroups::DrawBound(c.vertexRows, cd.bound);
+        }
+        if (!(cd.live || cd.doodad || entry->wind)) std::memcpy(cd.boundOld, cd.bound, sizeof cd.boundOld);   // Claude PREUVE1: unchanged by PERF2
         if (entry->wind)
         {
             // A swaying tree's shadow sways with it: the same set 3 and the same model values.
@@ -638,13 +840,13 @@ namespace
     /// The draw itself, and its counts.
     void Issue(VkCommandBuffer cmd, const Cmd& c, const PipelineEntry* entry
 #ifdef WOWDECOMP_FSR
-        ,uint32_t rigidCookie,const HD::Fsr::Skin::DrawData&skinData,const HD::Fsr::WindMotion::DrawData&windData
+        ,uint32_t rigidCookie,const HD::Fsr::Skin::DrawData&skinData,const HD::Fsr::WindMotion::DrawData&windData,bool fsrRigid
 #endif
     )
     {
 #ifdef WOWDECOMP_FSR
-        if(HD::Fsr::Rigid::Active()&&entry->motionPass&&c.depthWrite&&c.depthTest){
-            // FIX 2026-10-31: a blended or colourless depth writer with its zero marker is safe (Build.cpp).
+        if(fsrRigid&&entry->motionPass&&c.depthWrite&&c.depthTest){
+            // FIX Claude 2026-10-31: a blended or colourless depth writer with its zero marker is safe (Build.cpp).
             if(!entry->velocityMode)FsrUnsafeNote(!HD::Fsr::Rigid::WroteMotion()?"no marker variant, before any motion writer (safe)":c.colorWrite&&c.blend<=1?"no zero/velocity variant AFTER a motion writer (unsafe)":"blend or no colour, no zero variant, AFTER a motion writer (unsafe)",c,entry,entry->velocityMode,c.blend,c.colorWrite);
             HD::Fsr::Rigid::Issued(entry->velocityMode,rigidCookie);
         }
@@ -661,13 +863,16 @@ namespace
             }
             else
                 ++s.stats.bufferBindsSkipped;
-            d.CmdDrawIndexed(cmd, c.indexCount, 1, c.firstIndex, c.vertexOffset, 0);
+            if (c.gpuIndirect || c.gpuMulti)   // Claude voie B: the commands the GPU wrote (count, first index, vertex offset, first copy)
+                d.CmdDrawIndexedIndirect(cmd, c.gpuArgs, c.gpuArgsOffset, c.gpuDrawCount, sizeof(VkDrawIndexedIndirectCommand));
+            else
+            d.CmdDrawIndexed(cmd, c.indexCount, c.instanceCount > 1u ? c.instanceCount : 1u, c.firstIndex, c.vertexOffset, 0);   // Claude INST1
         }
         else
         {
             // indexCount is the vertex count for a non-indexed draw, and vertexOffset the first vertex;
             // its sign was checked by Accept().
-            d.CmdDraw(cmd, c.indexCount, 1, static_cast<uint32_t>(c.vertexOffset), 0);
+            d.CmdDraw(cmd, c.indexCount, c.instanceCount > 1u ? c.instanceCount : 1u, static_cast<uint32_t>(c.vertexOffset), 0);   // Claude INST1
         }
 
 #ifdef WOWDECOMP_FSR
@@ -693,8 +898,28 @@ namespace
 
 namespace wxlvk::vk::pipelines
 {
+    namespace
+    {
+        uint32_t g_frontBoneBound[kFrameSlots] = {};   ///< engine thread: >= the slot's palette cursor once the queue is done
+
+        // Claude OS1 (2026-11-18): a draw Record() records itself (the record thread idle: after a drain, or no record
+        // thread) moves the real palette cursor. The front's bound must follow it at once. Without this, a pass end or
+        // begin queued right after (CPU-B) kept the queue non-empty, TryRecord did not resync, the bound fell behind the
+        // cursor, and the record thread wrote palettes past the 8 MiB ring (Darkshire square at Extreme: crash in
+        // simd::CopyRows from WritePalette, and the GPU memory after the ring overwritten).
+        struct BoundFollowsCursor
+        {
+            uint32_t slot;
+            ~BoundFollowsCursor()
+            {
+                if (slot < kFrameSlots && g_frontBoneBound[slot] < s.boneCursor[slot]) g_frontBoneBound[slot] = s.boneCursor[slot];
+            }
+        };
+    }
+
     void Record(VkCommandBuffer cmd, VkRenderPass pass, uint32_t frameSlot, const Cmd& c)
     {
+        const BoundFollowsCursor follow{frameSlot};   // Claude OS1
         if (!s.ready || !cmd || pass == VK_NULL_HANDLE)
         {
             if (!s.loggedNotReady)
@@ -743,7 +968,7 @@ namespace wxlvk::vk::pipelines
             mark(4);
             Issue(cmd, c, dr.entry
 #ifdef WOWDECOMP_FSR
-                ,dr.rigidCookie,dr.skinData,dr.windData
+                ,dr.rigidCookie,dr.skinData,dr.windData,HD::Fsr::Rigid::Active()
 #endif
             );
             mark(5);
@@ -763,7 +988,75 @@ namespace wxlvk::vk::pipelines
         Capture(c, dr, vbs, vbCount);
         Issue(cmd, c, dr.entry
 #ifdef WOWDECOMP_FSR
-                ,dr.rigidCookie,dr.skinData,dr.windData
+                ,dr.rigidCookie,dr.skinData,dr.windData,HD::Fsr::Rigid::Active()
+#endif
+            );
+    }
+
+    void FrontResync()
+    {
+        for (uint32_t i = 0; i < kFrameSlots; ++i) g_frontBoneBound[i] = s.boneCursor[i];
+    }
+
+    // HD MT2 (Claude 2026-11-04): Record() cut in two at the end of Accept. The front runs on the engine thread,
+    // exactly where Record() ran: everything that reads or writes state the engine thread shares (the wind
+    // module's models, the pipeline table and its builds, the shader registry, the WMO group being drawn).
+    // The back is the rest of Record(), unchanged, run on the record thread from a copy of the Cmd.
+    // Not eligible (nothing done): the caller runs Record() itself, after a drain.
+    FrontResult RecordFront(VkCommandBuffer cmd, VkRenderPass pass, uint32_t frameSlot, const Cmd& c, AsyncFront& a)
+    {
+        if (!s.ready || !cmd || pass == VK_NULL_HANDLE || frameSlot >= kFrameSlots || s.split) return FrontResult::NotEligible;
+#ifdef WOWDECOMP_FSR
+        if (HD::Fsr::Rigid::Active()) return FrontResult::NotEligible;   // FSR motion: its history is shared, kept on one thread
+#endif
+        // MakeKey asks PaletteFits for a skinned 256-row draw: answered from the front's own bound of the cursor
+        // (every queued bones draw counted as a full write), never from the cursor the record thread moves. When
+        // the bound cannot prove the room, the draw is not eligible: after the drain, Record() asks the real cursor.
+        const bool paletteAsked = s.bonesReady && c.vconst == Cmd::kVertexRegsHigh && c.paletteRows;
+        if (paletteAsked && g_frontBoneBound[frameSlot] + kBoneRange > s.boneBytes[frameSlot]) return FrontResult::NotEligible;   // Claude OS2: the slot's size
+        Draft dr;
+        dr.frameSlot = frameSlot;
+        g_frontPaletteFits = paletteAsked;
+        const bool accepted = Accept(pass, c, dr);
+        g_frontPaletteFits = false;
+        if (!accepted) return FrontResult::Skipped;
+        // WritePalette advances the cursor by at most kBoneRange rounded up to boneAlign (less on a reuse).
+        if (dr.entry->bones) g_frontBoneBound[frameSlot] += (kBoneRange + s.boneAlign - 1) / s.boneAlign * s.boneAlign;
+        a.key       = dr.key;
+        a.entry     = dr.entry;
+        a.frameSlot = frameSlot;
+        a.hasWind   = dr.windDraw != nullptr;
+        if (a.hasWind) a.wind = *dr.windDraw;
+        else a.wind = wxlvk::vk::wind::Draw{};
+        a.wmoBound[0] = a.wmoBound[1] = a.wmoBound[2] = 0.0f;
+        a.wmoBound[3] = -1.0f;   // Capture's own start value (cd.bound) when DrawBound has nothing
+        if (c.vertexRows && std::strncmp(c.vs, "MapObj", 6) == 0)
+            wxlvk::native::render::wmogroups::DrawBound(c.vertexRows, a.wmoBound);
+        a.onBack = wxlvk::native::present::OnBackBuffer();   // Claude CPU-B: the pass's side now, for the capture
+        return FrontResult::Queue;
+    }
+
+    void RecordBack(VkCommandBuffer cmd, const Cmd& c, const AsyncFront& a)
+    {
+        Draft dr;
+        dr.frameSlot = a.frameSlot;
+        dr.key       = a.key;
+        dr.entry     = a.entry;
+        dr.windDraw  = a.hasWind ? &a.wind : nullptr;
+        if (!Textures(c, dr) || !PlanSlice(c, dr) || !DescriptorSet(c, dr)) return;
+        WriteSlice(dr);
+        WritePalette(c, dr);
+#ifdef WOWDECOMP_FSR
+        if(dr.entry->velocityMode==3)dr.skinData=HD::Fsr::Skin::Global().Record(c,dr.misc);
+        if(dr.entry->velocityMode==4)dr.windData=HD::Fsr::WindMotion::Global().Record(c,dr.misc,dr.entry->bones,dr.windDraw);
+#endif
+        VkBuffer vbs[Cmd::kMaxStreams + 1] = {};
+        uint32_t vbCount = 0;
+        if (!Bind(cmd, c, dr, vbs, vbCount)) return;
+        Capture(c, dr, vbs, vbCount, a.wmoBound, a.onBack ? 1 : 0);
+        Issue(cmd, c, dr.entry
+#ifdef WOWDECOMP_FSR
+                ,dr.rigidCookie,dr.skinData,dr.windData,false
 #endif
             );
     }

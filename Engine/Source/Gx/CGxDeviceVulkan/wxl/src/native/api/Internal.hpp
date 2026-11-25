@@ -199,6 +199,8 @@ namespace wxlvk::native::render::detail
     void __cdecl RequestDepthPyramid(int wanted);
     int __cdecl GetDepthPyramid(WXL_VkDepthPyramid* out);
     int __cdecl GetFrameStats(WXL_VkFrameStats* out);
+    int __cdecl GetTextureView(const void* gxTex, VkImageView* view, VkImageLayout* layout);   // Claude LV28
+    VkCommandBuffer __cdecl BeginReplayAside();   // Claude CPU-A
     int __cdecl GetDeviceInfo(WXL_VkDeviceInfo* out);
     void* __cdecl RegisterPass(uint32_t point, const WXL_VkRenderPassDesc* desc, const char* name);
     void __cdecl UnregisterPass(void* handle);

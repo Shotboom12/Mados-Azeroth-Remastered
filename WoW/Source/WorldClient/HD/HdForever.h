@@ -1,20 +1,11 @@
 #ifndef WOW_SOURCE_WORLDCLIENT_HD_HDFOREVER_H
 #define WOW_SOURCE_WORLDCLIENT_HD_HDFOREVER_H
 
-// Waystone HD: WoW Forever light colours (not part of the original client).
-//   hdForever      0 = original 3.3.5 lights (default)
-//                  1 = lights that also exist in WoW Forever use Forever's colours
-//                      (sun, ambient, sky, fog colour, sun and cloud colours).
-//                      Fog distance, shadows, clouds layers and water keep the 3.3.5 values.
-//                      Lights Forever does not have (TBC, WotLK, Turtle) are not touched.
-//   hdForeverForce 0 = Forever setting by light (default); a setting id = use it for every light, also for
-//                  hdFog and hdGrade (to match zones Forever has no light for in our data, e.g. Ghostlands)
-//   hdForeverLight 1 = the world (ground, models, buildings) gets Forever's sun and ambient colours (default),
-//                  0 = the 3.3.5 ones, in between = a mix. Sky, fog, clouds use Forever whenever hdForever is 1.
-//                  Forever lights the world with 3 ambient colours (sky, horizon, ground; hdTerrainLight does it on the
-//                  ground) and cuts the sun in shadow. The turquoise ground of the first Amani Pass test (2026-10-19)
-//                  came from forcing setting 7624, which has the same sky and fog as 7618 but a yellow-green sun and
-//                  teal ambient like the underwater settings (light slot 1); 7618 looks like the clear-weather one.
+// World colours (Azeroth Remastered, AR1 20 nov 2026): a light slot For Ever has a setting for takes For Ever's
+// tracks; every band For Ever leaves empty, and every other light, takes the converted tracks of its LightParams
+// (forever_data\ar_world_light.txt, see HdArLight.h). Same colours as before AR1, no WotLK table read at run time.
+// forever_world_policy.txt "D" is an emergency profile only (ar_world_light.txt missing).
+// AR1 (19 nov 2026): hdForever, hdForeverForce and hdForeverLight are gone; nothing can switch back to WotLK.
 //   hdForeverInfo  read only, what was loaded:  /run print(GetCVar("hdForeverInfo"))
 // Data file: forever_data\hd_forever_light.txt (made by forever_tools\make_hd_forever_light.py).
 // Ambient:   forever_data\hd_forever_ambient.txt (made by forever_tools\make_hd_forever_ambient.py), horizon and
@@ -30,25 +21,23 @@ class LightParamsRec;
 class LightRec;
 
 namespace HD {
-    // Called by DayNight::GetLightParams. Returns the record to use for this light and slot:
-    // `original` when hdForever is off or Forever has nothing for it, else an HD record.
+    // The no-map-light constants, for a light whose LightParams is missing. No colour.
+    const LightParamsRec* DefaultLightMetadata();
+    float DefaultLightFloatBand(int32_t band);
+
+    // The LightParams to use for this light slot: a For Ever record if For Ever has a setting for it, else original.
     const LightParamsRec* ForeverLightParams(const LightRec* light, int32_t slot, const LightParamsRec* original);
 
     // The 3.3.5 LightParams ID behind a record (the HD records keep the 3.3.5 one for bands Forever leaves empty).
     int32_t RealLightParamsId(const LightParamsRec* params);
 
-    // True (and *color set) when this band comes from Forever for this record.
-    bool ForeverIntBand(const LightParamsRec* params, int32_t band, float time, CImVector* color);
+    // HD lot NUIT1: scale for the specular colour (band 9): 0 at night with hdForeverNightSpec 0; independent of hdForever.
+    float ForeverSpecularScale(float dayProgression);
 
-    // How much of Forever's colour to use for this band (0 = 3.3.5 colour, 1 = Forever's): hdForeverLight for
-    // the world light bands (0 sun, 1 ambient), 1 for the others.
-    float ForeverBandWeight(int32_t band);
+    // A colour band 0..17 (0 sun, 1 ambient, 2..7 sky/fog, 8 shadow opacity, 9..13 sun/moon/clouds, 14..17 water).
+    CImVector WorldLightBand(const LightParamsRec* params, int32_t band, float time);
 
-    // Forever's three ambient colours (0..1) for this light and slot at this time (0-2880 half-minutes), as its terrain
-    // shader gets them: sky = LightData AmbientColor, horizon = HorizonAmbientColor, ground = GroundAmbientColor,
-    // blended between Forever's time keys. A horizon or ground colour Forever leaves black is the sky colour.
-    // False when hdForever is 0 or Forever has no setting for this light (sky/horizon/ground untouched).
-    bool ForeverAmbientsAt(const LightRec* light, int32_t slot, float time, float* sky, float* horizon, float* ground);
+    // Full world values and composition: HdWorldLightingFrame.h.
 
     // One Forever fog layer (LightDataGlobalVolumeFog), as Forever's global fog shader reads it (GlobalFogParams).
     // Only the layers the Forever client draws (flag 8) are in the file. Colours 0..1, values unscaled.
@@ -85,13 +74,17 @@ namespace HD {
     };
 
     // Forever's fog for this light and slot at this time (0-2880 half-minutes), interpolated between
-    // Forever's time keys. False when Forever has no fog for this light (TBC, WotLK, Turtle lights).
+    // Forever's time keys. False if Forever has no fog for this light (TBC, WotLK or Turtle zone).
     bool ForeverFogAt(const LightRec* light, int32_t slot, float time, ForeverFog* out);
 
     // Forever's colour grading for this light and slot at this time (0-2880 half-minutes): the LUTs of the two
     // time keys around it (forever_data\grading\<lut>.blp) and how far between them (0 = lutA, 1 = lutB).
-    // False when Forever has no grading for this light. Data: forever_data\hd_forever_grading.txt.
+    // False if Forever has no grading for this light. Data: forever_data\hd_forever_grading.txt.
     bool ForeverGradingAt(const LightRec* light, int32_t slot, float time, int32_t* lutA, int32_t* lutB, float* t);
+    // HD: INT1 - Forever's light intensity (LightData column 59) as a factor for a gamma colour, 1 = none
+    float ForeverIntensityAt(const LightRec* light, int32_t slot, float time);
+    // HD: INT1 - the same factor where the camera is (area lights blended like the grading, see HdGrade.cpp)
+    float ForeverIntensityHere();
 }
 
 #endif

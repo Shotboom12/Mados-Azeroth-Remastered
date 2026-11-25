@@ -15,8 +15,8 @@ constexpr int kEffectCellPixels = kEffectGatherPixels * kEffectReduceTexels;
 constexpr float kEffectPixelsPerCell = static_cast<float>(kEffectCellPixels * kEffectCellPixels);
 constexpr int kEffectReadbackRing = 3;
 constexpr unsigned kEffectFlushAfterFrames = 4;
-constexpr int kMaxEffectLights = 12;
-constexpr int kMaxEffectClusters = 16;
+constexpr int kMaxEffectLights = 48; // Claude LV41: was 12 (a group fight)
+constexpr int kMaxEffectClusters = 64; // Claude LV41: was 16
 constexpr float kEffectThreshold = 0.05f;
 constexpr float kEffectNearestYards = 0.5f;
 constexpr float kEffectFarthestYards = 80.0f;
@@ -208,7 +208,7 @@ float EffectIntensity(float litArea);
 float EffectSurfaceReach(float intensity);
 void EffectFlashColour(const float* measured, float* out);
 void EffectLightColour(const float* measured, float* out);
-// HD L10: spell light tuning (gain on intensity, 1 = pure measured colour without the lift toward white)
+// Claude L10: spell light tuning (gain on intensity, 1 = pure measured colour without the lift toward white)
 void SetEffectTuning(float gain, bool pureColour);
 void EffectPlayerZone(const float* feet, float facing, float pivotHeight, float* centre);
 bool EffectHandGlows(uint32_t playerClass);

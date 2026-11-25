@@ -1,3 +1,4 @@
+#include "Engine/Source/Base/HdCpuF.h" // CPU-F
 // Device memory: the memory-type choice, a sub-allocator over a few large blocks, and buffers.
 // Copyright (C) 2026 WarcraftXL
 //
@@ -16,8 +17,10 @@
 
 
 #include "vulkan/memory/Internal.hpp"
+#include "native/record/RecordThread.hpp"
 
 using namespace wxlvk::vk::memory::detail;
+namespace { HD::CpuF::CoherentMemo<kMaxSlots> cpuFMemoryTypes; }
 
 namespace wxlvk::vk::memory
 {
@@ -87,6 +90,7 @@ namespace wxlvk::vk::memory
 
     bool Allocate(const VkMemoryRequirements& req, Where where, Block& out)
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         if (!s.ready)
         {
             wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: memory: Allocate() before Init()");
@@ -178,11 +182,13 @@ namespace wxlvk::vk::memory
         out.mapped = owner.base ? static_cast<char*>(owner.base) + static_cast<size_t>(offset) : nullptr;
         out.owner  = slot;
         out.index  = s.generation[slot];
+        cpuFMemoryTypes.Publish(slot, out.index, (owner.flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0);
         return true;
     }
 
     void Free(const Block& block)
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         if (block.memory == VK_NULL_HANDLE || block.size == 0) return;
         if (!s.ready || block.owner >= kMaxSlots) return;
 
@@ -210,6 +216,7 @@ namespace wxlvk::vk::memory
 
     void Tick()
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         if (!s.ready) return;
         ++s.tick;
         // A block that has stayed empty for kReturnAfterTicks presents goes back to the driver,
@@ -242,6 +249,7 @@ namespace wxlvk::vk::memory
 
     bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Where where, Buffer& out)
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         if (!s.ready)
         {
             wxl::ScriptMgr::Log(WXL_LOG_WARN, "vulkan: memory: CreateBuffer() before Init()");
@@ -295,6 +303,7 @@ namespace wxlvk::vk::memory
 
     void DestroyBuffer(Buffer& buf)
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         if (buf.handle == VK_NULL_HANDLE && buf.block.memory == VK_NULL_HANDLE) return;
 
         if (buf.handle != VK_NULL_HANDLE)
@@ -312,6 +321,7 @@ namespace wxlvk::vk::memory
 
     bool Staging(VkDeviceSize size, Buffer*& out)
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         if (s.staging.handle != VK_NULL_HANDLE && s.staging.size >= size)
         {
             out = &s.staging;
@@ -353,8 +363,30 @@ namespace wxlvk::vk::memory
         return true;
     }
 
+    bool HostCoherent(const Block& block)
+    {
+        wxlvk::recordthread::MemoryGuard guard;
+        if (!s.ready || !block.mapped || block.owner >= kMaxSlots) return false;
+        const Slot& slot = s.slots[block.owner];
+        return slot.memory == block.memory && (slot.flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    }
+
     bool FlushHost(const Block& block)
     {
+        // HOST_COHERENT already returned true without a Vulkan call below. Keep that
+        // answer using immutable allocation metadata, before acquiring the global mutex.
+        // Lifetime/safe publication of this live Block remain the caller's contract.
+        if (HD::CpuF::On(HD::CpuF::Coherent) && block.memory != VK_NULL_HANDLE && block.mapped &&
+            cpuFMemoryTypes.Matches(block.owner, block.index)) {
+            HD::CpuF::CoherentWrite();
+            const uint32_t check = HD::CpuF::proof.load(std::memory_order_relaxed);
+            if (!check) return true;
+            const bool same = HostCoherent(block); // locked original lookup, proof only
+            HD::CpuF::Record(check, same);
+            HD::CpuF::flushChecked.fetch_add(1, std::memory_order_relaxed);
+            if (same) return true;
+        }
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         if (block.memory == VK_NULL_HANDLE || !s.ready || block.owner >= kMaxSlots) return true;
 
         const Slot& slot = s.slots[block.owner];
@@ -381,6 +413,7 @@ namespace wxlvk::vk::memory
 
     void Stats(uint64_t& vkAllocateMemoryCalls, uint64_t& bytesReserved, uint64_t& bytesInUse)
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         vkAllocateMemoryCalls = s.allocateCalls;
         bytesReserved         = s.reserved;
         bytesInUse            = s.inUse;
@@ -388,6 +421,7 @@ namespace wxlvk::vk::memory
 
     void GetDetail(Detail& out)
     {
+        wxlvk::recordthread::MemoryGuard hdMt;   // HD MT2: the record thread can make a ring spill buffer
         out = Detail();
         out.reservedPeak   = s.reservedPeak;
         out.mapped         = s.mapped;

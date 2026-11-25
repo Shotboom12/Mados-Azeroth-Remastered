@@ -19,7 +19,11 @@ Already using BRUME1? Download `WaystoneHD-English-v1.0.4.zip` from the latest r
 
 ## Source version
 
-The native renderer source files retained in this repository predate the November 24 BRUME1 binary package. The `Interface/AddOns/WaystoneHD` folder is updated separately to the English v1.0.4 addon based on the November 24 package. No matching updated source was supplied with that package. The native source files are preserved for reference and are not presented as the source that reproduces the latest downloadable binaries. GitHub's automatically generated source archives contain the older native source plus the updated English addon; players should download the attached player ZIP instead.
+The repository now includes Madominator's supplied **BRUME1 source drop**, received November 25, 2026 as two ZIP parts. Native source and shader content changes have been imported; files differing only in line endings keep the repository's existing bytes. The English v1.0.4 WaystoneHD panel is retained and its French base matches the addon supplied with the BRUME1 source.
+
+This is a source publication, not a new renderer build. Compilation and exact reproduction of the published binaries have not been verified. See [BRUME1 provenance and exclusions](NOTICE.md#brume1-source-update--november-25-2026) and [import verification](docs/BRUME1-source-import-20261125.json).
+
+Download current source using **Code â†’ Download ZIP**, or clone this repository. The automatic source archives on the earlier v1.0.4 release remain its historical tag snapshot; the full English player package remains attached to that release.
 
 ## Source build requirements
 
@@ -39,3 +43,4 @@ Saty's work and contributions from:
 - TOMRUS, for the initial IDB
 - Everyone who has reported bugs so far
 - The WoW modding community
+

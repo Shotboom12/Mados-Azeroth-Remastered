@@ -27,7 +27,8 @@ uint64_t Key(const CM2Light*l){uintptr_t p=reinterpret_cast<uintptr_t>(l),first=
 }
 void Init(){if(initialized)return;repair=Var("hdModelLampRepair","HD: bounded real lamp selection for M2, before shader permutation; 0 off");producer=Var("hdLampMaterialDelta","HD: isolate the selected real lamp in material shaders; 0 off");info=Var("hdLampInfo","HD: selected lamps and actual vertex shader consumption");probe=Var("hdLampProbe","HD: explicit test light pinned 4 yards ahead of the camera; 0 off, 1 debug only");initialized=true;}
 bool Enabled(){return Vulkan()&&repair&&repair->m_intValue==1;}
-bool ProducerEnabled(){auto*sun=CVar::LookupRegistered("hdSunDebug");return producerReady&&Vulkan()&&producer&&producer->m_intValue==1&&(!sun||sun->m_intValue==0);}
+bool ProducerEnabled(){static CVar*sunVar=nullptr;if(!sunVar)sunVar=CVar::LookupRegistered("hdSunDebug");auto*sun=sunVar; // HD C1: looked up once (it was a name hash per draw, ~4 % of the engine thread)
+ return producerReady&&Vulkan()&&producer&&producer->m_intValue==1&&(!sun||sun->m_intValue==0);}
 void Track(CM2Light*l,uint64_t model){if(!Enabled()&&!ProducerEnabled())return;if(!l||l->m_type!=M2LIGHT_POINT||!l->m_scene)return;Sample s;s.owner=reinterpret_cast<uintptr_t>(l);s.model=model;s.scene=reinterpret_cast<uintptr_t>(l->m_scene);s.position={l->m_pos.x,l->m_pos.y,l->m_pos.z};s.color={l->m_dirColor.x,l->m_dirColor.y,l->m_dirColor.z};s.constant=l->m_constantAttenuation;s.linear=l->m_linearAttenuation;s.quadratic=l->m_quadraticAttenuation;s.visible=l->m_visible!=0;s.stamp=l->m_stamp;registry.Track(s);}
 void Forget(CM2Light*l){if(!registry.Count())return;uint64_t key=Key(l);registry.Forget(reinterpret_cast<uintptr_t>(l));if(key&&key==chosenKey){chosenKey=0;frozen={};}}
 void ClearScene(){registry.Clear();chosenKey=0;frozen={};frameSerial=0;drawSlots=0;modelOwner=0;pixelDraw=false;}
@@ -61,5 +62,7 @@ void SetProducerReady(bool ready){producerReady=ready;}
 void UnsafeDepthDraw(){safe=false;}
 bool FrameSafe(){return safe;}
 float Metadata(float native,const char*hash,const float rows[][4]){Trace(hash,rows);if(!ProducerEnabled())return Encode(native,0,false);auto*found=FindAudit(hash);bool supported=found&&(found->kind!=2||pixelDraw);uint32_t mask=supported?DrawSlots():0;return Encode(native,mask,ProducerEnabled()&&supported)+(supported&&pixelDraw?float(PixelBit):0)+(supported&&modelOwner&&frozen.model==modelOwner?float(EmitterBit):0);}
+// Claude B3: what Metadata gives after SnapshotPixelDraw(mask) (no model owner), without its trace.
+float MetadataSlots(float native,const char*hash,uint32_t mask){if(!ProducerEnabled())return Encode(native,0,false);auto*found=FindAudit(hash);const bool supported=found!=nullptr;return Encode(native,supported?mask&15u:0u,supported)+(supported?float(PixelBit):0);}
 void Tick(){if(!Vulkan()||GetTickCount64()-last<500)return;last=GetTickCount64();char s[480];const auto*sun=CVar::LookupRegistered("hdSunDebug");const char*state=producer&&producer->m_intValue==1?(!producerReady?"backend/shaders missing":sun&&sun->m_intValue!=0?"sun debug overlay active":"ready"):"off";std::snprintf(s,sizeof s,"producer %s; tracked %u, repair %llu (empty %llu), model/WMO draws %llu, RGB slots %llu, shader reads %llu, ignored %llu, unknown %llu [%s], shadow key %llu, overflow %llu",state,registry.Count(),repairs,empty,blocks,slots,actual,unused,unknown,missing,chosenKey,registry.Dropped());if(info)info->Set(s,true,false,false,false);repairs=empty=blocks=slots=actual=unused=unknown=0;}
 }

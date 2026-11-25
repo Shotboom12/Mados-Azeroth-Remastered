@@ -18,12 +18,15 @@
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
 #include "Engine/Source/Gx/Types.h"
 #include "WoW/Source/WorldClient/HD/HdGxShader.h"
+#include "WoW/Source/WorldClient/HD/HdShaderBuild.h" // Claude BLZ1
 #include "Engine/Source/Tempest/C3Vector.h" // HD: hdLights
 #include "Engine/Source/Tempest/CAaSphere.h" // HD: hdLights
 #include "WoW/Source/DB/Rec/LightRec.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
-#include "WoW/Source/WorldClient/HD/HdForever.h"
+#include "WoW/Source/WorldClient/HD/HdWorldLightingFrame.h"
 #include "WoW/Source/WorldClient/HD/HdLights.h" // HD: hdLights
+#include "WoW/Source/WorldClient/MapChunk.h" // Claude B3
+#include "WoW/Source/WorldClient/HD/HdLightTrace.h" // Claude LT1
 
 namespace {
     // Terrain vertex shader. Source of truth: the 3.3.5 shader rewritten from its bytecode (Shaders\Vertex\vs_3_0\
@@ -170,7 +173,7 @@ void main(
     oDirect = float4(0.0, 0.0, 0.0, fog);
     [branch] if (cHdLight.z > 0.5) {
         // HD: Forever. Ambient: horizon colour for a wall, sky colour for flat ground facing up, ground colour for an
-        // overhang; the client's ambient is the sky colour (Forever's when hdForeverLight is 1, so horizon and ground
+        // overhang; the client's ambient is the sky colour (from the resolved For Ever world catalogue, so horizon and ground
         // are then Forever's own colours). Then a wrap of the sun over it, and the sun on its own.
         float3 nn = normalize(n);
         float up = dot(normalize(cWorldView[2].xyz), nn);
@@ -617,8 +620,6 @@ void main(
 }
 )HLSL";
 
-    typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
-
     // Families of compiled code: 0 = vertex (128), 1 = Terrain1 (32), 2 = Terrain3 (96), 3 = Terrain3_pcf (96)
     const int32_t kFamilyCount[4] = { 128, 32, 96, 96 };
     const int32_t kOursMark = 0x4844544C; // 'HDTL' in CGxShader::unused_0028: the shader holds our code
@@ -630,125 +631,57 @@ void main(
     char s_threadInfo[260] = "";             // written by the compile thread before s_state changes to Ready/Failed
     int32_t s_shownState = -1;
     int32_t s_inUse = 0;                     // shaders holding our code right now (shown in hdTerrainInfo)
+    char s_errorInfo[300] = "";              // Claude BLZ1: the last shader we could not give our code (Refuse)
 
-    std::map<CGxShader*, std::vector<uint8_t> > s_original; // Blizzard's code of each shader we changed
     struct Retired { IUnknown* object; ULONGLONG time; };
     std::vector<Retired> s_retired;          // D3D shaders we replaced, released a little later (may still be bound)
 
     CVar* s_light = nullptr;
-    CVar* s_hemi = nullptr;
     CVar* s_ambient = nullptr;
     CVar* s_info = nullptr;
+    CVar* s_sunFix = nullptr;     // HD RM9 (Claude): see hdTerrainSunFix
+    CVar* s_sunFixEdge = nullptr;
+    CVar* s_linear = nullptr;     // HD lot LIN1: hdTerrainLinear
 
     void RegisterCVars() {
         static bool registered = false;
         if (registered) return;
         registered = true;
         HD::ShaderCVars(); // HD: hdShaderDump
-        s_light = CVar::Register("hdTerrainLight", "HD: 1 = WoW Forever terrain lighting, 2 = our shaders with 3.3.5 lighting, 3 = test view (sun after shadow only), 0 = Blizzard shaders", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        s_light = CVar::Register("hdTerrainLight", "Azeroth Remastered: 1 = our ground lighting, 3 = test view (sun after shadow only). No other value (AR1)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_ambient = CVar::Register("hdLightAmbient", "HD: ambient strength on the ground in Forever lighting, 1 = Forever's (test only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-        s_hemi = CVar::Register("hdTerrainHemi", "HD test: 1 = Forever hemisphere ambient, 0 = none (horizon = ground = sky), 2 = ratios frozen", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
         s_info = CVar::Register("hdTerrainInfo", "HD: hdTerrainLight status (read only)", 0, "not started", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        // HD RM9 (Claude, 2026-11-09): the sun on the ground at the foot of slopes (Forever lighting, Vulkan modules
+        // only; the D3D9 HLSL above ignores c49.xy). The slope's per-vertex N.L used to spill a grey band onto the flat
+        // ground next to it.
+        s_sunFix = CVar::Register("hdTerrainSunFix", "HD: sun at the foot of slopes. 0 = as before (per vertex), 1 = triangle normal on flatter triangles, 2 = per pixel only, 3 = smooth (default): the vertices' N.L blended leaning to the lit ones, no spill and no facets", 1, "3", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        // HD lot LIN1 (Claude, 2026-11-11): WoW For Ever's LINEAR lighting path for the ground (its terrain.bls,
+        // cb5[172].y > 0): colours ^2.2, ambient * (0.456263 + 0.777023 * (0.5 N.L + 0.5)), ambient + sun summed in
+        // linear light, ^(1/2.2) at the end. 0 = the gamma path used until now (ambient * (0.9 + 0.2 N.L), gamma sum).
+        s_linear = CVar::Register("hdTerrainLinear", "HD: 1 = Forever's linear lighting on the ground (darker nights, like Forever), 0 = gamma path (before)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+        s_sunFixEdge = CVar::Register("hdTerrainSunFixSharp", "HD: sharpness of hdTerrainSunFix (1: how fast a flatter triangle takes its own normal; 3: lean to the lit vertices = value / 5). 1 to 200, 40 = default", 1, "40", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     }
 
     float Clamp(float v, float lo, float hi) {
         return v < lo ? lo : (v > hi ? hi : v);
     }
 
-    // Forever's sky, horizon and ground ambient for one light: clear weather blended to storm like hdFog does.
-    bool LightAmbients(const LightRec* light, float time, float storm, float (*amb)[3]) {
-        if (!HD::ForeverAmbientsAt(light, 0, time, amb[0], amb[1], amb[2])) return false;
-        float stormAmb[3][3];
-        if (storm > 0.0f && HD::ForeverAmbientsAt(light, 2, time, stormAmb[0], stormAmb[1], stormAmb[2])) {
-            for (int32_t k = 0; k < 3; k++) {
-                for (int32_t c = 0; c < 3; c++) amb[k][c] += (stormAmb[k][c] - amb[k][c]) * storm;
-            }
-        }
-        return true;
-    }
-
-    // The horizon / sky and ground / sky ratios (per channel) of Forever's ambients where the camera is: the zone
-    // light, then the nearby area lights blended in by distance, nearest last (same walk as hdFog's fog). The shader
-    // multiplies the client's ambient (the sky colour) by them, so with hdForeverLight 1 it gets Forever's own horizon
-    // and ground colours. A light Forever has no setting for counts as horizon = ground = sky (no hemisphere).
-    void CurrentHemisphere(float* horizon, float* ground) {
-        float amb[3][3] = { { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f } };
-        const DayNight::DNInfo& info = DayNight::g_dnInfo;
-        const TSGrowableArray<const LightRec*>& lights = DayNight::g_areaLights;
-        if (lights.m_count) {
-            float time = HD::DayNightBandTime(info.m_dayProgression * 2880.0f);
-            float storm = info.m_stormBlend;
-            float none[3][3] = { { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f } };
-            if (!LightAmbients(lights.m_data[0], time, storm, amb)) memcpy(amb, none, sizeof(amb));
-
-            struct Near { const LightRec* light; float distSq; float weight; };
-            Near nearLights[32];
-            int32_t count = 0;
-            for (uint32_t i = 1; i < lights.m_count && count < 32; i++) {
-                const LightRec* light = lights.m_data[i];
-                float dx = info.m_lightRefPos.x - light->m_gameCoords[0];
-                float dy = info.m_lightRefPos.y - light->m_gameCoords[1];
-                float dz = info.m_lightRefPos.z - light->m_gameCoords[2];
-                float distSq = dx * dx + dy * dy + dz * dz;
-                if (distSq >= light->m_gameFalloffEnd * light->m_gameFalloffEnd) continue;
-                float distance = sqrtf(distSq);
-                float weight = 1.0f;
-                if (distance > light->m_gameFalloffStart) {
-                    float span = light->m_gameFalloffEnd - light->m_gameFalloffStart;
-                    weight = span > 0.0f ? Clamp(1.0f - (distance - light->m_gameFalloffStart) / span, 0.0f, 1.0f) : 0.0f;
-                }
-                if (weight <= 0.0f) continue;
-                nearLights[count].light = light;
-                nearLights[count].distSq = distSq;
-                nearLights[count].weight = weight;
-                count++;
-            }
-            for (int32_t i = 1; i < count; i++) {
-                Near n = nearLights[i];
-                int32_t j = i - 1;
-                while (j >= 0 && nearLights[j].distSq < n.distSq) { nearLights[j + 1] = nearLights[j]; j--; }
-                nearLights[j + 1] = n;
-            }
-            for (int32_t i = 0; i < count; i++) {
-                float other[3][3];
-                if (!LightAmbients(nearLights[i].light, time, storm, other)) memcpy(other, none, sizeof(other));
-                float w = nearLights[i].weight;
-                for (int32_t k = 0; k < 3; k++) {
-                    for (int32_t c = 0; c < 3; c++) amb[k][c] += (other[k][c] - amb[k][c]) * w;
-                }
-            }
-        }
-        for (int32_t c = 0; c < 3; c++) {
-            // a channel Forever leaves at 0 in the sky colour has no ratio: keep the sky's (1)
-            if(HD::DayNightSmoothingEnabled()){
-                horizon[c]=HD::DayNightMath::AmbientRatio(amb[0][c],amb[1][c]);ground[c]=HD::DayNightMath::AmbientRatio(amb[0][c],amb[2][c]);
-            }else{
-                horizon[c] = amb[0][c] > 0.001f ? Clamp(amb[1][c] / amb[0][c], 0.0f, 4.0f) : 1.0f;
-                ground[c] = amb[0][c] > 0.001f ? Clamp(amb[2][c] / amb[0][c], 0.0f, 4.0f) : 1.0f;
-            }
-        }
-    }
-
-    // HD: the light walk is per frame, not per chunk or per building batch: redo it once per visual frame in smooth mode (50 ms in diagnostic mode)
-    // (shared by the terrain and the buildings, HdMapObj.cpp)
-    ULONGLONG s_hemiTime = 0;
-    uint64_t s_hemiFrame=~uint64_t(0);
-    float s_horizonRatio[3] = { 1.0f, 1.0f, 1.0f };
-    float s_groundRatio[3] = { 1.0f, 1.0f, 1.0f };
+    // One published DayNight composition, no second spatial/zone/weather walk.
+    // Revision follows actual publication, including map changes and fixed time.
+    uint64_t s_hemiRevision = ~uint64_t(0);
+    bool s_hemiValid = false;
+    float s_horizonRatio[3] = {1, 1, 1};
+    float s_groundRatio[3] = {1, 1, 1};
 
     void RefreshHemisphere() {
-        if(HD::DayNightSmoothingEnabled()){
-            const uint64_t frame=HD::DayNightFrameSerial();if(s_hemiFrame==frame)return;s_hemiFrame=frame;
-        }else{ULONGLONG now=GetTickCount64();if(s_hemiTime&&now-s_hemiTime<50)return;s_hemiTime=now;}
-        int32_t hemi = s_hemi ? s_hemi->m_intValue : 1;
-        if (hemi == 2) return; // HD test: keep the last ratios
-        CurrentHemisphere(s_horizonRatio, s_groundRatio);
-        if (hemi == 0) {
-            for (int32_t c = 0; c < 3; c++) s_horizonRatio[c] = s_groundRatio[c] = 1.0f;
-        }
+        const uint64_t revision = HD::WorldLightRevision();
+        if (s_hemiRevision == revision) return;
+        s_hemiValid = HD::CurrentWorldHemisphere(s_horizonRatio, s_groundRatio);
+        s_hemiRevision = revision;
     }
 
-    void Decode(int32_t family, int32_t p, D3D_SHADER_MACRO* macros, char (*values)[4]) {
+    // Claude BLZ1: the defines of one permutation.
+    void Decode(int32_t family, int32_t p, HD::ShaderBuild::Job& job) {
         const char* names[6];
         int32_t v[6];
         int32_t n = 6;
@@ -774,52 +707,34 @@ void main(
             names[4] = "UNLIT_MASK";   v[4] = p / 48;
             names[5] = "PCF";          v[5] = family == 3;
         }
-        for (int32_t i = 0; i < n; i++) {
-            snprintf(values[i], 4, "%d", v[i]);
-            macros[i].Name = names[i];
-            macros[i].Definition = values[i];
-        }
-        macros[n].Name = nullptr;
-        macros[n].Definition = nullptr;
+        for (int32_t i = 0; i < n; i++) job.Define(names[i], v[i]);
     }
 
-    // Compile thread: every permutation, all or nothing.
+    // Compile thread: every permutation, all or nothing (Claude BLZ1: from HD\ShaderCache when it holds them, else on
+    // every core; the world load waits for it, HD::TerrainShadersWait).
     void CompileAll() {
-        ULONGLONG start = GetTickCount64();
-        HMODULE module = LoadLibraryA("d3dcompiler_47.dll");
-        D3DCompileFn compile = module ? reinterpret_cast<D3DCompileFn>(GetProcAddress(module, "D3DCompile")) : nullptr;
-        if (!compile) {
-            snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: d3dcompiler_47.dll not found, Blizzard shaders kept");
+        static const char* kFamilyName[4] = { "Terrain (vertex)", "Terrain1", "Terrain3", "Terrain3_pcf" };
+        std::vector<HD::ShaderBuild::Job> jobs;
+        for (int32_t family = 0; family < 4; family++) {
+            for (int32_t p = 0; p < kFamilyCount[family]; p++) {
+                HD::ShaderBuild::Job job;
+                Decode(family, p, job);
+                job.source = family == 0 ? kVertexShader : kPixelShader;
+                job.name = family == 0 ? "HdTerrainVS" : "HdTerrainPS";
+                job.profile = family == 0 ? "vs_3_0" : "ps_3_0";
+                job.out = &s_code[family][p];
+                job.what = kFamilyName[family];
+                job.index = p;
+                jobs.push_back(job);
+            }
+        }
+        if (!HD::ShaderBuild::Build("HdTerrain", jobs, s_threadInfo, sizeof(s_threadInfo))) {
             s_state.store(StateFailed);
             return;
         }
-        static const char* kFamilyName[4] = { "Terrain (vertex)", "Terrain1", "Terrain3", "Terrain3_pcf" };
-        int32_t total = 0;
-        for (int32_t family = 0; family < 4; family++) {
-            for (int32_t p = 0; p < kFamilyCount[family]; p++) {
-                D3D_SHADER_MACRO macros[7];
-                char values[6][4];
-                Decode(family, p, macros, values);
-                const char* source = family == 0 ? kVertexShader : kPixelShader;
-                ID3DBlob* code = nullptr;
-                ID3DBlob* errors = nullptr;
-                HRESULT hr = compile(source, strlen(source), family == 0 ? "HdTerrainVS" : "HdTerrainPS", macros, nullptr, "main", family == 0 ? "vs_3_0" : "ps_3_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
-                if (FAILED(hr) || !code) {
-                    snprintf(s_threadInfo, sizeof(s_threadInfo), "ERROR: %s %d: %s", kFamilyName[family], p, errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown");
-                    if (errors) errors->Release();
-                    if (code) code->Release();
-                    s_state.store(StateFailed);
-                    return;
-                }
-                if (errors) errors->Release();
-                const uint8_t* bytes = static_cast<const uint8_t*>(code->GetBufferPointer());
-                s_code[family][p].assign(bytes, bytes + code->GetBufferSize());
-                HD::ShaderDump("HdTerrain", family != 0, family, p, bytes, code->GetBufferSize()); // HD: hdShaderDump
-                code->Release();
-                total++;
-            }
-        }
-        snprintf(s_threadInfo, sizeof(s_threadInfo), "%d shaders compiled in %u ms", total, static_cast<uint32_t>(GetTickCount64() - start));
+        for (int32_t family = 0; family < 4; family++)
+            for (int32_t p = 0; p < kFamilyCount[family]; p++)
+                HD::ShaderDump("HdTerrain", family != 0, family, p, &s_code[family][p][0], s_code[family][p].size()); // HD: hdShaderDump
         s_state.store(StateReady);
     }
 
@@ -827,7 +742,8 @@ void main(
         s_shownState = state;
         if (!s_info) return;
         char text[300];
-        if (state == StateCompiling) snprintf(text, sizeof(text), "compiling (Blizzard shaders until done)");
+        if (s_errorInfo[0]) snprintf(text, sizeof(text), "%s", s_errorInfo); // Claude BLZ1: an error stays shown
+        else if (state == StateCompiling) snprintf(text, sizeof(text), "compiling (the world load waits for it)");
         else if (state == StateIdle) snprintf(text, sizeof(text), "not started");
         else if (state == StateReady) snprintf(text, sizeof(text), "%s, %d in use", s_threadInfo, s_inUse);
         else snprintf(text, sizeof(text), "%s", s_threadInfo);
@@ -863,6 +779,26 @@ void main(
     }
 }
 
+namespace {
+    // Claude BLZ1: a terrain shader we could not give our code. It is an ERROR, shown in hdTerrainInfo and the log
+    // (once per shader), never a quiet return to Blizzard's look: it has to be fixed, not lived with.
+    void Refuse(CGxShader* shader, const char* why) {
+        static std::map<CGxShader*, bool> s_refused;
+        if (s_refused[shader]) return;
+        s_refused[shader] = true;
+        char text[300];
+        snprintf(text, sizeof(text), "ERROR: %s not ours: %s", shader->m_key.m_str ? shader->m_key.m_str : "(no name)", why);
+        snprintf(s_errorInfo, sizeof(s_errorInfo), "%s", text);
+        ShowState(s_state.load());
+        HD::ShaderBuild::Error(text);
+    }
+}
+
+void HD::TerrainShadersWait() {
+    HD::TerrainShadersStart();
+    HD::ShaderBuild::Wait(s_state, StateCompiling);
+}
+
 void HD::TerrainShadersStart() {
     RegisterCVars();
     int32_t expected = StateIdle;
@@ -876,38 +812,75 @@ void HD::TerrainShader(CGxShader* shader, int32_t kind, int32_t permutation) {
     int32_t state = s_state.load();
     if (state != s_shownState) ShowState(state);
 
-    bool want = state == StateReady && s_light && s_light->m_intValue != 0;
-    bool ours = shader->unused_0028 == kOursMark;
-    if (want == ours) return;
+    // Claude BLZ1: once ours, always ours; there is no way back to Blizzard's code. The world load waited for the
+    // compile (HD::TerrainShadersWait), so a terrain draw never finds it still compiling.
+    if (shader->unused_0028 == kOursMark) return;
+    if (state != StateReady) { Refuse(shader, state == StateFailed ? s_threadInfo : "drawn before the compile finished"); return; }
 
     ReleaseRetired(false);
-    if (!HD::ShaderSwapDevice()) return; // HD: D3D9, or Vulkan through the translated modules
-
-    if (!want) {
-        std::map<CGxShader*, std::vector<uint8_t> >::iterator it = s_original.find(shader);
-        if (it != s_original.end() && !it->second.empty()) SetCode(shader, &it->second[0], static_cast<uint32_t>(it->second.size()));
-        shader->unused_0028 = 0;
-        s_inUse--;
-        ShowState(state);
-        return;
-    }
+    if (!HD::ShaderSwapDevice()) { Refuse(shader, "device without shader swap (gxApi must be vulkan)"); return; }
 
     int32_t family = kind == HD::TerrainVertex ? 0 : (kind == HD::TerrainPixel1 ? 1 : 2);
     if (family == 2 && shader->m_key.m_str && strstr(shader->m_key.m_str, "_pcf")) family = 3;
-    if (permutation < 0 || permutation >= kFamilyCount[family]) return;
+    if (permutation < 0 || permutation >= kFamilyCount[family]) { Refuse(shader, "unknown permutation"); return; }
 
     // Only over the shader model 3 code (a ps_2_x or OpenGL device keeps Blizzard's shaders)
     uint32_t version = family == 0 ? 0xFFFE0300u : 0xFFFF0300u;
-    if (shader->m_code.Count() < 4 || *reinterpret_cast<const uint32_t*>(shader->m_code.m_data) != version) return;
+    if (shader->m_code.Count() < 4 || *reinterpret_cast<const uint32_t*>(shader->m_code.m_data) != version) { Refuse(shader, "not shader model 3"); return; }
     const std::vector<uint8_t>& code = s_code[family][permutation];
-    if (code.size() < 4) return;
-    if (!HD::ShaderKnown(&code[0], code.size())) return; // HD: Vulkan without its translated module: Blizzard's
+    if (code.size() < 4) { Refuse(shader, "no code for this permutation"); return; }
+    if (!HD::ShaderKnown(&code[0], code.size())) { Refuse(shader, "no translated Vulkan module (manifest)"); return; }
 
-    s_original[shader].assign(shader->m_code.m_data, shader->m_code.m_data + shader->m_code.Count());
     SetCode(shader, &code[0], static_cast<uint32_t>(code.size()));
     shader->unused_0028 = kOursMark;
     s_inUse++;
     ShowState(state);
+}
+
+// Claude LT1: once per recorded frame, at the first ground draw: the game's own light (DayNight), the For Ever hemisphere
+// ratios and the ground settings every chunk of this frame is drawn with.
+static void TraceGroundFrame(const C3Vector* camera) {
+    if (!HD::LightTrace::Active()) return;
+    static uint32_t traced = 0;
+    const uint32_t frame = HD::LightTrace::Frame();
+    if (frame == traced) return;
+    traced = frame;
+    RefreshHemisphere();
+    const DayNight::DNInfo& info = DayNight::g_dnInfo;
+    HD::LightTrace::Set("dn.day", info.m_dayProgression);
+    HD::LightTrace::Set("dn.storm", info.m_stormBlend);
+    HD::LightTrace::Set("dn.weather", info.m_weatherIntensity);
+    HD::LightTrace::Set("dn.flash", static_cast<float>(info.m_flashBlend));
+    HD::LightTrace::Set("dn.interiorFog", info.m_interiorFogBlend);
+    auto color = [](const char* key, const CImVector& c) {
+        const float rgb[3] = {c.r / 255.0f, c.g / 255.0f, c.b / 255.0f};
+        HD::LightTrace::SetRgb(key, rgb);
+    };
+    color("dn.light0.ambient", info.m_light0.m_ambient);
+    color("dn.light0.diffuse", info.m_light0.m_diffuse);
+    color("dn.light1.ambient", info.m_light1.m_ambient);
+    color("dn.light1.diffuse", info.m_light1.m_diffuse);
+    color("dn.fog", info.m_fog.m_color);
+    HD::LightTrace::Set("dn.fog.start", info.m_fog.m_start);
+    HD::LightTrace::Set("dn.fog.end", info.m_fog.m_end);
+    const float dir[3] = {info.m_light0.m_dir.x, info.m_light0.m_dir.y, info.m_light0.m_dir.z};
+    HD::LightTrace::SetRgb("dn.light0.dir", dir);
+    HD::LightTrace::Set("dn.nearLights", static_cast<float>(info.m_nearLightCount));
+    char k[48];
+    for (uint32_t i = 0; i < info.m_nearLightCount && i < 5; i++) {
+        snprintf(k, sizeof(k), "dn.near%u.id", i); HD::LightTrace::Set(k, static_cast<float>(info.m_nearLight[i] ? info.m_nearLight[i]->m_id : -1));
+        snprintf(k, sizeof(k), "dn.near%u.blend", i); HD::LightTrace::Set(k, info.m_nearLightBlend[i]);
+    }
+    const float ref[3] = {info.m_lightRefPos.x, info.m_lightRefPos.y, info.m_lightRefPos.z};
+    HD::LightTrace::SetRgb("dn.lightRef", ref);
+    if (camera) { const float cam[3] = {camera->x, camera->y, camera->z}; HD::LightTrace::SetRgb("cam", cam); }
+    HD::LightTrace::SetRgb("ground.horizonRatio", s_horizonRatio);
+    HD::LightTrace::SetRgb("ground.groundRatio", s_groundRatio);
+    HD::LightTrace::Set("ground.ambientStrength", HD::LightAmbientStrength());
+    HD::LightTrace::Set("ground.mode", static_cast<float>(HD::LightModeOf(s_light)));
+    HD::LightTrace::Set("ground.worldCompositionValid", s_hemiValid ? 1.0f : 0.0f);
+    HD::LightTrace::Set("ground.linear", s_linear && s_linear->m_intValue != 0 ? 1.0f : 0.0f);
+    HD::LightTrace::Set("ground.lightsMode", static_cast<float>(HD::LightsMode()));
 }
 
 void HD::TerrainVertexConstants(const CAaSphere* sphere, CM2Scene* scene, const C3Vector* camera, const C3Vector* ground, int32_t groundCount) {
@@ -916,16 +889,18 @@ void HD::TerrainVertexConstants(const CAaSphere* sphere, CM2Scene* scene, const 
 #endif
     RegisterCVars();
     if (!g_theGxDevicePtr) return;
+    TraceGroundFrame(camera); // Claude LT1
     RefreshHemisphere(); // HD: shared with the buildings (HD::TerrainHemisphere)
 
     float constants[20];
-    constants[0] = 0.0f;
-    constants[1] = 0.0f;
-    int32_t mode = s_light ? s_light->m_intValue : 1;
-    constants[2] = mode == 1 || mode == 3 ? 1.0f : 0.0f; // Forever lighting
+    // HD RM9: c49.x = hdTerrainSunFix, c49.y = hdTerrainSunFixSharp; read only by the Vulkan terrain modules
+    constants[0] = s_sunFix ? static_cast<float>(s_sunFix->m_intValue < 0 ? 0 : (s_sunFix->m_intValue > 3 ? 3 : s_sunFix->m_intValue)) : 0.0f;
+    constants[1] = s_sunFixEdge ? Clamp(s_sunFixEdge->m_floatValue, 1.0f, 200.0f) : 40.0f;
+    const int32_t mode = HD::LightModeOf(s_light);
+    constants[2] = 1.0f;                                 // our lighting, always (AR1)
     constants[3] = mode == 3 ? 1.0f : 0.0f;              // test view
     constants[4] = HD::LightAmbientStrength();
-    constants[5] = 0.0f;
+    constants[5] = s_linear && s_linear->m_intValue != 0 ? 1.0f : 0.0f; // HD lot LIN1: c50.y, Vulkan modules only
     constants[6] = 0.0f;
     constants[7] = 0.0f;
     for (int32_t c = 0; c < 3; c++) {
@@ -943,16 +918,46 @@ void HD::TerrainVertexConstants(const CAaSphere* sphere, CM2Scene* scene, const 
     constants[18] = camera ? camera->z : 0.0f;
     constants[19] = perPixel ? 1.0f : 0.0f;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 49, constants, 5);
-    if (mode == 0) return; // HD: Blizzard's shaders read no pixel constant of ours
 
     // HD: pixel c16 = (Forever lighting, test view, point light count, lights test view), c17.. = the lights
     float pixel[4 + 16 * HD::kLightsMax];
     int32_t count = perPixel ? HD::LightsForGround(scene, *camera, *sphere, ground, groundCount, pixel + 4) : 0;
+    if (!HD::VulkanDevice() && count > 4) count = 4; // Claude LV40: the D3D9 HLSL reads 4 lights; Vulkan's modules loop over 16
     pixel[0] = constants[2];
     pixel[1] = constants[3];
     pixel[2] = static_cast<float>(count);
     pixel[3] = perPixel && lights == 3 ? 1.0f : 0.0f;
     HD::PixelConstantsSet(16, pixel, 1 + 4 * count); // HD: also the vertex rows the Vulkan modules read
+}
+
+// Claude B3: the pixel rows TerrainVertexConstants gives a chunk (v67..: the header and the lamps), without the device.
+int32_t HD::TerrainChunkPixelRows(const CAaSphere& sphere, CM2Scene* scene, const C3Vector& camera, CMapChunk* const chunks[2], float* pixel, uint32_t& lampSlots) {
+    const int32_t mode = HD::LightModeOf(s_light);
+    const int32_t lights = mode == 1 ? HD::LightsMode() : 0;
+    const bool perPixel = (lights == 1 || lights == 3) && scene;
+    int32_t count = 0;
+    lampSlots = 0;
+    if (perPixel && HD::LightsGroundPossible(scene, sphere)) {
+        C3Vector ground[50];
+        int32_t groundCount = 0;
+        const bool needed = HD::LightsGroundNeeded(scene, sphere);
+        for (int32_t m = 0; m < 2 && needed; m++) {
+            CMapChunk* mapChunk = chunks[m];
+            if (!mapChunk || !mapChunk->m_height) continue;
+            for (int32_t r = 0; r <= 8; r += 2) {
+                for (int32_t col = 0; col <= 8; col += 2) mapChunk->GetVertexPosition(r * 17 + col, &ground[groundCount++]);
+            }
+        }
+        count = HD::LightsForGround(scene, camera, sphere, ground, groundCount, pixel + 4);
+#ifdef WOWDECOMP_VULKAN
+        lampSlots = HD::Lamp::Native::DrawSlots();
+#endif
+    }
+    pixel[0] = 1.0f;
+    pixel[1] = mode == 3 ? 1.0f : 0.0f;
+    pixel[2] = static_cast<float>(count);
+    pixel[3] = perPixel && lights == 3 ? 1.0f : 0.0f;
+    return 1 + 4 * count;
 }
 
 // HD: the horizon / sky and ground / sky ratios the terrain uses now, for the buildings (HdMapObj.cpp)
@@ -962,6 +967,11 @@ void HD::TerrainHemisphere(float* horizon, float* ground) {
         horizon[c] = s_horizonRatio[c];
         ground[c] = s_groundRatio[c];
     }
+}
+
+// AR1: see HdTerrain.h. 3 = test view, every other value = our lighting.
+int32_t HD::LightModeOf(const CVar* cvar) {
+    return cvar && cvar->m_intValue == 3 ? 3 : 1;
 }
 
 // HD: hdLightAmbient (ambient strength in Forever lighting), for the terrain and the buildings
