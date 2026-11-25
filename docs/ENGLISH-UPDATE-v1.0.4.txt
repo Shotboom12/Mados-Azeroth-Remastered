@@ -1,0 +1,28 @@
+English settings update v1.0.4 (November 25, 2026)
+
+Based on Madominator's November 24 BRUME1 player package.
+English panel translation published by Shotboom12. Original authorship,
+credits, license notices and renderer binaries are preserved.
+
+FULL PACKAGE: extract the whole ZIP and follow README.txt.
+ADDON-ONLY UPDATE: for an existing November 24 BRUME1 installation, close
+the game normally, back up Interface/AddOns/WaystoneHD, then extract this
+update into the client folder containing Data and Interface. Allow the four
+WaystoneHD files to be replaced. No installer or rebuild is needed for the
+addon-only update. Launch normally and open /hd.
+
+Rollback: restore the backed-up WaystoneHD addon folder.
+Your WTF saved settings are not modified by copying these files.
+
+Translated tabs, labels, tooltips, dropdowns, reset/preset messages,
+performance-test messages, lantern tooltip and time-profile messages.
+Existing slash commands are preserved: /hd, /hdlumen, /hdlampes, /hdheure.
+For time-profile commands, /hdheure saves, /hdheure liste lists, and
+/hdheure effacer clears the current area's points (original aliases kept).
+Raw diagnostic strings returned by the native renderer remain as supplied.
+
+Checks: Lua 5.1 syntax passes; executable Lua tokens outside approved text
+literals are unchanged; format placeholders are preserved. Mock WoW API
+checks cover seven tabs, dropdowns, buttons, tooltips, presets, resets and
+time-profile commands, with identical CVar/command writes in both versions.
+No game was installed or launched. In-game appearance/layout is unverified.

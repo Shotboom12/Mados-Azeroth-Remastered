@@ -1,0 +1,10 @@
+{
+  "lua": "5.1",
+  "result": "PASS",
+  "scope": "mock WoW API; seven tabs, dropdowns, buttons, checkboxes, reset/preset callbacks, tooltip callbacks and time-profile commands",
+  "frames": 826,
+  "identical_cvar_and_command_writes": 460,
+  "text_calls": 7722,
+  "chat_calls": 5,
+  "gameplay_or_layout_acceptance": false
+}

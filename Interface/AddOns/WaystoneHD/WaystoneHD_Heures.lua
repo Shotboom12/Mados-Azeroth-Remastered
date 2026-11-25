@@ -5,7 +5,7 @@
 -- Dans une zone sans point, les valeurs d'avant reviennent. Tout est garde dans WaystoneHDHeures (SavedVariables).
 
 local SUIVIS = { "hdLvCfg_SunScatter", "hdLvCfg_ViewLight", "hdLvCfg_AntiGlare", "hdLvCfg_ShaftGlare" }
-local NOMS = { hdLvCfg_SunScatter = "soleil dans la brume", hdLvCfg_ViewLight = "angle", hdLvCfg_AntiGlare = "anti-eblouissement", hdLvCfg_ShaftGlare = "eclat des rayons" }
+local NOMS = { hdLvCfg_SunScatter = "sunlight in fog", hdLvCfg_ViewLight = "angle", hdLvCfg_AntiGlare = "anti-glare", hdLvCfg_ShaftGlare = "ray glare" }
 
 local function Read(name) local ok, v = pcall(GetCVar, name); if ok then return v end end
 local function Has(name) return Read(name) ~= nil end
@@ -29,7 +29,7 @@ end
 local function HeureTexte(h)
     local hh = math.floor(h); local mm = math.floor((h - hh) * 60 + 0.5)
     if mm == 60 then hh = (hh + 1) % 24; mm = 0 end
-    return string.format("%d:%02d", hh, mm)
+    return string.format("%d h %02d", hh, mm)
 end
 
 local function Base()
@@ -105,7 +105,7 @@ function WaystoneHD_HeuresGarder()
         local x = tonumber(Read(name) or "")
         if x then v[name] = x; n = n + 1 end
     end
-    if n == 0 then Say("No Lumenveil lighting settings found in this game."); return end
+    if n == 0 then Say("no Lumenveil lighting settings found in this game."); return end
     -- un point a moins de 15 minutes est remplace
     for i = #pts, 1, -1 do
         local d = math.abs(pts[i].h - h); d = math.min(d, 24 - d)
@@ -116,26 +116,26 @@ function WaystoneHD_HeuresGarder()
     Base()[zone] = pts
     pause = {}
     for k, x in pairs(v) do pose[k] = x end
-    Say(string.format("Saved for %s at %s (sun in haze %.2f). %d point(s) in this zone.", zone, HeureTexte(h), v.hdLvCfg_SunScatter or -1, #pts))
+    Say(string.format("saved for %s at %s (sunlight in fog %.2f). %d point(s) in this area.", zone, HeureTexte(h), v.hdLvCfg_SunScatter or -1, #pts))
 end
 
 function WaystoneHD_HeuresEffacer()
     local zone = Zone()
     Base()[zone] = nil
     pause = {}   -- les valeurs d'avant reviennent en glissant (Appliquer)
-    Say("Points cleared for " .. zone .. ".")
+    Say("points cleared for " .. zone .. ".")
 end
 
 function WaystoneHD_HeuresTexte()
     local zone, h = Zone(), Heure()
     local pts = Base()[zone]
-    local s = zone .. ", " .. HeureTexte(h) .. ": "
+    local s = zone .. ", " .. HeureTexte(h) .. " : "
     if not pts or #pts == 0 then return s .. "no points (normal settings)." end
     local parts = {}
     for _, p in ipairs(pts) do parts[#parts + 1] = HeureTexte(p.h) .. " = " .. string.format("%.2f", p.v.hdLvCfg_SunScatter or -1) end
-    if pause.hdLvCfg_SunScatter then return s .. #pts .. " point(s) [" .. table.concat(parts, ", ") .. "], PAUSED: you changed this manually; click Save to keep your value" end
+    if pause.hdLvCfg_SunScatter then return s .. #pts .. " point(s) [" .. table.concat(parts, ", ") .. "], PAUSED: changed manually; run /hdheure to save your value" end
     local now = Valeur(pts, "hdLvCfg_SunScatter", h)
-    return s .. #pts .. " point(s) [" .. table.concat(parts, ", ") .. "], sun in haze now " .. (now and string.format("%.2f", now) or "-")
+    return s .. #pts .. " point(s) [" .. table.concat(parts, ", ") .. "], sunlight in fog now " .. (now and string.format("%.2f", now) or "-")
 end
 
 SLASH_WAYSTONEHDHEURE1 = "/hdheure"
@@ -151,4 +151,3 @@ local f = CreateFrame("Frame")
 local acc = 0
 f:SetScript("OnUpdate", function(_, dt) acc = acc + (dt or 0); if acc >= 0.25 then Appliquer(acc); acc = 0 end end)
 WaystoneHD_HeuresAppliquer = Appliquer
-

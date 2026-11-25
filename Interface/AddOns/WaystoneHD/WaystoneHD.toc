@@ -1,9 +1,8 @@
 ## Interface: 30300
 ## Title: Waystone HD
-## Notes: Unified HD graphics settings menu (/hd)
+## Notes: English HD graphics settings panel (/hd)
 ## Author: Waystone HD
-## SavedVariables: WaystoneHDMine, WaystoneHDHeures, WaystoneHDMesures
+## SavedVariables: WaystoneHDMine, WaystoneHDHeures, WaystoneHDMesures, WaystoneHDPicture
 WaystoneHD.lua
 WaystoneHD_Bouton.lua
 WaystoneHD_Heures.lua
-
