@@ -2,7 +2,7 @@ This is a modification of Saty's WoTLK decompile.
 
 ## Install the HD version (players)
 
-1. Download the player ZIP from this repository's [latest release](../../releases/latest). The November 24, 2026 package is named `Azeroth Remastered-2026-11-24-BRUME1.zip`.
+1. Download the player ZIP from this repository's [latest release](../../releases/latest). The November 24, 2026 package is named `Azeroth.Remastered-2026-11-24-BRUME1.zip`.
 2. Extract the whole ZIP, open the extracted package folder, then double-click `Installer.bat`. Read the included `README.txt` first. The supplied November 24 package has an English guide and a French in-game HD panel.
 3. If prompted, select your 3.3.5a client folder (the one containing the `Data` folder).
 4. Launch the game with the **Azeroth Remastered** desktop shortcut.
